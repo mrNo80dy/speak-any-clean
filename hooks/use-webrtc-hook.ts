@@ -10,54 +10,63 @@ import { supabase } from "@/lib/supabaseClient";
 type PeerMap = Record<string, RTCPeerConnection>;
 const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
-/** The exact arg shape Supabase `channel.send` accepts */
-type SignalArgs = {
-  type: "broadcast" | "presence" | "postgres_changes";
-  event: string;
-  payload?: any;
-  [key: string]: any;
-};
-
-/** A Realtime channel with a safe, promise-returning send and a readiness flag */
+// An augmented channel type we will actually use everywhere.
 type SignalChannel = RealtimeChannel & {
-  send: (args: SignalArgs, opts?: Record<string, any>) => Promise<RealtimeChannelSendResponse>;
+  // Keep Supabase's send signature but ensure it returns their Promise type.
+  send: (
+    args: {
+      [key: string]: any;
+      type: "postgres_changes" | "broadcast" | "presence";
+      event: string;
+      payload?: any;
+    },
+    opts?: { [key: string]: any }
+  ) => Promise<RealtimeChannelSendResponse>;
   isReady: () => boolean;
 };
 
-/** Inline signaling channel that is safe to call `send()` before SUBSCRIBED */
+/**
+ * Create a per-room inline signaling channel that:
+ *  - Buffers sends until the channel is SUBSCRIBED
+ *  - Exposes a Promise-returning send(...) (matching Supabase)
+ *  - Adds isReady() for convenience
+ */
 function createInlineSignalChannel(roomId: string): SignalChannel {
-  const base = supabase.channel(`signal-${roomId}`, {
+  const base: RealtimeChannel = supabase.channel(`signal-${roomId}`, {
     config: { broadcast: { self: false } },
   });
 
   let ready = false;
-
-  // Queue thunks that actually perform the send and resolve/reject the original promise.
+  // queued "thunks" that will send once ready
   const queue: Array<() => Promise<RealtimeChannelSendResponse>> = [];
 
   const safeSend: SignalChannel["send"] = (args, opts) => {
     if (ready) {
-      return base.send(args as any, opts as any);
+      // channel ready → just forward and return the SDK's promise
+      return base.send(args as any, opts);
     }
+    // not ready → return a promise that resolves/rejects when we flush
     return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
-      queue.push(() =>
-        base.send(args as any, opts as any).then(resolve).catch(reject)
-      );
+      queue.push(() => base.send(args as any, opts).then(resolve).catch(reject));
     });
   };
 
   base.subscribe((status) => {
     if (status === "SUBSCRIBED") {
       ready = true;
+      // flush queued sends; each thunk resolves its own promise
       const pending = queue.splice(0);
-      for (const run of pending) run();
+      pending.forEach((run) => run());
     }
   });
 
-  return Object.assign(base, {
+  // Return the base channel, but with our overrides/augmentations.
+  const augmented: SignalChannel = Object.assign(base, {
     send: safeSend,
     isReady: () => ready,
-  }) as SignalChannel;
+  });
+
+  return augmented;
 }
 
 export function useWebRTC(
@@ -72,12 +81,11 @@ export function useWebRTC(
   const peerConnectionsRef = useRef<PeerMap>({});
   const signalChRef = useRef<SignalChannel | null>(null);
 
-  // Get local media when we have a room and peer id
+  // Grab mic/cam once we have room + id
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
     let stopped = false;
-
     (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -92,11 +100,10 @@ export function useWebRTC(
 
     return () => {
       stopped = true;
-      // We keep tracks alive; toggles/cleanup handled elsewhere.
     };
   }, [roomId, myPeerId]);
 
-  // helper: get or create PC to a peer
+  // Get or create a peer connection for a given peer id
   const getOrCreatePC = useCallback(
     (otherId: string) => {
       const existing = peerConnectionsRef.current[otherId];
@@ -104,19 +111,19 @@ export function useWebRTC(
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-      // add local tracks
       if (localStream) {
         for (const track of localStream.getTracks()) {
           pc.addTrack(track, localStream);
         }
       }
 
-      // remote tracks consumed elsewhere (e.g., a VideoGrid reading receivers)
-      pc.ontrack = () => {};
+      pc.ontrack = () => {
+        // Your UI (e.g., <VideoGrid/>) should read from pc.getReceivers()
+      };
 
       pc.onicecandidate = (ev) => {
         if (!ev.candidate || !signalChRef.current || !roomId || !myPeerId) return;
-        signalChRef.current.send({
+        void signalChRef.current.send({
           type: "broadcast",
           event: "signal",
           payload: {
@@ -126,17 +133,17 @@ export function useWebRTC(
             type: "ice",
             candidate: ev.candidate.toJSON(),
           },
-        }).catch((e) => console.warn("send ice failed:", e));
+        });
       };
 
-      // try ICE restart on disconnect
       pc.oniceconnectionstatechange = async () => {
         if (pc.iceConnectionState === "disconnected") {
           setTimeout(async () => {
             try {
               const offer = await pc.createOffer({ iceRestart: true });
               await pc.setLocalDescription(offer);
-              await signalChRef.current?.send({
+              if (!signalChRef.current || !roomId || !myPeerId) return;
+              await signalChRef.current.send({
                 type: "broadcast",
                 event: "signal",
                 payload: {
@@ -160,13 +167,14 @@ export function useWebRTC(
     [localStream, roomId, myPeerId]
   );
 
-  // create an offer to a peer
+  // Create an offer to a peer
   const createOfferTo = useCallback(
     async (otherId: string) => {
       const pc = getOrCreatePC(otherId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await signalChRef.current?.send({
+      if (!signalChRef.current || !roomId || !myPeerId) return;
+      await signalChRef.current.send({
         type: "broadcast",
         event: "signal",
         payload: {
@@ -181,7 +189,7 @@ export function useWebRTC(
     [getOrCreatePC, roomId, myPeerId]
   );
 
-  // subscribe to signaling for this room
+  // Subscribe to signaling for this room
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
@@ -190,7 +198,7 @@ export function useWebRTC(
         if (!payload) return;
         const { sender_id, target_id, type, sdp, candidate } = payload;
 
-        if (sender_id === myPeerId) return; // ignore own signals
+        if (sender_id === myPeerId) return; // ignore own messages
         if (target_id && target_id !== myPeerId) return; // not for me
 
         const pc = getOrCreatePC(sender_id);
@@ -199,6 +207,7 @@ export function useWebRTC(
           await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
+
           await ch.send({
             type: "broadcast",
             event: "signal",
@@ -222,15 +231,14 @@ export function useWebRTC(
       })
       .subscribe();
 
-    signalChRef.current = ch; // <- ch is a SignalChannel
-
+    signalChRef.current = ch; // ch is SignalChannel
     return () => {
       ch.unsubscribe();
       signalChRef.current = null;
     };
   }, [roomId, myPeerId, getOrCreatePC]);
 
-  // when live participants change, offer to any new ones
+  // When participants list changes, offer to any new ones
   useEffect(() => {
     if (!roomId || !myPeerId) return;
     (async () => {
