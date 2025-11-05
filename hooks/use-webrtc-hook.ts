@@ -1,23 +1,59 @@
 "use client";
 
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createSignalChannel } from "@/lib/realtime";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabaseClient";
 
 type PeerMap = Record<string, RTCPeerConnection>;
 const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
+// ---- Inline signaling channel (replaces `createSignalChannel` import) ----
+function createInlineSignalChannel(roomId: string) {
+  // Use a unique channel key per room
+  const ch = supabase.channel(`signal-${roomId}`, {
+    config: { broadcast: { self: false } },
+  });
+
+  let ready = false;
+  const queue: Array<{ type: "broadcast"; event: string; payload: any }> = [];
+
+  const flush = () => {
+    if (!ready) return;
+    while (queue.length) ch.send(queue.shift()!);
+  };
+
+  const safeSend: RealtimeChannel["send"] = (msg) => {
+    if (!ready) queue.push(msg as any);
+    else ch.send(msg as any);
+    return ch;
+  };
+
+  ch.subscribe((status) => {
+    if (status === "SUBSCRIBED") {
+      ready = true;
+      flush();
+    }
+  });
+
+  // mirror a tiny subset of RealtimeChannel API we use
+  return Object.assign(ch, {
+    send: safeSend,
+    isReady: () => ready,
+  });
+}
+// -------------------------------------------------------------------------
+
 export function useWebRTC(
   roomId: string | null,
   myPeerId: string | null,
-  liveParticipants: Array<{ id: string }>
+  liveParticipants: Array<{ id: string }>,
 ) {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   const peerConnectionsRef = useRef<PeerMap>({});
-  const signalChRef = useRef<ReturnType<typeof createSignalChannel> | null>(null);
+  const signalChRef = useRef<ReturnType<typeof createInlineSignalChannel> | null>(null);
 
   // Get local media when we have a room and peer id
   useEffect(() => {
@@ -39,7 +75,7 @@ export function useWebRTC(
 
     return () => {
       stopped = true;
-      // leave tracks running; stop them on explicit leave if desired
+      // leave tracks running; you toggle via controls or stop on leave
     };
   }, [roomId, myPeerId]);
 
@@ -58,9 +94,9 @@ export function useWebRTC(
         }
       }
 
-      // Remote tracks are consumed by VideoGrid from pc.getReceivers()
+      // remote tracks are consumed by your <VideoGrid/> from pc.getReceivers()
       pc.ontrack = () => {
-        /* no-op */
+        // no-op here (VideoGrid reads streams from the PC)
       };
 
       pc.onicecandidate = (ev) => {
@@ -78,7 +114,7 @@ export function useWebRTC(
         });
       };
 
-      // Try to recover on disconnect with an ICE restart
+      // attempt ICE restart on disconnect
       pc.oniceconnectionstatechange = async () => {
         if (pc.iceConnectionState === "disconnected") {
           setTimeout(async () => {
@@ -106,7 +142,7 @@ export function useWebRTC(
       peerConnectionsRef.current[otherId] = pc;
       return pc;
     },
-    [localStream, roomId, myPeerId]
+    [localStream, roomId, myPeerId],
   );
 
   // create an offer to a peer
@@ -127,14 +163,14 @@ export function useWebRTC(
         },
       });
     },
-    [getOrCreatePC, roomId, myPeerId]
+    [getOrCreatePC, roomId, myPeerId],
   );
 
   // subscribe to signaling for this room
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
-    const ch = createSignalChannel(roomId)
+    const ch = createInlineSignalChannel(roomId)
       .on("broadcast", { event: "signal" }, async ({ payload }) => {
         if (!payload) return;
         const { sender_id, target_id, type, sdp, candidate } = payload;
@@ -218,4 +254,3 @@ export function useWebRTC(
     toggleVideo,
   };
 }
-
