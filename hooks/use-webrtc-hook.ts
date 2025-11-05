@@ -10,11 +10,18 @@ import { supabase } from "@/lib/supabaseClient";
 type PeerMap = Record<string, RTCPeerConnection>;
 const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
+/* A RealtimeChannel that also exposes a Promise-returning `send` (same signature
+   as Supabase) and an `isReady()` helper so we can gate queued sends. */
+type SignalChannel = RealtimeChannel & {
+  send: RealtimeChannel["send"];
+  isReady: () => boolean;
+};
+
 /* -------------------------------------------------------------------------- */
 /*                       Inline Supabase Realtime Channel                      */
 /* -------------------------------------------------------------------------- */
-function createInlineSignalChannel(roomId: string) {
-  const ch = supabase.channel(`signal-${roomId}`, {
+function createInlineSignalChannel(roomId: string): SignalChannel {
+  const ch: RealtimeChannel = supabase.channel(`signal-${roomId}`, {
     config: { broadcast: { self: false } },
   });
 
@@ -34,7 +41,7 @@ function createInlineSignalChannel(roomId: string) {
       return ch.send(args as any, opts);
     }
 
-    // Not ready: return a Promise and record how to resolve it once we flush
+    // Not ready yet: return a Promise and enqueue how to resolve it
     return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
       queue.push({
         fn: () => ch.send(args as any, opts),
@@ -47,9 +54,7 @@ function createInlineSignalChannel(roomId: string) {
   const flush = () => {
     if (!ready || queue.length === 0) return;
     const pending = queue.splice(0);
-    for (const q of pending) {
-      q.fn().then(q.resolve).catch(q.reject);
-    }
+    for (const q of pending) q.fn().then(q.resolve).catch(q.reject);
   };
 
   ch.subscribe((status) => {
@@ -59,10 +64,13 @@ function createInlineSignalChannel(roomId: string) {
     }
   });
 
-  return Object.assign(ch, {
+  // Return an explicitly-typed augmented channel
+  const wrapped: SignalChannel = Object.assign(ch, {
     send: safeSend,
     isReady: () => ready,
   });
+
+  return wrapped;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -78,8 +86,7 @@ export function useWebRTC(
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
   const peerConnectionsRef = useRef<PeerMap>({});
-  const signalChRef =
-    useRef<ReturnType<typeof createInlineSignalChannel> | null>(null);
+  const signalChRef = useRef<SignalChannel | null>(null);
 
   /* ---------------------------- Get Local Media ---------------------------- */
   useEffect(() => {
@@ -125,9 +132,8 @@ export function useWebRTC(
         }
       }
 
-      pc.ontrack = () => {
-        // VideoGrid reads remote tracks
-      };
+      // VideoGrid reads remote tracks; nothing else needed here
+      pc.ontrack = () => {};
 
       pc.onicecandidate = (ev) => {
         if (!ev.candidate || !signalChRef.current || !roomId || !myPeerId)
@@ -145,6 +151,7 @@ export function useWebRTC(
         });
       };
 
+      // Try ICE restart on disconnect
       pc.oniceconnectionstatechange = async () => {
         if (pc.iceConnectionState === "disconnected") {
           setTimeout(async () => {
@@ -236,7 +243,7 @@ export function useWebRTC(
       })
       .subscribe();
 
-    signalChRef.current = ch;
+    signalChRef.current = ch; // <- ch is SignalChannel now
     return () => {
       ch.unsubscribe();
       signalChRef.current = null;
