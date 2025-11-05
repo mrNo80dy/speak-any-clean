@@ -47,8 +47,13 @@ function createInlineSignalChannel(roomId: string): SignalChannel {
     }
     // not ready → return a promise that resolves/rejects when we flush
     return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
-      queue.push(() => base.send(args as any, opts).then(resolve).catch(reject));
-    });
+  queue.push(() => {
+    const p = base.send(args as any, opts); // <- returns Promise<RealtimeChannelSendResponse>
+    p.then(resolve, reject);                 // wire to the outer promise
+    return p;                                // <- satisfy the thunk's return type
+  });
+});
+
   };
 
   base.subscribe((status) => {
@@ -278,3 +283,4 @@ export function useWebRTC(
     toggleVideo,
   };
 }
+
