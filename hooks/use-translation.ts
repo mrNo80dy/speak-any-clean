@@ -18,7 +18,8 @@ function langCore(v?: string) {
   return (v || "").toLowerCase().split("-")[0]; // en-US -> en
 }
 
-export function useTranslation(
+export function TranslationMessage(
+  // export function useTranslation(
   roomId?: string,
   myPeerId?: string,
   myName?: string,
@@ -91,3 +92,4 @@ export function useTranslation(
 
   return { messages, addTranslation };
 }
+
