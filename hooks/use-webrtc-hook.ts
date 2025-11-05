@@ -20,26 +20,42 @@ function createInlineSignalChannel(roomId: string) {
 
   let ready = false;
 
-  // Queue thunks that perform the send later
-  const queue: Array<() => Promise<RealtimeChannelSendResponse>> = [];
+  type QueuedItem = {
+    fn: () => Promise<RealtimeChannelSendResponse>;
+    resolve: (v: RealtimeChannelSendResponse) => void;
+    reject: (e: unknown) => void;
+  };
+
+  const queue: QueuedItem[] = [];
 
   const safeSend: RealtimeChannel["send"] = (args, opts) => {
     if (ready) {
+      // When ready, return the SDK's Promise directly
       return ch.send(args as any, opts);
     }
 
+    // Not ready: return a Promise and record how to resolve it once we flush
     return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
-      queue.push(() =>
-        ch.send(args as any, opts).then(resolve).catch(reject)
-      );
+      queue.push({
+        fn: () => ch.send(args as any, opts),
+        resolve,
+        reject,
+      });
     });
+  };
+
+  const flush = () => {
+    if (!ready || queue.length === 0) return;
+    const pending = queue.splice(0);
+    for (const q of pending) {
+      q.fn().then(q.resolve).catch(q.reject);
+    }
   };
 
   ch.subscribe((status) => {
     if (status === "SUBSCRIBED") {
       ready = true;
-      const pending = queue.splice(0);
-      for (const run of pending) run();
+      flush();
     }
   });
 
@@ -184,10 +200,8 @@ export function useWebRTC(
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
-    const ch = createInlineSignalChannel(roomId).on(
-      "broadcast",
-      { event: "signal" },
-      async ({ payload }) => {
+    const ch = createInlineSignalChannel(roomId)
+      .on("broadcast", { event: "signal" }, async ({ payload }) => {
         if (!payload) return;
         const { sender_id, target_id, type, sdp, candidate } = payload;
         if (sender_id === myPeerId) return;
@@ -219,8 +233,8 @@ export function useWebRTC(
             console.error("addIceCandidate failed:", e);
           }
         }
-      }
-    ).subscribe();
+      })
+      .subscribe();
 
     signalChRef.current = ch;
     return () => {
@@ -229,7 +243,7 @@ export function useWebRTC(
     };
   }, [roomId, myPeerId, getOrCreatePC]);
 
-  /* ------------------- Offer to new participants automatically ------------------- */
+  /* -------- Offer to any new participants automatically when they appear --- */
   useEffect(() => {
     if (!roomId || !myPeerId) return;
     (async () => {
