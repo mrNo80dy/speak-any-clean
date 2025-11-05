@@ -4,45 +4,36 @@ import { useCallback, useState } from "react";
 import { translateText } from "@/lib/translate";
 import type { LanguageCode } from "@/lib/translation";
 
-/**
- * Unified shape that satisfies both the new and existing UI components.
- * Includes aliases so components using older field names don't break.
- */
 export type TranslationMessage = {
   id: string;
   ts: number;
 
-  // Core identifiers
+  // ids / names
   roomId: string;
   senderId: string;
   senderName: string;
 
-  // Aliases for older components (e.g., CaptionsPanel)
-  peerId?: string; // alias of senderId
+  // ✅ Aliases expected by CaptionsPanel (now REQUIRED)
+  peerId: string;
 
-  // Text
+  // text (canonical)
   original: string;
   translated: string;
 
-  // Aliases for older components (some UIs expect these names)
-  text?: string;            // alias of original
-  translatedText?: string;  // alias of translated
+  // ✅ Aliases expected by various components (now REQUIRED)
+  text: string;            // alias of original
+  originalText: string;    // alias of original
+  translatedText: string;  // alias of translated
 
-  // Languages
+  // languages (canonical)
   from: LanguageCode | string;
   to: LanguageCode | string;
 
-  // Aliases for older components
-  fromLanguage?: string; // alias of from
-  toLanguage?: string;   // alias of to
+  // ✅ Aliases expected by CaptionsPanel (now REQUIRED)
+  fromLanguage: string; // alias of from
+  toLanguage: string;   // alias of to
 };
 
-/**
- * Local translation/captions hook.
- * - Keeps a list of caption messages.
- * - Translates text through lib/translate (Supabase Edge Function, or passthrough).
- * - Optionally speaks the translated text via injected TTS.
- */
 export function useTranslation(
   roomId: string,
   myPeerId: string,
@@ -55,7 +46,6 @@ export function useTranslation(
 
   const addTranslation = useCallback(
     async (text: string, fromLang: LanguageCode | string, toLang: LanguageCode | string) => {
-      // Try translation; fall back to original if function is not configured
       let translated = text;
       try {
         translated = await translateText(text, String(fromLang), String(toLang));
@@ -67,23 +57,21 @@ export function useTranslation(
         id: crypto.randomUUID(),
         ts: Date.now(),
 
-        // ids / names
         roomId,
         senderId: myPeerId,
         senderName: myName,
-        peerId: myPeerId, // alias for components expecting peerId
+        peerId: myPeerId, // alias required by CaptionsPanel
 
-        // text (with aliases)
         original: text,
         translated,
         text,                 // alias
+        originalText: text,   // alias required by CaptionsPanel
         translatedText: translated, // alias
 
-        // languages (with aliases)
         from: fromLang,
         to: toLang,
-        fromLanguage: String(fromLang),
-        toLanguage: String(toLang),
+        fromLanguage: String(fromLang), // required alias
+        toLanguage: String(toLang),     // required alias
       };
 
       setMessages((prev) => [...prev, msg]);
