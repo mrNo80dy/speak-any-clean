@@ -1,7 +1,44 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RealtimeChannel } from "@supabase/supabase-js";
+import type {
+  RealtimeChannel,
+  RealtimeChannelSendResponse,
+} from "@supabase/supabase-js";
+
+// ...after you create `ch`:
+let ready = false;
+
+// Queue thunks that, when run, will perform the actual send and resolve/reject a promise.
+const queue: Array<() => Promise<RealtimeChannelSendResponse>> = [];
+
+// Typed exactly as Supabase expects:
+const safeSend: RealtimeChannel["send"] = (args, opts) => {
+  if (ready) {
+    // when ready, just send and return the Promise the SDK returns
+    return ch.send(args as any, opts);
+  }
+
+  // not ready: return a Promise and queue the actual send
+  return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
+    queue.push(() =>
+      ch.send(args as any, opts).then(resolve).catch(reject)
+    );
+  });
+};
+
+// mark ready + flush queue once subscribed
+ch.subscribe((status) => {
+  if (status === "SUBSCRIBED") {
+    ready = true;
+    // kick queued sends; don't await—each one resolves its own promise
+    const pending = queue.splice(0);
+    for (const run of pending) run();
+  }
+});
+
+// wherever you previously did `ch.send(...)`, use `safeSend(...)` instead
+
 import { supabase } from "@/lib/supabaseClient";
 
 type PeerMap = Record<string, RTCPeerConnection>;
@@ -254,3 +291,4 @@ export function useWebRTC(
     toggleVideo,
   };
 }
+
