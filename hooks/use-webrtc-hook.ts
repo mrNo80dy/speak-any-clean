@@ -198,43 +198,47 @@ export function useWebRTC(
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
-    const ch = createInlineSignalChannel(roomId)
-      .on("broadcast", { event: "signal" }, async ({ payload }) => {
-        if (!payload) return;
-        const { sender_id, target_id, type, sdp, candidate } = payload;
+    const ch = createInlineSignalChannel(roomId); // ch is SignalChannel
 
-        if (sender_id === myPeerId) return; // ignore own messages
-        if (target_id && target_id !== myPeerId) return; // not for me
+ch.on("broadcast", { event: "signal" }, async ({ payload }) => {
+  if (!payload) return;
+  const { sender_id, target_id, type, sdp, candidate } = payload;
 
-        const pc = getOrCreatePC(sender_id);
+  if (sender_id === myPeerId) return;
+  if (target_id && target_id !== myPeerId) return;
 
-        if (type === "offer" && sdp) {
-          await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
+  const pc = getOrCreatePC(sender_id);
 
-          await ch.send({
-            type: "broadcast",
-            event: "signal",
-            payload: {
-              room_id: roomId,
-              sender_id: myPeerId,
-              target_id: sender_id,
-              type: "answer",
-              sdp: { type: answer.type, sdp: answer.sdp },
-            },
-          });
-        } else if (type === "answer" && sdp) {
-          await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
-        } else if (type === "ice" && candidate) {
-          try {
-            await pc.addIceCandidate(candidate as RTCIceCandidateInit);
-          } catch (e) {
-            console.error("addIceCandidate failed:", e);
-          }
-        }
-      })
-      .subscribe();
+  if (type === "offer" && sdp) {
+    await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await ch.send({
+      type: "broadcast",
+      event: "signal",
+      payload: {
+        room_id: roomId!,
+        sender_id: myPeerId!,
+        target_id: sender_id,
+        type: "answer",
+        sdp: { type: answer.type, sdp: answer.sdp },
+      },
+    });
+  } else if (type === "answer" && sdp) {
+    await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
+  } else if (type === "ice" && candidate) {
+    try {
+      await pc.addIceCandidate(candidate as RTCIceCandidateInit);
+    } catch (e) {
+      console.error("addIceCandidate failed:", e);
+    }
+  }
+});
+
+ch.subscribe();
+
+signalChRef.current = ch; // stays SignalChannel (has isReady + patched send)
+
 
     signalChRef.current = ch; // ch is SignalChannel
     return () => {
@@ -283,4 +287,5 @@ export function useWebRTC(
     toggleVideo,
   };
 }
+
 
