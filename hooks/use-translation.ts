@@ -13,25 +13,25 @@ export type TranslationMessage = {
   senderId: string;
   senderName: string;
 
-  // ✅ Aliases expected by CaptionsPanel (now REQUIRED)
+  // aliases expected by CaptionsPanel
   peerId: string;
 
   // text (canonical)
   original: string;
   translated: string;
 
-  // ✅ Aliases expected by various components (now REQUIRED)
-  text: string;            // alias of original
-  originalText: string;    // alias of original
-  translatedText: string;  // alias of translated
+  // aliases used by components
+  text: string;             // alias of original
+  originalText: string;     // alias of original
+  translatedText: string;   // alias of translated
 
   // languages (canonical)
-  from: LanguageCode | string;
-  to: LanguageCode | string;
+  from: LanguageCode;
+  to: LanguageCode;
 
-  // ✅ Aliases expected by CaptionsPanel (now REQUIRED)
-  fromLanguage: string; // alias of from
-  toLanguage: string;   // alias of to
+  // aliases expected by components
+  fromLanguage: LanguageCode;
+  toLanguage: LanguageCode;
 };
 
 export function useTranslation(
@@ -40,15 +40,16 @@ export function useTranslation(
   myName: string,
   myLanguage: LanguageCode,
   ttsEnabled?: boolean,
-  speak?: (text: string, lang: string) => void
+  speak?: (text: string, language: LanguageCode) => void
 ) {
   const [messages, setMessages] = useState<TranslationMessage[]>([]);
 
   const addTranslation = useCallback(
-    async (text: string, fromLang: LanguageCode | string, toLang: LanguageCode | string) => {
+    async (text: string, fromLang: LanguageCode, toLang: LanguageCode) => {
       let translated = text;
       try {
-        translated = await translateText(text, String(fromLang), String(toLang));
+        // translateText accepts strings; LanguageCode is a string union, so it’s fine
+        translated = await translateText(text, fromLang, toLang);
       } catch (e) {
         console.warn("[useTranslation] translateText failed, using original text", e);
       }
@@ -60,25 +61,25 @@ export function useTranslation(
         roomId,
         senderId: myPeerId,
         senderName: myName,
-        peerId: myPeerId, // alias required by CaptionsPanel
+        peerId: myPeerId,
 
         original: text,
         translated,
-        text,                 // alias
-        originalText: text,   // alias required by CaptionsPanel
-        translatedText: translated, // alias
+        text,
+        originalText: text,
+        translatedText: translated,
 
         from: fromLang,
         to: toLang,
-        fromLanguage: String(fromLang), // required alias
-        toLanguage: String(toLang),     // required alias
+        fromLanguage: fromLang,
+        toLanguage: toLang,
       };
 
       setMessages((prev) => [...prev, msg]);
 
       if (ttsEnabled && speak && translated) {
         try {
-          speak(translated, String(toLang));
+          speak(translated, toLang); // now correctly typed
         } catch (e) {
           console.warn("[useTranslation] speak() failed", e);
         }
