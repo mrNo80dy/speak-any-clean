@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRoom } from "@/hooks/use-room";
-import { useWebRTC } from "@/hooks/use-webrtc-hook";
+import { useWebRTC } from "@/hooks/use-webrtc-hook"; // <-- uses your renamed hook
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useTranslation } from "@/hooks/use-translation";
 import { useTextToSpeech } from "@/hooks/use-text-to-speech";
@@ -32,23 +32,37 @@ export function RoomView({ roomId }: RoomViewProps) {
   const [captionsVisible, setCaptionsVisible] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  // 1) Hooks that define values used elsewhere should come first.
   const { enabled: ttsEnabled, speak, toggleEnabled: toggleTTS } = useTextToSpeech();
 
-  // 2) WebRTC after we know if we’re joined
   const { localStream, peerConnections, audioEnabled, videoEnabled, toggleAudio, toggleVideo } =
     useWebRTC(joined ? roomId : null, joined ? myPeerId : null, participants);
 
-  // 3) Translation bus (no TTS passed in here — we trigger TTS in our effect below)
-  const { messages, addTranslation } = useTranslation();
+  // Translation bus (broadcast to room + render captions)
+  const { messages, addTranslation } = useTranslation(
+    roomId,
+    myPeerId,
+    "You",
+    myLanguage,
+    ttsEnabled,
+    speak
+  );
 
-  // 4) Speech recognition depends on audioEnabled and join state
+  // Speech recognition (local mic) -> translate -> (optional) TTS to targetLanguage
   const { transcript, interimTranscript, clearTranscript } = useSpeechRecognition(
     myLanguage,
     audioEnabled && joined
   );
 
-  // Join once room is loaded
+  useEffect(() => {
+    if (transcript) {
+      (async () => {
+        await addTranslation(transcript, myLanguage, targetLanguage);
+        clearTranscript();
+      })();
+    }
+  }, [transcript, myLanguage, targetLanguage, addTranslation, clearTranscript]);
+
+  // Join on mount when room is known
   useEffect(() => {
     if (room && !joined) {
       joinRoom(myPeerId, myLanguage);
@@ -62,20 +76,6 @@ export function RoomView({ roomId }: RoomViewProps) {
       if (joined) leaveRoom(myPeerId);
     };
   }, [joined, leaveRoom, myPeerId]);
-
-  // When we get a final transcript, translate it and optionally speak it
-  useEffect(() => {
-    if (!transcript) return;
-    (async () => {
-      const message = await addTranslation(transcript, myLanguage, targetLanguage);
-      if (message && ttsEnabled) {
-        // The device that *needs* the translation should hear it.
-        // If you only want remote to hear it, gate this with a role/flag later.
-        speak(message.translatedText, targetLanguage);
-      }
-      clearTranscript();
-    })();
-  }, [transcript, myLanguage, targetLanguage, addTranslation, ttsEnabled, speak, clearTranscript]);
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomId);
