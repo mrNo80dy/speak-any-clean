@@ -9,7 +9,7 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 export function useWebRTC(
   roomId: string | null,
   myPeerId: string | null,
-  liveParticipants: Array<{ id: string }>,
+  liveParticipants: Array<{ id: string }>
 ) {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
@@ -38,7 +38,7 @@ export function useWebRTC(
 
     return () => {
       stopped = true;
-      // do not stop tracks here — leave that to your leave handler
+      // leave tracks running; stop them on explicit leave if desired
     };
   }, [roomId, myPeerId]);
 
@@ -57,9 +57,9 @@ export function useWebRTC(
         }
       }
 
-      // remote tracks handled by your VideoGrid (reads remote streams from pc.getReceivers())
+      // Remote tracks are consumed by VideoGrid from pc.getReceivers()
       pc.ontrack = () => {
-        // no-op: your VideoGrid will bind streams by reading from RTCPeerConnection
+        /* no-op */
       };
 
       pc.onicecandidate = (ev) => {
@@ -77,7 +77,7 @@ export function useWebRTC(
         });
       };
 
-      // attempt an ICE restart on disconnect
+      // Try to recover on disconnect with an ICE restart
       pc.oniceconnectionstatechange = async () => {
         if (pc.iceConnectionState === "disconnected") {
           setTimeout(async () => {
@@ -105,7 +105,7 @@ export function useWebRTC(
       peerConnectionsRef.current[otherId] = pc;
       return pc;
     },
-    [localStream, roomId, myPeerId],
+    [localStream, roomId, myPeerId]
   );
 
   // create an offer to a peer
@@ -126,7 +126,7 @@ export function useWebRTC(
         },
       });
     },
-    [getOrCreatePC, roomId, myPeerId],
+    [getOrCreatePC, roomId, myPeerId]
   );
 
   // subscribe to signaling for this room
