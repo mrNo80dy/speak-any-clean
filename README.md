@@ -51,3 +51,5 @@ The app works in "mock mode" without Supabase for UI development. To enable full
 3. Speech recognition transcribes audio in real-time
 4. Transcriptions are translated via Edge Function
 5. Translations are displayed as captions and optionally spoken via TTS
+
+CANARY: speak-any-clean @ <your initials> @ <current time>
