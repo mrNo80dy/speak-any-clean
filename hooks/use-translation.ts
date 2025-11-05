@@ -17,7 +17,14 @@ type Msg = {
 function langCore(v?: string) {
   return (v || "").toLowerCase().split("-")[0]; // en-US -> en
 }
-
+export function useTranslation(
+  roomId?: string,
+  myPeerId?: string,
+  myName?: string,
+  myLanguage?: string,                                // e.g., "en" or "pt-BR"
+  ttsEnabled?: boolean,
+  speak?: (text: string, lang: string) => void       // injected from useTextToSpeech
+)
 export function TranslationMessage(
   // export function useTranslation(
   roomId?: string,
@@ -92,4 +99,5 @@ export function TranslationMessage(
 
   return { messages, addTranslation };
 }
+
 
