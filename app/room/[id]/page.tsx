@@ -5,6 +5,15 @@ import { useParams } from 'next/navigation';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
 
+type RealtimeSubscribeStatus = 'SUBSCRIBED' | 'CLOSED' | 'TIMED_OUT' | 'CHANNEL_ERROR';
+
+const sub = await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
+  if (status === 'SUBSCRIBED') {
+    log('subscribed to channel', { roomId, clientId });
+    channel.track({ clientId });
+  }
+});
+
 type WebRTCPayload = {
   type: 'offer' | 'answer' | 'ice';
   from: string;
@@ -435,6 +444,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
