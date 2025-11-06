@@ -5,14 +5,12 @@ import { useParams } from 'next/navigation';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
 
-type RealtimeSubscribeStatus = 'SUBSCRIBED' | 'CLOSED' | 'TIMED_OUT' | 'CHANNEL_ERROR';
-
-const sub = await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
-  if (status === 'SUBSCRIBED') {
-    log('subscribed to channel', { roomId, clientId });
-    channel.track({ clientId });
-  }
-});
+// Types
+type RealtimeSubscribeStatus =
+  | 'SUBSCRIBED'
+  | 'CLOSED'
+  | 'TIMED_OUT'
+  | 'CHANNEL_ERROR';
 
 type WebRTCPayload = {
   type: 'offer' | 'answer' | 'ice';
@@ -29,11 +27,11 @@ type Peer = {
 
 type PeerStreams = Record<string, MediaStream>;
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
-
 export default function RoomPage() {
-  
+  const params = useParams<{ id: string }>();
+  const roomId = params?.id;
+
+  // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === 'undefined') return 'server';
     const existing = sessionStorage.getItem('clientId');
@@ -43,9 +41,7 @@ export default function RoomPage() {
     return id;
   }, []);
 
-    // ---- Refs / state -----------------------------------------
-  const params = useParams<{ id: string }>();
-  const roomId = params?.id;
+  // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -57,10 +53,10 @@ export default function RoomPage() {
   const [logs, setLogs] = useState<string[]>([]);
 
   const log = (msg: string, ...rest: any[]) => {
-    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${rest.length ? JSON.stringify(rest) : ''}`;
+    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
+      rest.length ? JSON.stringify(rest) : ''
+    }`;
     setLogs((l) => [line, ...l].slice(0, 200));
-    // Uncomment for console debug:
-    // console.debug('[room]', msg, ...rest);
   };
 
   // ---- Helpers ----------------------------------------------
@@ -71,10 +67,7 @@ export default function RoomPage() {
     });
   }
 
-  function getOrCreatePeer(
-    remoteId: string,
-    channel: RealtimeChannel,
-  ) {
+  function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     let existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
@@ -105,7 +98,7 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-      // merge any incoming tracks into our stable stream
+      // Merge incoming tracks into our stable stream
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
@@ -113,7 +106,6 @@ export default function RoomPage() {
           }
         });
       } else if (e.track) {
-        // fallback if streams array is empty
         if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
           remoteStream.addTrack(e.track);
         }
@@ -124,9 +116,11 @@ export default function RoomPage() {
 
     // Add local tracks if we already have them
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      localStreamRef.current
+        .getTracks()
+        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
-      // ensure we will still receive even if local is missing
+      // Ensure we still receive even if local is missing
       pc.addTransceiver('video', { direction: 'recvonly' });
       pc.addTransceiver('audio', { direction: 'recvonly' });
     }
@@ -140,10 +134,15 @@ export default function RoomPage() {
     const { pc } = getOrCreatePeer(toId, channel);
 
     if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      localStreamRef.current
+        .getTracks()
+        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     }
 
-    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+    const offer = await pc.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: true,
+    });
     await pc.setLocalDescription(offer);
 
     channel.send({
@@ -155,14 +154,20 @@ export default function RoomPage() {
     log('sent offer', { to: toId });
   }
 
-  async function handleOffer(fromId: string, sdp: RTCSessionDescriptionInit, channel: RealtimeChannel) {
+  async function handleOffer(
+    fromId: string,
+    sdp: RTCSessionDescriptionInit,
+    channel: RealtimeChannel
+  ) {
     const { pc } = getOrCreatePeer(fromId, channel);
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    // ensure local tracks exist
+    // Ensure local tracks exist
     if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      localStreamRef.current
+        .getTracks()
+        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     }
 
     const answer = await pc.createAnswer();
@@ -177,7 +182,10 @@ export default function RoomPage() {
     log('sent answer', { to: fromId });
   }
 
-  async function handleAnswer(fromId: string, sdp: RTCSessionDescriptionInit) {
+  async function handleAnswer(
+    fromId: string,
+    sdp: RTCSessionDescriptionInit
+  ) {
     const peer = peersRef.current.get(fromId);
     if (!peer) return;
     await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -215,9 +223,9 @@ export default function RoomPage() {
 
   // Attach remote streams to hidden <audio> elements to force autoplay
   useEffect(() => {
-    // Try to play all remote streams through audio elements when they appear
     const tryPlayAll = async () => {
-      const audios = document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+      const audios =
+        document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
       for (const a of Array.from(audios)) {
         try {
           await a.play();
@@ -238,33 +246,35 @@ export default function RoomPage() {
       try {
         await acquireLocalMedia();
 
-        const channel = supabase.channel(
-          `room:${roomId}`,
-          {
-            config: {
-              broadcast: { self: false },
-              presence: { key: clientId },
-            },
+        const channel = supabase.channel(`room:${roomId}`, {
+          config: {
+            broadcast: { self: false },
+            presence: { key: clientId },
+          },
+        });
+
+        // Broadcast signaling
+        channel.on(
+          'broadcast',
+          { event: 'webrtc' },
+          async (message: { payload: WebRTCPayload }) => {
+            const { payload } = message;
+            const { type, from, to } = payload || {};
+            if (!type || from === clientId) return;
+            if (to && to !== clientId) return;
+
+            if (type === 'offer' && payload.sdp) {
+              await handleOffer(from, payload.sdp, channel);
+            } else if (type === 'answer' && payload.sdp) {
+              await handleAnswer(from, payload.sdp);
+            } else if (type === 'ice' && payload.candidate) {
+              await handleIce(from, payload.candidate);
+            }
           }
         );
 
-        channel.on('broadcast', { event: 'webrtc' }, async (message: { payload: WebRTCPayload }) => {
-  const { payload } = message;
-  const { type, from, to } = payload || {};
-  if (!type || from === clientId) return;
-  if (to && to !== clientId) return;
-
-  if (type === 'offer') {
-    await handleOffer(from, payload.sdp!, channel);
-  } else if (type === 'answer') {
-    await handleAnswer(from, payload.sdp!);
-  } else if (type === 'ice') {
-    await handleIce(from, payload.candidate!);
-  }
-});
-
+        // Presence sync -> know who to call
         channel.on('presence', { event: 'sync' }, () => {
-          // Presence state: { [key: userId]: [{ metas... }] }
           const state = channel.presenceState() as Record<string, any[]>;
           const others: string[] = Object.values(state)
             .flat()
@@ -273,15 +283,18 @@ export default function RoomPage() {
 
           setPeerIds(others);
 
-          // Proactively offer to any peers we don't yet have a PC for
+          // Proactively offer to peers we don't yet have a PC for
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
-              makeOffer(id, channel).catch((e) => log('offer error', { e: (e as Error).message }));
+              makeOffer(id, channel).catch((e) =>
+                log('offer error', { e: (e as Error).message })
+              );
             }
           });
         });
 
-        const sub = await channel.subscribe(async (status) => {
+        // Subscribe, then track presence
+        await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           if (status === 'SUBSCRIBED') {
             log('subscribed to channel', { roomId, clientId });
             channel.track({ clientId });
@@ -312,7 +325,9 @@ export default function RoomPage() {
 
       // Close PCs
       peersRef.current.forEach(({ pc }) => {
-        try { pc.close(); } catch {}
+        try {
+          pc.close();
+        } catch {}
       });
       peersRef.current.clear();
 
@@ -332,14 +347,17 @@ export default function RoomPage() {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, supabase]);
+  }, [roomId, clientId]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
     setNeedsUnmute(false);
-    const audios = document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+    const audios =
+      document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
     for (const a of Array.from(audios)) {
-      try { await a.play(); } catch {}
+      try {
+        await a.play();
+      } catch {}
     }
   };
 
@@ -364,23 +382,45 @@ export default function RoomPage() {
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">Any-Speak Room</h1>
-            <p className="text-sm text-neutral-400">Room: <span className="font-mono">{roomId}</span></p>
-            <p className="text-xs text-neutral-500">You: <span className="font-mono">{clientId.slice(0, 8)}</span>{' '}
-              {connected ? <span className="text-emerald-400">● connected</span> : <span className="text-neutral-500">● connecting…</span>}
+            <p className="text-sm text-neutral-400">
+              Room: <span className="font-mono">{roomId}</span>
+            </p>
+            <p className="text-xs text-neutral-500">
+              You:{' '}
+              <span className="font-mono">{clientId.slice(0, 8)}</span>{' '}
+              {connected ? (
+                <span className="text-emerald-400">● connected</span>
+              ) : (
+                <span className="text-neutral-500">● connecting…</span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={toggleMic} className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700">Toggle Mic</button>
-            <button onClick={toggleCamera} className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700">Toggle Cam</button>
+            <button
+              onClick={toggleMic}
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700"
+            >
+              Toggle Mic
+            </button>
+            <button
+              onClick={toggleCamera}
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700"
+            >
+              Toggle Cam
+            </button>
           </div>
         </header>
 
         {needsUnmute && (
           <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
             <p className="text-sm">
-              Your browser blocked autoplay with sound. Click below to start remote audio.
+              Your browser blocked autoplay with sound. Click below to start
+              remote audio.
             </p>
-            <button onClick={handleUnmuteClick} className="mt-2 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm">
+            <button
+              onClick={handleUnmuteClick}
+              className="mt-2 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm"
+            >
               Unmute Remote Audio
             </button>
           </div>
@@ -401,9 +441,12 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {/* If exactly one remote, show it side-by-side; if more, the grid wraps below */}
+          {/* Remote tiles */}
           {peerIds.map((pid) => (
-            <div key={pid} className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+            <div
+              key={pid}
+              className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
+            >
               <video
                 autoPlay
                 playsInline
@@ -435,7 +478,9 @@ export default function RoomPage() {
 
         {/* Debug / logs */}
         <details className="mt-4">
-          <summary className="cursor-pointer text-sm text-neutral-400">Debug logs</summary>
+          <summary className="cursor-pointer text-sm text-neutral-400">
+            Debug logs
+          </summary>
           <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
             {logs.join('\n')}
           </pre>
@@ -444,8 +489,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
-
-
-
-
