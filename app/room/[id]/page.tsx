@@ -17,11 +17,19 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
 export default function RoomPage() {
+  
+  const clientId = useMemo(() => {
+    if (typeof window === 'undefined') return 'server';
+    const existing = sessionStorage.getItem('clientId');
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    sessionStorage.setItem('clientId', id);
+    return id;
+  }, []);
+
+    // ---- Refs / state -----------------------------------------
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
-
-
-  // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -419,5 +427,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
