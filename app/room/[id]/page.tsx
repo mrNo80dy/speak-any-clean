@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
 
 
@@ -16,8 +17,8 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
 
 export default function RoomPage() {
-  const params = useParams<{ roomId: string }>();
-  const roomId = params?.roomId;
+  const params = useParams<{ id: string }>();
+  const roomId = params?.id;
 
 
   // ---- Refs / state -----------------------------------------
@@ -418,4 +419,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
