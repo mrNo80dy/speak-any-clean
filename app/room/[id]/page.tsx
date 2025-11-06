@@ -1,140 +1,435 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
-import RoomCall from "@/components/RoomCall";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useParams } from 'next/navigation';
+import { createClient, RealtimeChannel } from '@supabase/supabase-js';
 
-type Room = {
-  id: string;
-  name: string | null;
-  code: string | null;
-  is_active: boolean;
-  created_at?: string | null;
+type Peer = {
+  pc: RTCPeerConnection;
+  remoteStream: MediaStream;
 };
 
+type PeerStreams = Record<string, MediaStream>;
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
+
 export default function RoomPage() {
-  const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const roomId = useMemo(() => (Array.isArray(params?.id) ? params.id[0] : params?.id) ?? "", [params]);
+  const params = useParams<{ roomId: string }>();
+  const roomId = params?.roomId;
 
-  const [loading, setLoading] = useState(true);
-  const [room, setRoom] = useState<Room | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // ---- IDs & client -----------------------------------------
+  const clientId = useMemo(() => {
+    // stable per-tab id
+    if (typeof window === 'undefined') return 'server';
+    const existing = sessionStorage.getItem('clientId');
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    sessionStorage.setItem('clientId', id);
+    return id;
+  }, []);
 
-  // Fetch room by ID on mount/when id changes
+  const supabase = useMemo(() => {
+    return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+      realtime: { params: { eventsPerSecond: 25 } },
+    });
+  }, []);
+
+  // ---- Refs / state -----------------------------------------
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Map<string, Peer>>(new Map());
+  const [peerIds, setPeerIds] = useState<string[]>([]);
+  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+  const [needsUnmute, setNeedsUnmute] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
+
+  const log = (msg: string, ...rest: any[]) => {
+    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${rest.length ? JSON.stringify(rest) : ''}`;
+    setLogs((l) => [line, ...l].slice(0, 200));
+    // Uncomment for console debug:
+    // console.debug('[room]', msg, ...rest);
+  };
+
+  // ---- Helpers ----------------------------------------------
+  function upsertPeerStream(remoteId: string, stream: MediaStream) {
+    setPeerStreams((prev) => {
+      if (prev[remoteId] === stream) return prev;
+      return { ...prev, [remoteId]: stream };
+    });
+  }
+
+  function getOrCreatePeer(
+    remoteId: string,
+    channel: RealtimeChannel,
+  ) {
+    let existing = peersRef.current.get(remoteId);
+    if (existing) return existing;
+
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
+    });
+
+    const remoteStream = new MediaStream();
+
+    pc.onconnectionstatechange = () => {
+      log(`pc(${remoteId}) state: ${pc.connectionState}`);
+      if (pc.connectionState === 'connected') setConnected(true);
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) {
+        channel.send({
+          type: 'broadcast',
+          event: 'webrtc',
+          payload: {
+            type: 'ice',
+            from: clientId,
+            to: remoteId,
+            candidate: e.candidate.toJSON(),
+          },
+        });
+      }
+    };
+
+    pc.ontrack = (e) => {
+      // merge any incoming tracks into our stable stream
+      if (e.streams && e.streams[0]) {
+        e.streams[0].getTracks().forEach((t) => {
+          if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
+            remoteStream.addTrack(t);
+          }
+        });
+      } else if (e.track) {
+        // fallback if streams array is empty
+        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
+          remoteStream.addTrack(e.track);
+        }
+      }
+      upsertPeerStream(remoteId, remoteStream);
+      log('ontrack', { from: remoteId, kind: e.track?.kind });
+    };
+
+    // Add local tracks if we already have them
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    } else {
+      // ensure we will still receive even if local is missing
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+    }
+
+    const peer: Peer = { pc, remoteStream };
+    peersRef.current.set(remoteId, peer);
+    return peer;
+  }
+
+  async function makeOffer(toId: string, channel: RealtimeChannel) {
+    const { pc } = getOrCreatePeer(toId, channel);
+
+    if (localStreamRef.current && pc.getSenders().length === 0) {
+      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    }
+
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+    await pc.setLocalDescription(offer);
+
+    channel.send({
+      type: 'broadcast',
+      event: 'webrtc',
+      payload: { type: 'offer', from: clientId, to: toId, sdp: offer },
+    });
+
+    log('sent offer', { to: toId });
+  }
+
+  async function handleOffer(fromId: string, sdp: RTCSessionDescriptionInit, channel: RealtimeChannel) {
+    const { pc } = getOrCreatePeer(fromId, channel);
+
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+
+    // ensure local tracks exist
+    if (localStreamRef.current && pc.getSenders().length === 0) {
+      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    }
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    channel.send({
+      type: 'broadcast',
+      event: 'webrtc',
+      payload: { type: 'answer', from: clientId, to: fromId, sdp: answer },
+    });
+
+    log('sent answer', { to: fromId });
+  }
+
+  async function handleAnswer(fromId: string, sdp: RTCSessionDescriptionInit) {
+    const peer = peersRef.current.get(fromId);
+    if (!peer) return;
+    await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    log('applied answer', { from: fromId });
+  }
+
+  async function handleIce(fromId: string, candidate: RTCIceCandidateInit) {
+    const peer = peersRef.current.get(fromId);
+    if (!peer) return;
+    try {
+      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      log('added ice', { from: fromId });
+    } catch (err) {
+      log('ice error', { err: (err as Error).message });
+    }
+  }
+
+  async function acquireLocalMedia() {
+    if (localStreamRef.current) return localStreamRef.current;
+    const constraints: MediaStreamConstraints = {
+      audio: true,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+    };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    localStreamRef.current = stream;
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+      // local preview must be muted to avoid feedback
+      localVideoRef.current.muted = true;
+      await localVideoRef.current.play().catch(() => {});
+    }
+    return stream;
+  }
+
+  // Attach remote streams to hidden <audio> elements to force autoplay
   useEffect(() => {
-    if (!roomId) return;
-    let cancelled = false;
+    // Try to play all remote streams through audio elements when they appear
+    const tryPlayAll = async () => {
+      const audios = document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+      for (const a of Array.from(audios)) {
+        try {
+          await a.play();
+        } catch {
+          setNeedsUnmute(true);
+        }
+      }
+    };
+    tryPlayAll();
+  }, [peerStreams]);
+
+  // ---- Lifecycle: join room, wire realtime -------------------
+  useEffect(() => {
+    if (!roomId || !clientId) return;
+    let isMounted = true;
 
     (async () => {
-      setLoading(true);
-      setError(null);
       try {
-        const { data, error } = await supabase
-          .from("rooms")
-          .select("id,name,code,is_active,created_at")
-          .eq("id", roomId)
-          .maybeSingle();
+        await acquireLocalMedia();
 
-        console.log("[RoomPage] fetch by id", { roomId, data, error });
+        const channel = supabase.channel(
+          `room:${roomId}`,
+          {
+            config: {
+              broadcast: { self: false },
+              presence: { key: clientId },
+            },
+          }
+        );
 
-        if (cancelled) return;
+        channel.on('broadcast', { event: 'webrtc' }, async ({ payload }) => {
+          const { type, from, to } = payload || {};
+          if (!type || from === clientId) return;
+          if (to && to !== clientId) return;
 
-        if (error) {
-          setError(error.message);
-          setRoom(null);
-        } else if (!data) {
-          // Not found
-          setRoom(null);
-        } else {
-          setRoom(data as Room);
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(e?.message ?? "Unknown error");
-          setRoom(null);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+          if (type === 'offer') {
+            await handleOffer(from, payload.sdp, channel);
+          } else if (type === 'answer') {
+            await handleAnswer(from, payload.sdp);
+          } else if (type === 'ice') {
+            await handleIce(from, payload.candidate);
+          }
+        });
+
+        channel.on('presence', { event: 'sync' }, () => {
+          // Presence state: { [key: userId]: [{ metas... }] }
+          const state = channel.presenceState() as Record<string, any[]>;
+          const others: string[] = Object.values(state)
+            .flat()
+            .map((m: any) => m?.clientId)
+            .filter((id: string) => id && id !== clientId);
+
+          setPeerIds(others);
+
+          // Proactively offer to any peers we don't yet have a PC for
+          others.forEach((id) => {
+            if (!peersRef.current.has(id)) {
+              makeOffer(id, channel).catch((e) => log('offer error', { e: (e as Error).message }));
+            }
+          });
+        });
+
+        const sub = await channel.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            log('subscribed to channel', { roomId, clientId });
+            channel.track({ clientId });
+          }
+        });
+
+        channelRef.current = channel;
+
+        // Cleanup on unmount
+        const cleanup = () => {
+          try {
+            if (channelRef.current) {
+              channelRef.current.untrack();
+              channelRef.current.unsubscribe();
+              channelRef.current = null;
+            }
+          } catch {}
+        };
+
+        if (!isMounted) cleanup();
+      } catch (err) {
+        log('init error', { err: (err as Error).message });
       }
     })();
 
     return () => {
-      cancelled = true;
+      isMounted = false;
+
+      // Close PCs
+      peersRef.current.forEach(({ pc }) => {
+        try { pc.close(); } catch {}
+      });
+      peersRef.current.clear();
+
+      // Stop local media
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
+
+      // Unsubscribe channel
+      try {
+        if (channelRef.current) {
+          channelRef.current.untrack();
+          channelRef.current.unsubscribe();
+          channelRef.current = null;
+        }
+      } catch {}
     };
-  }, [roomId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, clientId, supabase]);
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className="min-h-screen grid place-items-center p-6">
-        <Card className="w-full max-w-lg">
-          <CardHeader>
-            <CardTitle>Loading room…</CardTitle>
-            <CardDescription>Fetching room details</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-gray-600">Please wait…</div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // ---- UI controls ------------------------------------------
+  const handleUnmuteClick = async () => {
+    setNeedsUnmute(false);
+    const audios = document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+    for (const a of Array.from(audios)) {
+      try { await a.play(); } catch {}
+    }
+  };
 
-  // Not found / error state
-  if (!room) {
-    return (
-      <div className="min-h-screen grid place-items-center p-6">
-        <Card className="w-full max-w-lg">
-          <CardHeader>
-            <CardTitle>Room Not Found</CardTitle>
-            <CardDescription>
-              The room you're looking for doesn't exist or has been deleted.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between">
-            <Button asChild>
-              <Link href="/">Back to Home</Link>
-            </Button>
-            {error ? <div className="text-sm text-red-600">{error}</div> : null}
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const toggleCamera = async () => {
+    if (!localStreamRef.current) return;
+    const videoTrack = localStreamRef.current.getVideoTracks()[0];
+    if (!videoTrack) return;
+    videoTrack.enabled = !videoTrack.enabled;
+  };
 
-  // Happy path: room exists
+  const toggleMic = async () => {
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (!audioTrack) return;
+    audioTrack.enabled = !audioTrack.enabled;
+  };
+
+  // ---- Render -----------------------------------------------
   return (
-    <div className="min-h-screen p-6">
-      <div className="mx-auto w-full max-w-5xl space-y-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
+      <div className="mx-auto max-w-6xl p-4 space-y-4">
+        <header className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Room: {room.name ?? "(unnamed)"}</h1>
-            <p className="text-sm text-gray-600">
-              <span className="font-semibold">ID:</span> {room.id} &nbsp;•&nbsp;{" "}
-              <span className="font-semibold">Code:</span> {room.code ?? "(none)"} &nbsp;•&nbsp;{" "}
-              <span className="font-semibold">Active:</span> {String(room.is_active)}
+            <h1 className="text-xl font-semibold">Any-Speak Room</h1>
+            <p className="text-sm text-neutral-400">Room: <span className="font-mono">{roomId}</span></p>
+            <p className="text-xs text-neutral-500">You: <span className="font-mono">{clientId.slice(0, 8)}</span>{' '}
+              {connected ? <span className="text-emerald-400">● connected</span> : <span className="text-neutral-500">● connecting…</span>}
             </p>
           </div>
-          <Button variant="outline" onClick={() => router.push("/")}>
-            Home
-          </Button>
+          <div className="flex items-center gap-2">
+            <button onClick={toggleMic} className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700">Toggle Mic</button>
+            <button onClick={toggleCamera} className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700">Toggle Cam</button>
+          </div>
+        </header>
+
+        {needsUnmute && (
+          <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
+            <p className="text-sm">
+              Your browser blocked autoplay with sound. Click below to start remote audio.
+            </p>
+            <button onClick={handleUnmuteClick} className="mt-2 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm">
+              Unmute Remote Audio
+            </button>
+          </div>
+        )}
+
+        {/* Video Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Local self-view */}
+          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+              You
+            </div>
+          </div>
+
+          {/* If exactly one remote, show it side-by-side; if more, the grid wraps below */}
+          {peerIds.map((pid) => (
+            <div key={pid} className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+              <video
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+                ref={(el) => {
+                  const stream = peerStreams[pid];
+                  if (el && stream && el.srcObject !== stream) {
+                    el.srcObject = stream;
+                  }
+                }}
+              />
+              {/* Hidden audio element to force autoplay */}
+              <audio
+                data-remote
+                autoPlay
+                ref={(el) => {
+                  const stream = peerStreams[pid];
+                  if (el && stream && el.srcObject !== stream) {
+                    el.srcObject = stream;
+                  }
+                }}
+              />
+              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                {pid.slice(0, 8)}
+              </div>
+            </div>
+          ))}
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Call</CardTitle>
-            <CardDescription>Join the call and start speaking</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* Real call UI */}
-            <RoomCall roomId={room.id} />
-          </CardContent>
-        </Card>
+        {/* Debug / logs */}
+        <details className="mt-4">
+          <summary className="cursor-pointer text-sm text-neutral-400">Debug logs</summary>
+          <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
+            {logs.join('\n')}
+          </pre>
+        </details>
       </div>
     </div>
   );
