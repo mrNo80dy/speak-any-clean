@@ -103,15 +103,25 @@ export default function RoomPage() {
         <div><span className="font-semibold">Active:</span> {String(room.is_active)}</div>
       </div>
 
-      {/* TODO: replace this section with your actual <RoomView/> once this works */}
-      <div className="mt-6 p-4 rounded-lg border bg-white">
-        <p className="mb-2 text-gray-700">
-          Replace this box with your actual room UI once fetching by ID is confirmed.
-        </p>
-        <Button onClick={() => alert("This is where you'd mount your WebRTC view.")}>
-          Start Call (placeholder)
-        </Button>
-      </div>
+      import RoomCall from "@/components/RoomCall";
+
+// ...after you verified `room` is not null:
+
+return (
+  <div className="p-6 space-y-4">
+    <h1 className="text-2xl font-bold">Room: {room.name ?? "(unnamed)"}</h1>
+    <div className="text-sm text-gray-600 space-y-1">
+      <div><span className="font-semibold">ID:</span> {room.id}</div>
+      <div><span className="font-semibold">Code:</span> {room.code ?? "(none)"}</div>
+      <div><span className="font-semibold">Active:</span> {String(room.is_active)}</div>
     </div>
-  );
+
+    {/* 🔁 Replace placeholder with the real call */}
+    <div className="mt-6 p-4 rounded-lg border bg-white">
+      <RoomCall roomId={room.id} />
+    </div>
+  </div>
+);
+
 }
+
