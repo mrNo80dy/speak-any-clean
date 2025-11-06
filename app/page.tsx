@@ -16,8 +16,7 @@ export default function HomePage() {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
 
-  const generateRoomCode = () =>
-    Math.random().toString(36).slice(2, 8).toUpperCase();
+  const generateRoomCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
   const handleCreateRoom = async () => {
     const name = roomName.trim();
@@ -25,24 +24,32 @@ export default function HomePage() {
 
     setCreating(true);
     try {
+      console.log("[CreateRoom] start", { name });
       const code = generateRoomCode();
+
+      // Try the insert
       const { data, error } = await supabase
         .from("rooms")
         .insert({ name, code, is_active: true })
         .select("id, code")
         .single();
 
-      if (error || !data) {
-        console.error("create room failed:", error);
-        alert("Could not create room. Please try again.");
+      console.log("[CreateRoom] result", { data, error });
+
+      if (error) {
+        alert(`Create failed: ${error.message}`);
+        return;
+      }
+      if (!data?.id) {
+        alert("Create failed: no id returned from database");
         return;
       }
 
-      // ✅ Navigate with actual room id
+      // Only navigate when we truly have an id
       router.push(`/room/${data.id}`);
-    } catch (e) {
-      console.error(e);
-      alert("Unexpected error creating room.");
+    } catch (e: any) {
+      console.error("[CreateRoom] unexpected error", e);
+      alert(`Unexpected error creating room: ${e?.message ?? e}`);
     } finally {
       setCreating(false);
     }
@@ -54,18 +61,16 @@ export default function HomePage() {
 
     setJoining(true);
     try {
-      // If it looks like a UUID, try directly
+      console.log("[JoinRoom] value", value);
+
       const looksLikeUUID =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          value
-        );
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
       if (looksLikeUUID) {
         router.push(`/room/${value}`);
         return;
       }
 
-      // Otherwise treat it as a room code
       const { data: room, error } = await supabase
         .from("rooms")
         .select("id")
@@ -73,15 +78,21 @@ export default function HomePage() {
         .eq("is_active", true)
         .maybeSingle();
 
-      if (error || !room) {
+      console.log("[JoinRoom] result", { room, error });
+
+      if (error) {
+        alert(`Lookup failed: ${error.message}`);
+        return;
+      }
+      if (!room?.id) {
         alert("Room not found. Check the ID/code and try again.");
         return;
       }
 
       router.push(`/room/${room.id}`);
-    } catch (e) {
-      console.error(e);
-      alert("Unexpected error joining room.");
+    } catch (e: any) {
+      console.error("[JoinRoom] unexpected error", e);
+      alert(`Unexpected error joining room: ${e?.message ?? e}`);
     } finally {
       setJoining(false);
     }
