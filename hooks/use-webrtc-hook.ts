@@ -82,6 +82,7 @@ export function useWebRTC(
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
 
   const peerConnectionsRef = useRef<PeerMap>({});
   const signalChRef = useRef<SignalChannel | null>(null);
@@ -122,9 +123,14 @@ export function useWebRTC(
         }
       }
 
-      pc.ontrack = () => {
-        // Your UI (e.g., <VideoGrid/>) should read from pc.getReceivers()
-      };
+      pc.ontrack = (ev) => {
+  // Use the first stream from the track event
+  const stream = ev.streams?.[0];
+  if (stream) {
+    setRemoteStreams((prev) => ({ ...prev, [otherId]: stream }));
+  }
+};
+
 
       pc.onicecandidate = (ev) => {
         if (!ev.candidate || !signalChRef.current || !roomId || !myPeerId) return;
@@ -281,11 +287,13 @@ signalChRef.current = ch; // stays SignalChannel (has isReady + patched send)
   return {
     localStream,
     peerConnections,
+    remoteStreams,
     audioEnabled,
     videoEnabled,
     toggleAudio,
     toggleVideo,
   };
 }
+
 
 
