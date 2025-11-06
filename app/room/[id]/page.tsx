@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { createClient, RealtimeChannel } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabaseClient';
+
 
 type Peer = {
   pc: RTCPeerConnection;
@@ -18,23 +19,6 @@ export default function RoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params?.roomId;
 
-  // ---- IDs & client -----------------------------------------
-  const clientId = useMemo(() => {
-    // stable per-tab id
-    if (typeof window === 'undefined') return 'server';
-    const existing = sessionStorage.getItem('clientId');
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    sessionStorage.setItem('clientId', id);
-    return id;
-  }, []);
-
-  const supabase = useMemo(() => {
-    return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
-      realtime: { params: { eventsPerSecond: 25 } },
-    });
-  }, []);
 
   // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
@@ -434,3 +418,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
