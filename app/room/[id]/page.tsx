@@ -5,6 +5,13 @@ import { useParams } from 'next/navigation';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabaseClient';
 
+type WebRTCPayload = {
+  type: 'offer' | 'answer' | 'ice';
+  from: string;
+  to?: string;
+  sdp?: RTCSessionDescriptionInit;
+  candidate?: RTCIceCandidateInit;
+};
 
 type Peer = {
   pc: RTCPeerConnection;
@@ -232,19 +239,20 @@ export default function RoomPage() {
           }
         );
 
-        channel.on('broadcast', { event: 'webrtc' }, async ({ payload }) => {
-          const { type, from, to } = payload || {};
-          if (!type || from === clientId) return;
-          if (to && to !== clientId) return;
+        channel.on('broadcast', { event: 'webrtc' }, async (message: { payload: WebRTCPayload }) => {
+  const { payload } = message;
+  const { type, from, to } = payload || {};
+  if (!type || from === clientId) return;
+  if (to && to !== clientId) return;
 
-          if (type === 'offer') {
-            await handleOffer(from, payload.sdp, channel);
-          } else if (type === 'answer') {
-            await handleAnswer(from, payload.sdp);
-          } else if (type === 'ice') {
-            await handleIce(from, payload.candidate);
-          }
-        });
+  if (type === 'offer') {
+    await handleOffer(from, payload.sdp!, channel);
+  } else if (type === 'answer') {
+    await handleAnswer(from, payload.sdp!);
+  } else if (type === 'ice') {
+    await handleIce(from, payload.candidate!);
+  }
+});
 
         channel.on('presence', { event: 'sync' }, () => {
           // Presence state: { [key: userId]: [{ metas... }] }
@@ -427,6 +435,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
