@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { useWebRTC } from "@/hooks/use-webrtc-hook";
 
+type RealtimeSubscribeStatus = 'SUBSCRIBED' | 'CLOSED' | 'TIMED_OUT' | 'CHANNEL_ERROR';
 type PresenceUser = { id: string };
 
 export default function RoomCall({ roomId }: { roomId: string }) {
@@ -28,11 +29,11 @@ export default function RoomCall({ roomId }: { roomId: string }) {
       console.log("[Presence] participants", ids);
     });
 
-    ch.subscribe(async (status) => {
-      if (status === "SUBSCRIBED") {
-        await ch.track({ online_at: Date.now() });
-      }
-    });
+    ch.subscribe(async (status: RealtimeSubscribeStatus) => {
+  if (status === 'SUBSCRIBED') {
+    await ch.track({ online_at: Date.now() });
+  }
+});
 
     return () => {
       ch.unsubscribe();
