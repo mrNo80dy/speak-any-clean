@@ -113,7 +113,7 @@ export default function HomePage() {
             <div className="p-3 bg-indigo-600 rounded-xl">
               <Video className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-4xl font-bold text-gray-900">Speak-any</h1>
+            <h1 className="text-4xl font-bold text-gray-900">Any-Speak</h1>
           </div>
           <p className="text-lg text-gray-600">Real-time video chat with live translation</p>
         </div>
