@@ -43,10 +43,6 @@ export function RoomView({ roomId }: RoomViewProps) {
   toggleVideo: () => {},
 };
 
-if (joined) {
-  rtc = useWebRTC(roomId, myPeerId, participants);
-}
-
 const {
   localStream,
   remoteStreams,
@@ -54,8 +50,7 @@ const {
   videoEnabled,
   toggleAudio,
   toggleVideo,
-} = rtc;
-
+} = useWebRTC(joined ? roomId : "", joined ? myPeerId : "", participants);
 
   // Translation bus (broadcast to room + render captions)
   const { messages, addTranslation } = useTranslation(
@@ -228,5 +223,6 @@ const {
     </div>
   );
 }
+
 
 
