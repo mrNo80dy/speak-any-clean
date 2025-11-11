@@ -34,8 +34,28 @@ export function RoomView({ roomId }: RoomViewProps) {
 
   const { enabled: ttsEnabled, speak, toggleEnabled: toggleTTS } = useTextToSpeech();
 
-  const { localStream, remoteStreams, audioEnabled, videoEnabled, toggleAudio, toggleVideo } =
-  useWebRTC(joined ? roomId : null, joined ? myPeerId : null, participants);
+  let rtc = {
+  localStream: null,
+  remoteStreams: {},
+  audioEnabled: true,
+  videoEnabled: true,
+  toggleAudio: () => {},
+  toggleVideo: () => {},
+};
+
+if (joined) {
+  rtc = useWebRTC(roomId, myPeerId, participants);
+}
+
+const {
+  localStream,
+  remoteStreams,
+  audioEnabled,
+  videoEnabled,
+  toggleAudio,
+  toggleVideo,
+} = rtc;
+
 
   // Translation bus (broadcast to room + render captions)
   const { messages, addTranslation } = useTranslation(
@@ -208,4 +228,5 @@ export function RoomView({ roomId }: RoomViewProps) {
     </div>
   );
 }
+
 
