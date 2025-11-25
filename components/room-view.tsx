@@ -216,6 +216,94 @@ export function RoomView({ roomId }: RoomViewProps) {
       />
     </div>
   );
+}    <div className="min-h-screen bg-gray-900 flex flex-col">
+      {/* Header */}
+      <div className="bg-gray-800 border-b border-gray-700 px-4 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="text-lg font-semibold text-white">{room.name}</h1>
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <span className="font-mono">{roomId.slice(0, 8)}...</span>
+                <button onClick={copyRoomId} className="hover:text-white transition-colors">
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-gray-400">
+              {participants.length} participant{participants.length !== 1 ? "s" : ""}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSettingsVisible(!settingsVisible)}
+              className="text-gray-300 hover:text-white"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Settings Panel */}
+      {settingsVisible && (
+        <div className="bg-gray-800 border-b border-gray-700 px-4 py-4">
+          <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-4">
+            <LanguageSelector value={myLanguage} onChange={setMyLanguage} label="I speak" />
+            <LanguageSelector value={targetLanguage} onChange={setTargetLanguage} label="Translate to" />
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="flex-1 overflow-hidden flex relative">
+        {/* Video Grid */}
+        <div className={`flex-1 ${captionsVisible ? "md:w-2/3" : "w-full"}`}>
+          <VideoGrid
+            localStream={localStream}
+            remoteStreams={remoteStreams}
+            audioEnabled={audioEnabled}
+            videoEnabled={videoEnabled}
+          />
+          {/* Interim transcript overlay */}
+          {interimTranscript && (
+            <div className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-lg text-sm">
+              {interimTranscript}
+            </div>
+          )}
+        </div>
+
+        {/* Captions Panel */}
+        {captionsVisible && (
+          <div className="w-full md:w-1/3 bg-gray-800 border-l border-gray-700">
+            <div className="h-full flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-700">
+                <h2 className="text-sm font-semibold text-white">Live Captions</h2>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <CaptionsPanel messages={messages} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Control Bar */}
+      <ControlBar
+        audioEnabled={audioEnabled}
+        videoEnabled={videoEnabled}
+        ttsEnabled={ttsEnabled}
+        captionsVisible={captionsVisible}
+        onToggleAudio={toggleAudio}
+        onToggleVideo={toggleVideo}
+        onToggleTTS={toggleTTS}
+        onToggleCaptions={() => setCaptionsVisible(!captionsVisible)}
+        onLeave={handleLeave}
+      />
+    </div>
+  );
 }  // WebRTC: audio/video now, video-ready architecture
   const {
     localStream,
@@ -399,4 +487,5 @@ export function RoomView({ roomId }: RoomViewProps) {
     </div>
   );
 }
+
 
