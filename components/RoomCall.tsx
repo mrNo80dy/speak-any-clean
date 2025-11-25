@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
-import { useWebRTC } from "@/hooks/use-webrtc-hook";
+import useWebRTCHook from "@/hooks/use-webrtc-hook";
 
 type RealtimeSubscribeStatus =
   | "SUBSCRIBED"
@@ -47,7 +47,7 @@ export default function RoomCall({ roomId }: { roomId: string }) {
     videoEnabled,
     toggleAudio,
     toggleVideo,
-  } = useWebRTC(roomId, myPeerId, participants);
+  } = useWebRTCHook(roomId, myPeerId, participants);
 
   const localRef = useRef<HTMLVideoElement | null>(null);
 
