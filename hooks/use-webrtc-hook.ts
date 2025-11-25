@@ -4,21 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   RealtimeChannel,
   RealtimeChannelSendResponse,
+  RealtimeChannelStatus,
 } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-];
+const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
 
 type SignalChannel = RealtimeChannel & {
-  send: (
-    args: {
-      type: "broadcast";
-      event: "signal";
-      payload: any;
-    }
-  ) => Promise<RealtimeChannelSendResponse>;
+  send: (args: {
+    type: "broadcast";
+    event: "signal";
+    payload: any;
+  }) => Promise<RealtimeChannelSendResponse>;
   isReady: () => boolean;
 };
 
@@ -42,7 +39,7 @@ function createSignalChannel(roomId: string): SignalChannel {
     });
   };
 
-  base.subscribe((status) => {
+  base.subscribe((status: RealtimeChannelStatus) => {
     if (status === "SUBSCRIBED") {
       ready = true;
       const pending = queue.splice(0);
@@ -62,15 +59,14 @@ export function useWebRTC(
   liveParticipants: { id: string }[]
 ) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<
-    Record<string, MediaStream>
-  >({});
+  const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
   const pcs = useRef<Record<string, RTCPeerConnection>>({});
   const signalCh = useRef<SignalChannel | null>(null);
 
+  // Get local media (audio + video)
   useEffect(() => {
     let stop = false;
     navigator.mediaDevices
@@ -126,6 +122,7 @@ export function useWebRTC(
     [localStream, myPeerId, roomId]
   );
 
+  // Signaling channel for WebRTC offers/answers/candidates
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
@@ -178,6 +175,12 @@ export function useWebRTC(
     };
   }, [roomId, myPeerId, getPC]);
 
+  // Create offers to new participants
+  useEffect(() => {
+    liveParticipants.forEach(async (p) => {
+      if (p    };
+  }, [roomId, myPeerId, getPC]);
+
   useEffect(() => {
     liveParticipants.forEach(async (p) => {
       if (p.id === myPeerId) return;
@@ -226,3 +229,4 @@ export function useWebRTC(
     toggleVideo,
   };
 }
+
