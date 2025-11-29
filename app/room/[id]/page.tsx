@@ -20,6 +20,12 @@ type WebRTCPayload = {
   candidate?: RTCIceCandidateInit;
 };
 
+type TranscriptPayload = {
+  from: string;
+  text: string;
+  lang: string;
+};
+
 type Peer = {
   pc: RTCPeerConnection;
   remoteStream: MediaStream;
@@ -29,6 +35,18 @@ type PeerStreams = Record<string, MediaStream>;
 
 type RoomInfo = {
   code: string | null;
+};
+
+type ChatMessage = {
+  id: string;
+  fromId: string;
+  fromName: string;
+  originalLang: string;
+  translatedLang: string;
+  originalText: string;
+  translatedText: string;
+  isLocal: boolean;
+  at: number;
 };
 
 export default function RoomPage() {
@@ -50,6 +68,7 @@ export default function RoomPage() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
+  const peerLabelsRef = useRef<Record<string, string>>({});
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -66,6 +85,15 @@ export default function RoomPage() {
   // For 5+ participants: which participant is shown large
   // "local" means your own camera; otherwise a peerId.
   const [spotlightId, setSpotlightId] = useState<string>("local");
+
+  // Captions / text stream
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [showCaptions, setShowCaptions] = useState(false);
+  const [autoSpeak] = useState(true); // reserved for later TTS
+
+  // Hand raise
+  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
+  const [myHandUp, setMyHandUp] = useState(false);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -86,6 +114,15 @@ export default function RoomPage() {
       el.play().catch(() => {});
     }
   };
+
+  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
+    const full: ChatMessage = {
+      ...msg,
+      id: crypto.randomUUID(),
+      at: Date.now(),
+    };
+    setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
+  }
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -352,6 +389,53 @@ export default function RoomPage() {
           }
         );
 
+        // Broadcast: transcripts (captions)
+        channel.on(
+          "broadcast",
+          { event: "transcript" },
+          async (message: { payload: TranscriptPayload }) => {
+            const { payload } = message;
+            if (!payload) return;
+            const { from, text, lang } = payload;
+            if (!text || !from || from === clientId) return;
+
+            const fromName =
+              peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
+
+            // TODO: replace with real translation
+            const translated = text;
+
+            pushMessage({
+              fromId: from,
+              fromName,
+              originalLang: lang,
+              translatedLang: "en-US",
+              originalText: text,
+              translatedText: translated,
+              isLocal: false,
+            });
+
+            // Later: if (autoSpeak) speakText(translated, "en-US");
+          }
+        );
+
+        // Broadcast: hand raise signals
+        channel.on(
+          "broadcast",
+          { event: "hand" },
+          (message: { payload: { from: string; up: boolean } }) => {
+            const { payload } = message;
+            if (!payload) return;
+            const { from, up } = payload;
+            if (!from || from === clientId) return;
+
+            setHandsUp((prev) => ({
+              ...prev,
+              [from]: up,
+            }));
+          }
+        );
+
         // Presence sync -> who to call + names
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
@@ -372,9 +456,9 @@ export default function RoomPage() {
 
           setPeerIds(others);
           setPeerLabels(labels);
+          peerLabelsRef.current = labels;
 
-          // If new peers join and we're in 5+ layout,
-          // don't change spotlight automatically – let the user choose.
+          // If new peers join, we still initiate WebRTC offers
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
@@ -466,6 +550,18 @@ export default function RoomPage() {
     setMicOn(next);
   };
 
+  const toggleHand = () => {
+    const next = !myHandUp;
+    setMyHandUp(next);
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "hand",
+        payload: { from: clientId, up: next },
+      });
+    }
+  };
+
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
 
@@ -524,6 +620,16 @@ export default function RoomPage() {
             >
               {camOn ? "Cam On" : "Cam Off"}
             </button>
+            <button
+              onClick={() => setShowCaptions((v) => !v)}
+              className={`${pillBase} ${
+                showCaptions
+                  ? "bg-blue-500 text-white border-blue-400"
+                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+            >
+              CC
+            </button>
           </div>
         </header>
 
@@ -555,8 +661,9 @@ export default function RoomPage() {
                   playsInline
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                  You
+                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                  {myHandUp && <span>✋</span>}
+                  <span>You</span>
                 </div>
               </div>
             )}
@@ -592,8 +699,11 @@ export default function RoomPage() {
                     }
                   }}
                 />
-                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                  {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
+                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                  {handsUp[firstRemoteId] && <span>✋</span>}
+                  <span>
+                    {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
+                  </span>
                 </div>
 
                 {/* Local PiP */}
@@ -604,64 +714,66 @@ export default function RoomPage() {
                     playsInline
                     className="h-full w-full object-cover"
                   />
-                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                    You
+                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    {myHandUp && <span>✋</span>}
+                    <span>You</span>
                   </div>
                 </div>
               </div>
             )}
 
             {/* 3–4 total participants (you + 2–3 remotes): grid, no PiP */}
-{peerIds.length > 1 && totalParticipants <= 4 && (
-  <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 sm:grid-cols-2 auto-rows-fr">
-    {/* Local tile */}
-    <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
-      <video
-        ref={attachLocalVideoRef}
-        autoPlay
-        playsInline
-        className="h-full w-full object-cover"
-      />
-      <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-        You
-      </div>
-    </div>
+            {peerIds.length > 1 && totalParticipants <= 4 && (
+              <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 sm:grid-cols-2 auto-rows-fr">
+                {/* Local tile */}
+                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
+                  <video
+                    ref={attachLocalVideoRef}
+                    autoPlay
+                    playsInline
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                    {myHandUp && <span>✋</span>}
+                    <span>You</span>
+                  </div>
+                </div>
 
-    {/* Remote tiles */}
-    {peerIds.map((pid) => (
-      <div
-        key={pid}
-        className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0"
-      >
-        <video
-          autoPlay
-          playsInline
-          className="h-full w-full object-cover"
-          ref={(el) => {
-            const stream = peerStreams[pid];
-            if (el && stream && el.srcObject !== stream) {
-              el.srcObject = stream;
-            }
-          }}
-        />
-        <audio
-          data-remote
-          autoPlay
-          ref={(el) => {
-            const stream = peerStreams[pid];
-            if (el && stream && el.srcObject !== stream) {
-              el.srcObject = stream;
-            }
-          }}
-        />
-        <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-          {peerLabels[pid] ?? pid.slice(0, 8)}
-        </div>
-      </div>
-    ))}
-  </div>
-)}
-
+                {/* Remote tiles */}
+                {peerIds.map((pid) => (
+                  <div
+                    key={pid}
+                    className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0"
+                  >
+                    <video
+                      autoPlay
+                      playsInline
+                      className="h-full w-full object-cover"
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <audio
+                      data-remote
+                      autoPlay
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                      {handsUp[pid] && <span>✋</span>}
+                      <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* 5+ participants: spotlight (big) + thumbnails */}
             {totalParticipants >= 5 && (
@@ -676,8 +788,9 @@ export default function RoomPage() {
                         playsInline
                         className="h-full w-full object-cover"
                       />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                        You
+                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                        {myHandUp && <span>✋</span>}
+                        <span>You</span>
                       </div>
                     </>
                   ) : (
@@ -703,9 +816,12 @@ export default function RoomPage() {
                           }
                         }}
                       />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                        {peerLabels[spotlightId] ??
-                          spotlightId.slice(0, 8)}
+                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                        {handsUp[spotlightId] && <span>✋</span>}
+                        <span>
+                          {peerLabels[spotlightId] ??
+                            spotlightId.slice(0, 8)}
+                        </span>
                       </div>
                     </>
                   )}
@@ -726,8 +842,9 @@ export default function RoomPage() {
                         playsInline
                         className="h-full w-full object-cover"
                       />
-                      <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                        You
+                      <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        {myHandUp && <span>✋</span>}
+                        <span>You</span>
                       </div>
                     </button>
                   )}
@@ -767,8 +884,9 @@ export default function RoomPage() {
                             }
                           }}
                         />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                          {peerLabels[pid] ?? pid.slice(0, 8)}
+                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                          {handsUp[pid] && <span>✋</span>}
+                          <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
                         </div>
                       </button>
                     );
@@ -777,9 +895,44 @@ export default function RoomPage() {
               </div>
             )}
           </div>
+
+          {/* Subtitle overlay (last few messages), toggled by CC button */}
+          {showCaptions && messages.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+              <div className="max-w-xl w-[92%] space-y-2">
+                {messages.slice(-3).map((m) => (
+                  <div
+                    key={m.id}
+                    className="bg-black/70 backdrop-blur rounded-xl px-3 py-2 text-xs md:text-sm border border-white/10"
+                  >
+                    <div className="flex justify-between text-[10px] text-neutral-300 mb-0.5">
+                      <span>{m.isLocal ? "You" : m.fromName}</span>
+                      <span>
+                        {m.originalLang} → {m.translatedLang}
+                      </span>
+                    </div>
+                    {m.originalLang !== m.translatedLang && (
+                      <div className="text-[10px] text-neutral-400 italic mb-0.5">
+                        {m.originalText}
+                      </div>
+                    )}
+                    <div className="text-sm">{m.translatedText}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </main>
+
+        {/* Hand raise button (global) */}
+        <button
+          type="button"
+          onClick={toggleHand}
+          className="fixed bottom-4 right-4 z-30 rounded-full w-12 h-12 flex items-center justify-center bg-amber-500 hover:bg-amber-400 text-black shadow-lg"
+        >
+          <span className="text-xl">✋</span>
+        </button>
       </div>
     </div>
   );
 }
-
