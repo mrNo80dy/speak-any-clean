@@ -270,29 +270,32 @@ export default function RoomPage() {
   }
 
   async function handleOffer(
-    fromId: string,
-    sdp: RTCSessionDescriptionInit,
-    channel: RealtimeChannel
-  ) {
-    const { pc } = getOrCreatePeer(fromId, channel);
+  fromId: string,
+  sdp: RTCSessionDescriptionInit,
+  channel: RealtimeChannel
+) {
+  const { pc } = getOrCreatePeer(fromId, channel);
 
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
-    }
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    channel.send({
-      type: "broadcast",
-      event: "answer",
-      payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
-    } as any); // keep payload shape consistent
+  if (localStreamRef.current && pc.getSenders().length === 0) {
+    localStreamRef.current
+      .getTracks()
+      .forEach((t) => pc.addTrack(t, localStreamRef.current!));
   }
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  // ✅ IMPORTANT: send back on the same "webrtc" event
+  channel.send({
+    type: "broadcast",
+    event: "webrtc",
+    payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
+  });
+
+  log("sent answer", { to: fromId });
+}
 
   async function handleAnswer(
     fromId: string,
@@ -1031,3 +1034,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
