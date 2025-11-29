@@ -27,10 +27,6 @@ type Peer = {
 
 type PeerStreams = Record<string, MediaStream>;
 
-type RoomInfo = {
-  code: string | null;
-};
-
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
@@ -50,15 +46,11 @@ export default function RoomPage() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
-
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
-  const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
-  const [displayName, setDisplayName] = useState<string>("You");
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -66,54 +58,6 @@ export default function RoomPage() {
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
   };
-
-  // helper: whenever a local <video> mounts, attach the current stream
-  const attachLocalVideoRef = (el: HTMLVideoElement | null) => {
-    localVideoRef.current = el;
-    const stream = localStreamRef.current;
-    if (el && stream && el.srcObject !== stream) {
-      el.srcObject = stream;
-      el.muted = true;
-      el.playsInline = true as any;
-      el.setAttribute("playsinline", "true");
-      el.play().catch(() => {});
-    }
-  };
-
-  // ---- Load display name from localStorage -------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem("displayName");
-    if (saved) setDisplayName(saved);
-  }, []);
-
-  // ---- Load room code from Supabase --------------------------
-  useEffect(() => {
-    if (!roomId) return;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("rooms")
-          .select("code")
-          .eq("id", roomId)
-          .maybeSingle();
-
-        if (error) {
-          log("room load error", { message: error.message });
-          return;
-        }
-
-        if (data) {
-          setRoomInfo({
-            code: data.code ?? null,
-          });
-        }
-      } catch (err) {
-        log("room load error", { err: (err as Error).message });
-      }
-    })();
-  }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -154,6 +98,7 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
+      // Merge incoming tracks into our stable stream
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
@@ -175,6 +120,7 @@ export default function RoomPage() {
         .getTracks()
         .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
+      // Ensure we still receive even if local is missing
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
     }
@@ -217,6 +163,7 @@ export default function RoomPage() {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
+    // Ensure local tracks exist
     if (localStreamRef.current && pc.getSenders().length === 0) {
       localStreamRef.current
         .getTracks()
@@ -265,15 +212,16 @@ export default function RoomPage() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    // If a local video element already exists, attach immediately
     if (localVideoRef.current) {
-      attachLocalVideoRef(localVideoRef.current);
+      localVideoRef.current.srcObject = stream;
+      // local preview must be muted to avoid feedback
+      localVideoRef.current.muted = true;
+      await localVideoRef.current.play().catch(() => {});
     }
-
     return stream;
   }
 
-  // Attach remote streams to hidden <audio> to force autoplay
+  // Attach remote streams to hidden <audio> elements to force autoplay
   useEffect(() => {
     const tryPlayAll = async () => {
       const audios =
@@ -325,27 +273,17 @@ export default function RoomPage() {
           }
         );
 
-        // Presence sync -> who to call + names
+        // Presence sync -> know who to call
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
-          const others: string[] = [];
-          const labels: Record<string, string> = {};
-
-          Object.values(state).forEach((arr) => {
-            arr.forEach((m: any) => {
-              if (!m?.clientId) return;
-              if (m.clientId === clientId) return;
-              others.push(m.clientId);
-              labels[m.clientId] =
-                (m.name as string | undefined) ||
-                m.clientId.slice(0, 8) ||
-                "Guest";
-            });
-          });
+          const others: string[] = Object.values(state)
+            .flat()
+            .map((m: any) => m?.clientId)
+            .filter((id: string) => id && id !== clientId);
 
           setPeerIds(others);
-          setPeerLabels(labels);
 
+          // Proactively offer to peers we don't yet have a PC for
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
@@ -355,16 +293,17 @@ export default function RoomPage() {
           });
         });
 
-        // Subscribe, then track presence (include name)
+        // Subscribe, then track presence
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
-            channel.track({ clientId, name: displayName });
+            channel.track({ clientId });
           }
         });
 
         channelRef.current = channel;
 
+        // Cleanup on unmount
         const cleanup = () => {
           try {
             if (channelRef.current) {
@@ -384,6 +323,7 @@ export default function RoomPage() {
     return () => {
       isMounted = false;
 
+      // Close PCs
       peersRef.current.forEach(({ pc }) => {
         try {
           pc.close();
@@ -391,11 +331,13 @@ export default function RoomPage() {
       });
       peersRef.current.clear();
 
+      // Stop local media
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
       }
 
+      // Unsubscribe channel
       try {
         if (channelRef.current) {
           channelRef.current.untrack();
@@ -405,7 +347,7 @@ export default function RoomPage() {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, displayName]);
+  }, [roomId, clientId]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
@@ -433,61 +375,58 @@ export default function RoomPage() {
     audioTrack.enabled = !audioTrack.enabled;
   };
 
-  const firstRemoteId = peerIds[0] ?? null;
-  const firstRemoteStream = firstRemoteId
-    ? peerStreams[firstRemoteId]
-    : null;
-
   // ---- Render -----------------------------------------------
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-6xl p-4 space-y-4">
+        {/* Header */}
         <header className="relative flex items-center justify-between px-2 py-3">
-  {/* LEFT: room code */}
-  <div className="flex items-center gap-2">
-    <span className="text-sm text-neutral-400">Code</span>
-    <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
-      {roomCode ?? "------"}
-    </span>
-  </div>
+          {/* LEFT: room code */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-neutral-400">Code</span>
+            <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
+              {typeof roomId === "string"
+                ? roomId.slice(0, 6).toUpperCase()
+                : "------"}
+            </span>
+          </div>
 
-  {/* CENTER: app title */}
-  <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-2xl font-semibold tracking-tight">
-    Any-Speak
-  </h1>
+          {/* CENTER: app title */}
+          <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-2xl font-semibold tracking-tight">
+            Any-Speak
+          </h1>
 
-  {/* RIGHT: connection status + controls */}
-  <div className="flex items-center gap-2">
-    <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
-        connected
-          ? "bg-emerald-600/20 text-emerald-300"
-          : "bg-red-600/20 text-red-300"
-      }`}
-    >
-      {connected ? "Connected" : "Offline"}
-    </span>
+          {/* RIGHT: connection status + controls */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
+                connected
+                  ? "bg-emerald-600/20 text-emerald-300"
+                  : "bg-red-600/20 text-red-300"
+              }`}
+            >
+              {connected ? "Connected" : "Offline"}
+            </span>
 
-    <button
-      onClick={toggleMic}
-      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
-    >
-      Toggle Mic
-    </button>
-    <button
-      onClick={toggleCamera}
-      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
-    >
-      Toggle Cam
-    </button>
-  </div>
-</header>
-
+            <button
+              onClick={toggleMic}
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+            >
+              Toggle Mic
+            </button>
+            <button
+              onClick={toggleCamera}
+              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+            >
+              Toggle Cam
+            </button>
+          </div>
+        </header>
 
         {needsUnmute && (
           <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
             <p className="text-sm">
-              Your browser blocked autoplay with sound. Tap below to start
+              Your browser blocked autoplay with sound. Click below to start
               remote audio.
             </p>
             <button
@@ -499,12 +438,12 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Video Layouts */}
-        {peerIds.length === 0 && (
-          // Only you in the room: big self view
+        {/* Video Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Local self-view */}
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
             <video
-              ref={attachLocalVideoRef}
+              ref={localVideoRef}
               autoPlay
               playsInline
               className="h-full w-full object-cover"
@@ -513,118 +452,52 @@ export default function RoomPage() {
               You
             </div>
           </div>
-        )}
 
-        {peerIds.length === 1 && firstRemoteId && (
-          // 1:1 call: remote big, you small (picture-in-picture)
-          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-            {/* Remote big */}
-            <video
-              autoPlay
-              playsInline
-              className="h-full w-full object-cover"
-              ref={(el) => {
-                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
-                  el.srcObject = firstRemoteStream;
-                }
-              }}
-            />
-            <audio
-              data-remote
-              autoPlay
-              ref={(el) => {
-                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
-                  el.srcObject = firstRemoteStream;
-                }
-              }}
-            />
-            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-              {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
-            </div>
-
-            {/* Local PiP */}
-            <div className="absolute bottom-3 right-3 w-36 h-24 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70">
+          {/* Remote tiles */}
+          {peerIds.map((pid) => (
+            <div
+              key={pid}
+              className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
+            >
               <video
-                ref={attachLocalVideoRef}
                 autoPlay
                 playsInline
                 className="h-full w-full object-cover"
+                ref={(el) => {
+                  const stream = peerStreams[pid];
+                  if (el && stream && el.srcObject !== stream) {
+                    el.srcObject = stream;
+                  }
+                }}
               />
-              <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                You
-              </div>
-            </div>
-          </div>
-        )}
-
-        {peerIds.length > 1 && (
-          // 3+ participants: grid layout
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* Local self-view */}
-            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-              <video
-                ref={attachLocalVideoRef}
+              {/* Hidden audio element to force autoplay */}
+              <audio
+                data-remote
                 autoPlay
-                playsInline
-                className="h-full w-full object-cover"
+                ref={(el) => {
+                  const stream = peerStreams[pid];
+                  if (el && stream && el.srcObject !== stream) {
+                    el.srcObject = stream;
+                  }
+                }}
               />
               <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                You
+                {pid.slice(0, 8)}
               </div>
             </div>
+          ))}
+        </div>
 
-            {/* Remote tiles */}
-            {peerIds.map((pid) => (
-              <div
-                key={pid}
-                className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
-              >
-                <video
-                  autoPlay
-                  playsInline
-                  className="h-full w-full object-cover"
-                  ref={(el) => {
-                    const stream = peerStreams[pid];
-                    if (el && stream && el.srcObject !== stream) {
-                      el.srcObject = stream;
-                    }
-                  }}
-                />
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    const stream = peerStreams[pid];
-                    if (el && stream && el.srcObject !== stream) {
-                      el.srcObject = stream;
-                    }
-                  }}
-                />
-                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                  {peerLabels[pid] ?? pid.slice(0, 8)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Mobile control bar */}
-      <div className="fixed bottom-3 inset-x-0 flex justify-center gap-3 md:hidden">
-        <button
-          onClick={toggleMic}
-          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
-        >
-          Toggle Mic
-        </button>
-        <button
-          onClick={toggleCamera}
-          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
-        >
-          Toggle Cam
-        </button>
+        {/* Debug / logs */}
+        <details className="mt-4">
+          <summary className="cursor-pointer text-sm text-neutral-400">
+            Debug logs
+          </summary>
+          <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
+            {logs.join("\n")}
+          </pre>
+        </details>
       </div>
     </div>
   );
 }
-
