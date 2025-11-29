@@ -18,42 +18,46 @@ export default function HomePage() {
 
   const generateRoomCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
-  const handleCreateRoom = async () => {
-    const name = roomName.trim();
-    if (!name) return;
+ const handleCreateRoom = async () => {
+  const name = roomName.trim();
+  if (!name) return;
 
-    setCreating(true);
-    try {
-      console.log("[CreateRoom] start", { name });
-      const code = generateRoomCode();
+  setCreating(true);
+  try {
+    console.log("[CreateRoom] start", { name });
+    const code = generateRoomCode();
 
-      // Try the insert
-      const { data, error } = await supabase
-        .from("rooms")
-        .insert({ name, code, is_active: true })
-        .select("id, code")
-        .single();
+    // Try the insert
+    const { data, error } = await supabase
+      .from("rooms")
+      .insert({ name, code, is_active: true })
+      .select("id, code")
+      .single();
 
-      console.log("[CreateRoom] result", { data, error });
+    console.log("[CreateRoom] result", { data, error });
 
-      if (error) {
-        alert(`Create failed: ${error.message}`);
-        return;
-      }
-      if (!data?.id) {
-        alert("Create failed: no id returned from database");
-        return;
-      }
-
-      // Only navigate when we truly have an id
-      router.push(`/room/${data.id}`);
-    } catch (e: any) {
-      console.error("[CreateRoom] unexpected error", e);
-      alert(`Unexpected error creating room: ${e?.message ?? e}`);
-    } finally {
-      setCreating(false);
+    if (error) {
+      alert(`Create failed: ${error.message}`);
+      return;
     }
-  };
+    if (!data?.id || !data?.code) {
+      alert("Create failed: no id/code returned from database");
+      return;
+    }
+
+    // 🔹 Show the short room code so you can type it on your phone
+    alert(`Room created.\n\nRoom code: ${data.code}\n\nUse this on your phone to join.`);
+
+    // Only navigate when we truly have an id
+    router.push(`/room/${data.id}`);
+  } catch (e: any) {
+    console.error("[CreateRoom] unexpected error", e);
+    alert(`Unexpected error creating room: ${e?.message ?? e}`);
+  } finally {
+    setCreating(false);
+  }
+};
+
 
   const handleJoinRoom = async () => {
     const value = roomIdOrCode.trim();
@@ -187,3 +191,4 @@ export default function HomePage() {
     </div>
   );
 }
+
