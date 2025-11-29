@@ -69,6 +69,8 @@ export default function RoomPage() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
+  const recognitionRef = useRef<any>(null);
+  const micOnRef = useRef(false);
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -123,6 +125,11 @@ export default function RoomPage() {
     };
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
+
+  // keep micOn in a ref so STT onend can see latest
+  useEffect(() => {
+    micOnRef.current = micOn;
+  }, [micOn]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -282,11 +289,9 @@ export default function RoomPage() {
 
     channel.send({
       type: "broadcast",
-      event: "webrtc",
+      event: "answer",
       payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
-    });
-
-    log("sent answer", { to: fromId });
+    } as any); // keep payload shape consistent
   }
 
   async function handleAnswer(
@@ -336,6 +341,97 @@ export default function RoomPage() {
 
     return stream;
   }
+
+  // ---- STT setup: Web Speech API -----------------------------
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const w = window as any;
+    const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      log("speech recognition not supported");
+      return;
+    }
+
+    const rec = new SpeechRecognitionCtor();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = (navigator.language as string) || "en-US";
+
+    rec.onresult = (event: any) => {
+      const results = event.results;
+      if (!results || results.length === 0) return;
+      const last = results[results.length - 1];
+      if (!last.isFinal) return;
+
+      const text = (last[0]?.transcript || "").trim();
+      if (!text) return;
+      const lang = rec.lang || "en-US";
+
+      // Local message
+      const fromName = displayName || "You";
+      pushMessage({
+        fromId: clientId,
+        fromName,
+        originalLang: lang,
+        translatedLang: "en-US", // TODO: real translation
+        originalText: text,
+        translatedText: text,
+        isLocal: true,
+      });
+
+      // Broadcast to room
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "transcript",
+          payload: { from: clientId, text, lang },
+        });
+      }
+    };
+
+    rec.onerror = (event: any) => {
+      log("stt error", { error: event.error });
+    };
+
+    rec.onend = () => {
+      // Browser stops occasionally; restart if mic is still on
+      if (micOnRef.current) {
+        try {
+          rec.start();
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    recognitionRef.current = rec;
+
+    return () => {
+      try {
+        rec.stop();
+      } catch {}
+      recognitionRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Start/stop STT when mic toggles
+  useEffect(() => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+    if (micOn) {
+      try {
+        rec.start();
+      } catch {
+        // calling start twice throws; safe to ignore
+      }
+    } else {
+      try {
+        rec.stop();
+      } catch {}
+    }
+  }, [micOn]);
 
   // Attach remote streams to hidden <audio> to force autoplay
   useEffect(() => {
@@ -458,7 +554,6 @@ export default function RoomPage() {
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
 
-          // If new peers join, we still initiate WebRTC offers
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
