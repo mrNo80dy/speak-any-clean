@@ -27,6 +27,11 @@ type Peer = {
 
 type PeerStreams = Record<string, MediaStream>;
 
+type RoomInfo = {
+  name: string | null;
+  code: string | null;
+};
+
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
@@ -51,6 +56,7 @@ export default function RoomPage() {
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
+  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -58,6 +64,35 @@ export default function RoomPage() {
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
   };
+
+  // ---- Load room name + code from Supabase -------------------
+  useEffect(() => {
+    if (!roomId) return;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('rooms')
+          .select('name, code')
+          .eq('id', roomId)
+          .maybeSingle();
+
+        if (error) {
+          log('room load error', { message: error.message });
+          return;
+        }
+
+        if (data) {
+          setRoomInfo({
+            name: data.name ?? null,
+            code: data.code ?? null,
+          });
+        }
+      } catch (err) {
+        log('room load error', { err: (err as Error).message });
+      }
+    })();
+  }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -381,11 +416,20 @@ export default function RoomPage() {
       <div className="mx-auto max-w-6xl p-4 space-y-4">
         <header className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">Any-Speak Room</h1>
+            <h1 className="text-xl font-semibold">
+              {roomInfo?.name || 'Any-Speak Room'}
+            </h1>
             <p className="text-sm text-neutral-400">
-              Room: <span className="font-mono">{roomId}</span>
+              Room ID:{' '}
+              <span className="font-mono break-all">{roomId}</span>
             </p>
-            <p className="text-xs text-neutral-500">
+            {roomInfo?.code && (
+              <p className="text-xs text-neutral-400 mt-1">
+                Code:{' '}
+                <span className="font-mono">{roomInfo.code}</span>
+              </p>
+            )}
+            <p className="text-xs text-neutral-500 mt-1">
               You:{' '}
               <span className="font-mono">{clientId.slice(0, 8)}</span>{' '}
               {connected ? (
