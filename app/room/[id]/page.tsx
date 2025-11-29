@@ -481,9 +481,9 @@ export default function RoomPage() {
 
   // ---- Render -----------------------------------------------
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-8">
-      {/* inner wrapper: centered, width-capped, but uses full width of that cap */}
-      <div className="mx-auto w-full max-w-6xl p-3 md:p-4 space-y-4">
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-4 md:pb-4">
+      {/* full-width inner wrapper */}
+      <div className="w-full h-full p-3 md:p-4 space-y-4">
         {/* Top bar */}
         <header className="flex items-center justify-between gap-2 flex-wrap">
           {/* Left: room code */}
@@ -538,7 +538,7 @@ export default function RoomPage() {
         {/* Video Layouts */}
         {peerIds.length === 0 && (
           // Only you in the room: big self view
-          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-[21/9]">
             <video
               ref={attachLocalVideoRef}
               autoPlay
@@ -553,7 +553,7 @@ export default function RoomPage() {
 
         {peerIds.length === 1 && firstRemoteId && (
           // 1:1 call: remote big, you small (picture-in-picture)
-          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-[21/9]">
             {/* Remote big */}
             <video
               autoPlay
@@ -605,7 +605,7 @@ export default function RoomPage() {
           // 3+ participants: simple grid for now
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Local self-view */}
-            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-[21/9]">
               <video
                 ref={attachLocalVideoRef}
                 autoPlay
@@ -621,7 +621,7 @@ export default function RoomPage() {
             {peerIds.map((pid) => (
               <div
                 key={pid}
-                className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
+                className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-[21/9]"
               >
                 <video
                   autoPlay
