@@ -427,6 +427,11 @@ export default function RoomPage() {
     audioTrack.enabled = !audioTrack.enabled;
   };
 
+  const firstRemoteId = peerIds[0] ?? null;
+  const firstRemoteStream = firstRemoteId
+    ? peerStreams[firstRemoteId]
+    : null;
+
   // ---- Render -----------------------------------------------
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
@@ -484,9 +489,9 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Video Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Local self-view */}
+        {/* Video Layout */}
+        {peerIds.length === 0 && (
+          // Only you in the room: big self view
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
             <video
               ref={localVideoRef}
@@ -498,41 +503,100 @@ export default function RoomPage() {
               You
             </div>
           </div>
+        )}
 
-          {/* Remote tiles */}
-          {peerIds.map((pid) => (
-            <div
-              key={pid}
-              className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
-            >
+        {peerIds.length === 1 && firstRemoteId && (
+          // 1:1 call: remote big, you small (picture-in-picture)
+          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+            {/* Remote big */}
+            <video
+              autoPlay
+              playsInline
+              className="h-full w-full object-cover"
+              ref={(el) => {
+                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
+                  el.srcObject = firstRemoteStream;
+                }
+              }}
+            />
+            <audio
+              data-remote
+              autoPlay
+              ref={(el) => {
+                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
+                  el.srcObject = firstRemoteStream;
+                }
+              }}
+            />
+            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+              {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
+            </div>
+
+            {/* Local picture-in-picture */}
+            <div className="absolute bottom-3 right-3 w-36 h-24 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70">
               <video
+                ref={localVideoRef}
                 autoPlay
                 playsInline
                 className="h-full w-full object-cover"
-                ref={(el) => {
-                  const stream = peerStreams[pid];
-                  if (el && stream && el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                }}
               />
-              {/* Hidden audio element to force autoplay */}
-              <audio
-                data-remote
-                autoPlay
-                ref={(el) => {
-                  const stream = peerStreams[pid];
-                  if (el && stream && el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                }}
-              />
-              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                {peerLabels[pid] ?? pid.slice(0, 8)}
+              <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                You
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+
+        {peerIds.length > 1 && (
+          // 3+ participants: grid layout
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Local self-view */}
+            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+              <video
+                ref={localVideoRef}
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                You
+              </div>
+            </div>
+
+            {/* Remote tiles */}
+            {peerIds.map((pid) => (
+              <div
+                key={pid}
+                className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
+              >
+                <video
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-cover"
+                  ref={(el) => {
+                    const stream = peerStreams[pid];
+                    if (el && stream && el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
+                />
+                <audio
+                  data-remote
+                  autoPlay
+                  ref={(el) => {
+                    const stream = peerStreams[pid];
+                    if (el && stream && el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
+                />
+                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                  {peerLabels[pid] ?? pid.slice(0, 8)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Debug / logs (dev only) */}
         <details className="mt-4">
