@@ -28,7 +28,6 @@ type Peer = {
 type PeerStreams = Record<string, MediaStream>;
 
 type RoomInfo = {
-  name: string | null;
   code: string | null;
 };
 
@@ -68,6 +67,19 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 200));
   };
 
+  // helper: whenever a local <video> mounts, attach the current stream
+  const attachLocalVideoRef = (el: HTMLVideoElement | null) => {
+    localVideoRef.current = el;
+    const stream = localStreamRef.current;
+    if (el && stream && el.srcObject !== stream) {
+      el.srcObject = stream;
+      el.muted = true;
+      el.playsInline = true as any;
+      el.setAttribute("playsinline", "true");
+      el.play().catch(() => {});
+    }
+  };
+
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -75,7 +87,7 @@ export default function RoomPage() {
     if (saved) setDisplayName(saved);
   }, []);
 
-  // ---- Load room name + code from Supabase -------------------
+  // ---- Load room code from Supabase --------------------------
   useEffect(() => {
     if (!roomId) return;
 
@@ -83,7 +95,7 @@ export default function RoomPage() {
       try {
         const { data, error } = await supabase
           .from("rooms")
-          .select("name, code")
+          .select("code")
           .eq("id", roomId)
           .maybeSingle();
 
@@ -94,7 +106,6 @@ export default function RoomPage() {
 
         if (data) {
           setRoomInfo({
-            name: data.name ?? null,
             code: data.code ?? null,
           });
         }
@@ -164,7 +175,6 @@ export default function RoomPage() {
         .getTracks()
         .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
-      // Ensure we still receive even if local is missing
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
     }
@@ -255,15 +265,15 @@ export default function RoomPage() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
+    // If a local video element already exists, attach immediately
     if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-      localVideoRef.current.muted = true;
-      await localVideoRef.current.play().catch(() => {});
+      attachLocalVideoRef(localVideoRef.current);
     }
+
     return stream;
   }
 
-  // Attach remote streams to hidden <audio> elements to force autoplay
+  // Attach remote streams to hidden <audio> to force autoplay
   useEffect(() => {
     const tryPlayAll = async () => {
       const audios =
@@ -315,7 +325,7 @@ export default function RoomPage() {
           }
         );
 
-        // Presence sync -> know who to call + names
+        // Presence sync -> who to call + names
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
           const others: string[] = [];
@@ -336,7 +346,6 @@ export default function RoomPage() {
           setPeerIds(others);
           setPeerLabels(labels);
 
-          // Proactively offer to peers we don't yet have a PC for
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
@@ -375,7 +384,6 @@ export default function RoomPage() {
     return () => {
       isMounted = false;
 
-      // Close PCs
       peersRef.current.forEach(({ pc }) => {
         try {
           pc.close();
@@ -383,13 +391,11 @@ export default function RoomPage() {
       });
       peersRef.current.clear();
 
-      // Stop local media
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
       }
 
-      // Unsubscribe channel
       try {
         if (channelRef.current) {
           channelRef.current.untrack();
@@ -438,17 +444,22 @@ export default function RoomPage() {
       <div className="mx-auto max-w-6xl p-4 space-y-4">
         <header className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">
-              {roomInfo?.name || "Any-Speak Room"}
-            </h1>
+            <h1 className="text-xl font-semibold">Any-Speak</h1>
+
             {roomInfo?.code && (
-              <p className="text-xs text-neutral-400 mt-1">
-                Code: <span className="font-mono">{roomInfo.code}</span>
-              </p>
+              <div className="mt-1 flex items-center gap-2 text-xs text-neutral-300">
+                <span className="opacity-70">Code</span>
+                <span className="px-3 py-1 rounded-full bg-neutral-800 border border-neutral-700 font-mono tracking-[0.25em]">
+                  {roomInfo.code}
+                </span>
+              </div>
             )}
+
             <p className="text-xs text-neutral-500 mt-1">
               Connected as{" "}
-              <span className="font-semibold">{displayName}</span>{" "}
+              <span className="font-semibold text-neutral-200">
+                {displayName}
+              </span>{" "}
               {connected ? (
                 <span className="text-emerald-400 ml-1">● connected</span>
               ) : (
@@ -457,7 +468,7 @@ export default function RoomPage() {
             </p>
           </div>
 
-          {/* Controls sit at top on desktop, bottom on mobile */}
+          {/* Desktop controls */}
           <div className="hidden md:flex items-center gap-2">
             <button
               onClick={toggleMic}
@@ -489,12 +500,12 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Video Layout */}
+        {/* Video Layouts */}
         {peerIds.length === 0 && (
           // Only you in the room: big self view
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
             <video
-              ref={localVideoRef}
+              ref={attachLocalVideoRef}
               autoPlay
               playsInline
               className="h-full w-full object-cover"
@@ -532,10 +543,10 @@ export default function RoomPage() {
               {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
             </div>
 
-            {/* Local picture-in-picture */}
+            {/* Local PiP */}
             <div className="absolute bottom-3 right-3 w-36 h-24 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70">
               <video
-                ref={localVideoRef}
+                ref={attachLocalVideoRef}
                 autoPlay
                 playsInline
                 className="h-full w-full object-cover"
@@ -553,7 +564,7 @@ export default function RoomPage() {
             {/* Local self-view */}
             <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
               <video
-                ref={localVideoRef}
+                ref={attachLocalVideoRef}
                 autoPlay
                 playsInline
                 className="h-full w-full object-cover"
@@ -597,16 +608,6 @@ export default function RoomPage() {
             ))}
           </div>
         )}
-
-        {/* Debug / logs (dev only) */}
-        <details className="mt-4">
-          <summary className="cursor-pointer text-sm text-neutral-400">
-            Debug logs
-          </summary>
-          <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
-            {logs.join("\n")}
-          </pre>
-        </details>
       </div>
 
       {/* Mobile control bar */}
