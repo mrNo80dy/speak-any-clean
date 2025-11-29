@@ -612,55 +612,56 @@ export default function RoomPage() {
             )}
 
             {/* 3–4 total participants (you + 2–3 remotes): grid, no PiP */}
-            {peerIds.length > 1 && totalParticipants <= 4 && (
-              <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 md:grid-cols-2">
-                {/* Local tile */}
-                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden">
-                  <video
-                    ref={attachLocalVideoRef}
-                    autoPlay
-                    playsInline
-                    className="h-full w-full object-cover"
-                  />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                    You
-                  </div>
-                </div>
+{peerIds.length > 1 && totalParticipants <= 4 && (
+  <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 sm:grid-cols-2 auto-rows-fr">
+    {/* Local tile */}
+    <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
+      <video
+        ref={attachLocalVideoRef}
+        autoPlay
+        playsInline
+        className="h-full w-full object-cover"
+      />
+      <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+        You
+      </div>
+    </div>
 
-                {/* Remote tiles */}
-                {peerIds.map((pid) => (
-                  <div
-                    key={pid}
-                    className="relative bg-neutral-900 rounded-2xl overflow-hidden"
-                  >
-                    <video
-                      autoPlay
-                      playsInline
-                      className="h-full w-full object-cover"
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                      {peerLabels[pid] ?? pid.slice(0, 8)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+    {/* Remote tiles */}
+    {peerIds.map((pid) => (
+      <div
+        key={pid}
+        className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0"
+      >
+        <video
+          autoPlay
+          playsInline
+          className="h-full w-full object-cover"
+          ref={(el) => {
+            const stream = peerStreams[pid];
+            if (el && stream && el.srcObject !== stream) {
+              el.srcObject = stream;
+            }
+          }}
+        />
+        <audio
+          data-remote
+          autoPlay
+          ref={(el) => {
+            const stream = peerStreams[pid];
+            if (el && stream && el.srcObject !== stream) {
+              el.srcObject = stream;
+            }
+          }}
+        />
+        <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+          {peerLabels[pid] ?? pid.slice(0, 8)}
+        </div>
+      </div>
+    ))}
+  </div>
+)}
+
 
             {/* 5+ participants: spotlight (big) + thumbnails */}
             {totalParticipants >= 5 && (
@@ -781,3 +782,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
