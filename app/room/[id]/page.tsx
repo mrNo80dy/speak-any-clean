@@ -24,6 +24,7 @@ type TranscriptPayload = {
   from: string;
   text: string;
   lang: string;
+  name?: string; // 👈 new: carry speaker name with each transcript
 };
 
 type Peer = {
@@ -91,6 +92,7 @@ export default function RoomPage() {
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showCaptions, setShowCaptions] = useState(false);
+  const [captionLines, setCaptionLines] = useState<number>(3); // 👈 user-adjustable
   const [autoSpeak] = useState(true); // reserved for later TTS
 
   // Hand raise
@@ -270,32 +272,32 @@ export default function RoomPage() {
   }
 
   async function handleOffer(
-  fromId: string,
-  sdp: RTCSessionDescriptionInit,
-  channel: RealtimeChannel
-) {
-  const { pc } = getOrCreatePeer(fromId, channel);
+    fromId: string,
+    sdp: RTCSessionDescriptionInit,
+    channel: RealtimeChannel
+  ) {
+    const { pc } = getOrCreatePeer(fromId, channel);
 
-  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-  if (localStreamRef.current && pc.getSenders().length === 0) {
-    localStreamRef.current
-      .getTracks()
-      .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    if (localStreamRef.current && pc.getSenders().length === 0) {
+      localStreamRef.current
+        .getTracks()
+        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    }
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    // ✅ IMPORTANT: send back on the same "webrtc" event
+    channel.send({
+      type: "broadcast",
+      event: "webrtc",
+      payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
+    });
+
+    log("sent answer", { to: fromId });
   }
-
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-
-  // ✅ IMPORTANT: send back on the same "webrtc" event
-  channel.send({
-    type: "broadcast",
-    event: "webrtc",
-    payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
-  });
-
-  log("sent answer", { to: fromId });
-}
 
   async function handleAnswer(
     fromId: string,
@@ -350,7 +352,8 @@ export default function RoomPage() {
     if (typeof window === "undefined") return;
 
     const w = window as any;
-    const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
+    const SpeechRecognitionCtor =
+      w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       log("speech recognition not supported");
       return;
@@ -371,8 +374,9 @@ export default function RoomPage() {
       if (!text) return;
       const lang = rec.lang || "en-US";
 
-      // Local message
       const fromName = displayName || "You";
+
+      // Local message
       pushMessage({
         fromId: clientId,
         fromName,
@@ -383,12 +387,12 @@ export default function RoomPage() {
         isLocal: true,
       });
 
-      // Broadcast to room
+      // Broadcast to room (now includes name)
       if (channelRef.current) {
         channelRef.current.send({
           type: "broadcast",
           event: "transcript",
-          payload: { from: clientId, text, lang },
+          payload: { from: clientId, text, lang, name: fromName },
         });
       }
     };
@@ -417,7 +421,7 @@ export default function RoomPage() {
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [displayName]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -495,11 +499,15 @@ export default function RoomPage() {
           async (message: { payload: TranscriptPayload }) => {
             const { payload } = message;
             if (!payload) return;
-            const { from, text, lang } = payload;
+            const { from, text, lang, name } = payload;
             if (!text || !from || from === clientId) return;
 
+            // Prefer explicit name from payload, then presence label
             const fromName =
-              peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
+              name ??
+              peerLabelsRef.current[from] ??
+              from.slice(0, 8) ??
+              "Guest";
 
             // TODO: replace with real translation
             const translated = text;
@@ -681,6 +689,8 @@ export default function RoomPage() {
     ? "bg-neutral-100 text-neutral-900 border-neutral-300"
     : "bg-red-900/80 text-red-100 border-red-700";
 
+  const effectiveCaptionLines = Math.max(1, captionLines || 3);
+
   // ---- Render -----------------------------------------------
   return (
     <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -718,23 +728,42 @@ export default function RoomPage() {
             >
               {camOn ? "Cam On" : "Cam Off"}
             </button>
-            <button
-              onClick={() => setShowCaptions((v) => !v)}
-              className={`${pillBase} ${
-                showCaptions
-                  ? "bg-blue-500 text-white border-blue-400"
-                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
-              }`}
-            >
-              CC
-            </button>
+
+            {/* CC toggle + lines selector */}
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowCaptions((v) => !v)}
+                className={`${pillBase} ${
+                  showCaptions
+                    ? "bg-blue-500 text-white border-blue-400"
+                    : "bg-neutral-900 text-neutral-100 border-neutral-700"
+                }`}
+              >
+                CC
+              </button>
+              {showCaptions && (
+                <select
+                  value={captionLines}
+                  onChange={(e) =>
+                    setCaptionLines(Number(e.target.value) || 3)
+                  }
+                  className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
+                >
+                  <option value={1}>1</option>
+                  <option value={2}>2</option>
+                  <option value={3}>3</option>
+                  <option value={4}>4</option>
+                  <option value={5}>5</option>
+                </select>
+              )}
+            </div>
           </div>
         </header>
 
         {/* Main content area: fills the whole screen behind the header */}
         <main className="absolute inset-0 pt-10 md:pt-14">
           {needsUnmute && (
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-md w-[90%] p-3 rounded-xl bg-amber-900/80 border border-amber-500/60 shadow-lg">
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-md w[90%] p-3 rounded-xl bg-amber-900/80 border border-amber-500/60 shadow-lg">
               <p className="text-sm">
                 Your browser blocked autoplay with sound. Tap below to start
                 remote audio.
@@ -998,7 +1027,7 @@ export default function RoomPage() {
           {showCaptions && messages.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
               <div className="max-w-xl w-[92%] space-y-2">
-                {messages.slice(-3).map((m) => (
+                {messages.slice(-effectiveCaptionLines).map((m) => (
                   <div
                     key={m.id}
                     className="bg-black/70 backdrop-blur rounded-xl px-3 py-2 text-xs md:text-sm border border-white/10"
@@ -1034,4 +1063,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
