@@ -442,48 +442,47 @@ export default function RoomPage() {
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
       <div className="mx-auto max-w-6xl p-4 space-y-4">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold">Any-Speak</h1>
+        <header className="relative flex items-center justify-between px-2 py-3">
+  {/* LEFT: room code */}
+  <div className="flex items-center gap-2">
+    <span className="text-sm text-neutral-400">Code</span>
+    <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
+      {roomCode ?? "------"}
+    </span>
+  </div>
 
-            {roomInfo?.code && (
-              <div className="mt-1 flex items-center gap-2 text-xs text-neutral-300">
-                <span className="opacity-70">Code</span>
-                <span className="px-3 py-1 rounded-full bg-neutral-800 border border-neutral-700 font-mono tracking-[0.25em]">
-                  {roomInfo.code}
-                </span>
-              </div>
-            )}
+  {/* CENTER: app title */}
+  <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-2xl font-semibold tracking-tight">
+    Any-Speak
+  </h1>
 
-            <p className="text-xs text-neutral-500 mt-1">
-              Connected as{" "}
-              <span className="font-semibold text-neutral-200">
-                {displayName}
-              </span>{" "}
-              {connected ? (
-                <span className="text-emerald-400 ml-1">● connected</span>
-              ) : (
-                <span className="text-neutral-500 ml-1">● connecting…</span>
-              )}
-            </p>
-          </div>
+  {/* RIGHT: connection status + controls */}
+  <div className="flex items-center gap-2">
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
+        connected
+          ? "bg-emerald-600/20 text-emerald-300"
+          : "bg-red-600/20 text-red-300"
+      }`}
+    >
+      {connected ? "Connected" : "Offline"}
+    </span>
 
-          {/* Desktop controls */}
-          <div className="hidden md:flex items-center gap-2">
-            <button
-              onClick={toggleMic}
-              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
-            >
-              Toggle Mic
-            </button>
-            <button
-              onClick={toggleCamera}
-              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
-            >
-              Toggle Cam
-            </button>
-          </div>
-        </header>
+    <button
+      onClick={toggleMic}
+      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+    >
+      Toggle Mic
+    </button>
+    <button
+      onClick={toggleCamera}
+      className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+    >
+      Toggle Cam
+    </button>
+  </div>
+</header>
+
 
         {needsUnmute && (
           <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
@@ -628,3 +627,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
