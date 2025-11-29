@@ -56,7 +56,7 @@ export default function RoomPage() {
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<string[]>([]); // kept for debugging, not rendered
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
 
@@ -144,6 +144,7 @@ export default function RoomPage() {
         pc.connectionState === "failed" ||
         pc.connectionState === "closed"
       ) {
+        // if all peers gone, mark disconnected
         setTimeout(() => {
           if (peersRef.current.size === 0) setConnected(false);
         }, 0);
@@ -181,6 +182,7 @@ export default function RoomPage() {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
+    // Add local tracks if we already have them
     if (localStreamRef.current) {
       localStreamRef.current
         .getTracks()
@@ -276,6 +278,7 @@ export default function RoomPage() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
+    // default: mic muted, camera on
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = false;
@@ -293,6 +296,7 @@ export default function RoomPage() {
     return stream;
   }
 
+  // Attach remote streams to hidden <audio> to force autoplay
   useEffect(() => {
     const tryPlayAll = async () => {
       const audios =
@@ -308,6 +312,7 @@ export default function RoomPage() {
     tryPlayAll();
   }, [peerStreams]);
 
+  // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
     if (!roomId || !clientId) return;
     let isMounted = true;
@@ -323,6 +328,7 @@ export default function RoomPage() {
           },
         });
 
+        // Broadcast signaling
         channel.on(
           "broadcast",
           { event: "webrtc" },
@@ -342,6 +348,7 @@ export default function RoomPage() {
           }
         );
 
+        // Presence sync -> who to call + names
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
           const others: string[] = [];
@@ -371,6 +378,7 @@ export default function RoomPage() {
           });
         });
 
+        // Subscribe, then track presence (include name)
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
@@ -422,6 +430,7 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, clientId, displayName]);
 
+  // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
     setNeedsUnmute(false);
     const audios =
@@ -454,6 +463,7 @@ export default function RoomPage() {
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
 
+  // pill helpers
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
@@ -471,9 +481,9 @@ export default function RoomPage() {
 
   // ---- Render -----------------------------------------------
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
-      {/* changed wrapper: full width, no max-w-6xl cap */}
-      <div className="w-full h-full p-3 md:p-4 space-y-4">
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-8">
+      {/* inner wrapper: centered, width-capped, but uses full width of that cap */}
+      <div className="mx-auto w-full max-w-6xl p-3 md:p-4 space-y-4">
         {/* Top bar */}
         <header className="flex items-center justify-between gap-2 flex-wrap">
           {/* Left: room code */}
@@ -527,6 +537,7 @@ export default function RoomPage() {
 
         {/* Video Layouts */}
         {peerIds.length === 0 && (
+          // Only you in the room: big self view
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
             <video
               ref={attachLocalVideoRef}
@@ -541,6 +552,7 @@ export default function RoomPage() {
         )}
 
         {peerIds.length === 1 && firstRemoteId && (
+          // 1:1 call: remote big, you small (picture-in-picture)
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
             {/* Remote big */}
             <video
@@ -590,6 +602,7 @@ export default function RoomPage() {
         )}
 
         {peerIds.length > 1 && (
+          // 3+ participants: simple grid for now
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Local self-view */}
             <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
