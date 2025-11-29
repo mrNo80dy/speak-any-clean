@@ -43,18 +43,32 @@ export default function RoomPage() {
 
   // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // local media
+  const localMainRef = useRef<HTMLVideoElement | null>(null);
+  const localPipRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const [hasLocalStream, setHasLocalStream] = useState(false);
+
+  // peers
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+
+  // UI state
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
   // Room metadata (for header)
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  // (roomName is easy to add later if we want)
+
+  // Local display name (“Chad”, “Chad’s phone”, etc)
+  const [displayName, setDisplayName] = useState<string>("You");
+
+  // Mic / cam state (mic starts muted)
+  const [micEnabled, setMicEnabled] = useState<boolean>(false);
+  const [camEnabled, setCamEnabled] = useState<boolean>(true);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -62,6 +76,13 @@ export default function RoomPage() {
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
   };
+
+  // ---- Load display name from localStorage ------------------
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("displayName");
+    if (saved) setDisplayName(saved);
+  }, []);
 
   // ---- Fetch real room code from Supabase -------------------
   useEffect(() => {
@@ -236,6 +257,7 @@ export default function RoomPage() {
 
   async function acquireLocalMedia() {
     if (localStreamRef.current) return localStreamRef.current;
+
     const constraints: MediaStreamConstraints = {
       audio: true,
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -243,14 +265,41 @@ export default function RoomPage() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
-      // local preview must be muted to avoid feedback
-      localVideoRef.current.muted = true;
-      await localVideoRef.current.play().catch(() => {});
-    }
+    // Apply initial mic/cam state (mic muted by default)
+    stream.getAudioTracks().forEach((t) => {
+      t.enabled = micEnabled;
+    });
+    stream.getVideoTracks().forEach((t) => {
+      t.enabled = camEnabled;
+    });
+
+    setHasLocalStream(true);
     return stream;
   }
+
+  // Attach local stream to whichever video elements exist
+  useEffect(() => {
+    if (!hasLocalStream || !localStreamRef.current) return;
+
+    const els: HTMLVideoElement[] = [];
+    if (localMainRef.current) els.push(localMainRef.current);
+    if (localPipRef.current) els.push(localPipRef.current);
+
+    for (const el of els) {
+      if (!el) continue;
+      if (el.srcObject !== localStreamRef.current) {
+        el.srcObject = localStreamRef.current;
+      }
+      el.muted = true;
+      el.playsInline = true as any;
+      el.setAttribute("playsinline", "true");
+      el
+        .play()
+        .catch(() => {
+          /* ignore */
+        });
+    }
+  }, [hasLocalStream]);
 
   // Attach remote streams to hidden <audio> elements to force autoplay
   useEffect(() => {
@@ -392,21 +441,32 @@ export default function RoomPage() {
     }
   };
 
-  const toggleCamera = async () => {
-    if (!localStreamRef.current) return;
-    const videoTrack = localStreamRef.current.getVideoTracks()[0];
-    if (!videoTrack) return;
-    videoTrack.enabled = !videoTrack.enabled;
+  const toggleCamera = () => {
+    setCamEnabled((prev) => {
+      const next = !prev;
+      if (localStreamRef.current) {
+        localStreamRef.current
+          .getVideoTracks()
+          .forEach((t) => (t.enabled = next));
+      }
+      return next;
+    });
   };
 
-  const toggleMic = async () => {
-    if (!localStreamRef.current) return;
-    const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (!audioTrack) return;
-    audioTrack.enabled = !audioTrack.enabled;
+  const toggleMic = () => {
+    setMicEnabled((prev) => {
+      const next = !prev;
+      if (localStreamRef.current) {
+        localStreamRef.current
+          .getAudioTracks()
+          .forEach((t) => (t.enabled = next));
+      }
+      return next;
+    });
   };
 
-  // Layout helpers for PIP
+  // Layout helpers
+  const totalParticipants = 1 + peerIds.length;
   const primaryPeerId = peerIds[0] ?? null;
   const secondaryPeerIds = primaryPeerId ? peerIds.slice(1) : [];
 
@@ -414,8 +474,8 @@ export default function RoomPage() {
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-6xl p-4 space-y-4">
-        {/* Header - mobile friendly, centered title */}
-        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-2 py-3">
+        {/* Header: single logical row, flex-wrap for small screens */}
+        <header className="flex flex-wrap items-center gap-3 px-2 py-3">
           {/* LEFT: room code pill */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-neutral-400">Code</span>
@@ -425,12 +485,14 @@ export default function RoomPage() {
           </div>
 
           {/* CENTER: app title */}
-          <h1 className="text-2xl font-semibold tracking-tight text-center">
-            Any-Speak
-          </h1>
+          <div className="flex-1 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Any-Speak
+            </h1>
+          </div>
 
           {/* RIGHT: connection status + controls */}
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex items-center gap-2 ml-auto">
             <span
               className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
                 connected
@@ -443,15 +505,23 @@ export default function RoomPage() {
 
             <button
               onClick={toggleMic}
-              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+              className={`px-3 py-1.5 rounded-xl text-sm transition-colors ${
+                micEnabled
+                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
+                  : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+              }`}
             >
-              Toggle Mic
+              {micEnabled ? "Mic On" : "Mic Off"}
             </button>
             <button
               onClick={toggleCamera}
-              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-sm"
+              className={`px-3 py-1.5 rounded-xl text-sm transition-colors ${
+                camEnabled
+                  ? "bg-neutral-200 text-neutral-900 hover:bg-neutral-300"
+                  : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
+              }`}
             >
-              Toggle Cam
+              {camEnabled ? "Cam On" : "Cam Off"}
             </button>
           </div>
         </header>
@@ -459,7 +529,7 @@ export default function RoomPage() {
         {needsUnmute && (
           <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
             <p className="text-sm">
-              Your browser blocked autoplay with sound. Click below to start
+              Your browser blocked autoplay with sound. Tap below to start
               remote audio.
             </p>
             <button
@@ -471,71 +541,90 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* MAIN VIDEO + THUMBNAILS (PIP-style) */}
+        {/* MAIN VIDEO AREA: different layouts depending on participant count */}
         <div className="flex flex-col gap-3">
-          {/* Primary view:
-              - If there is a peer: show them full-screen, local self in PIP.
-              - Otherwise: show local self full-screen. */}
-          <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-            {primaryPeerId ? (
-              <>
-                {/* Remote as main */}
-                <video
-                  autoPlay
-                  playsInline
-                  className="h-full w-full object-cover"
-                  ref={(el) => {
-                    const stream = peerStreams[primaryPeerId];
-                    if (el && stream && el.srcObject !== stream) {
-                      el.srcObject = stream;
-                    }
-                  }}
-                />
-                {/* Audio for primary peer */}
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    const stream = peerStreams[primaryPeerId];
-                    if (el && stream && el.srcObject !== stream) {
-                      el.srcObject = stream;
-                    }
-                  }}
-                />
-                {/* Local PIP */}
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
-                />
-                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                  {primaryPeerId.slice(0, 8)}
-                </div>
-              </>
-            ) : (
-              <>
-                {/* Only me in the room */}
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  className="h-full w-full object-cover"
-                />
-                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                  You
-                </div>
-              </>
-            )}
-          </div>
+          {totalParticipants === 1 && (
+            // Only me in the room
+            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+              <video
+                ref={localMainRef}
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                {displayName}
+              </div>
+            </div>
+          )}
 
-          {/* Additional participants as scrollable thumbnails */}
-          {secondaryPeerIds.length > 0 && (
-            <div className="flex gap-2 overflow-x-auto pb-1">
-              {secondaryPeerIds.map((pid) => (
+          {totalParticipants === 2 && (
+            // PIP layout: remote full, local small
+            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+              {/* Remote main */}
+              {primaryPeerId && (
+                <>
+                  <video
+                    autoPlay
+                    playsInline
+                    className="h-full w-full object-cover"
+                    ref={(el) => {
+                      const stream = peerStreams[primaryPeerId];
+                      if (el && stream && el.srcObject !== stream) {
+                        el.srcObject = stream;
+                      }
+                    }}
+                  />
+                  <audio
+                    data-remote
+                    autoPlay
+                    ref={(el) => {
+                      const stream = peerStreams[primaryPeerId];
+                      if (el && stream && el.srcObject !== stream) {
+                        el.srcObject = stream;
+                      }
+                    }}
+                  />
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                    Partner
+                  </div>
+                </>
+              )}
+
+              {/* Local PIP */}
+              <video
+                ref={localPipRef}
+                autoPlay
+                playsInline
+                className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
+              />
+              <div className="absolute bottom-4 right-4 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                {displayName}
+              </div>
+            </div>
+          )}
+
+          {totalParticipants >= 3 && totalParticipants <= 4 && (
+            // Grid layout: everyone visible (up to 4)
+            <div className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-900 p-2">
+              {/* Local tile */}
+              <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
+                <video
+                  ref={localMainRef}
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-cover"
+                />
+                <div className="absolute bottom-1 left-1 text-xs bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                  {displayName}
+                </div>
+              </div>
+
+              {/* Peer tiles */}
+              {peerIds.slice(0, 3).map((pid) => (
                 <div
                   key={pid}
-                  className="relative h-24 w-40 flex-shrink-0 rounded-xl overflow-hidden bg-neutral-900"
+                  className="relative rounded-xl overflow-hidden bg-black aspect-video"
                 >
                   <video
                     autoPlay
@@ -559,16 +648,96 @@ export default function RoomPage() {
                     }}
                   />
                   <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                    {pid.slice(0, 8)}
+                    Guest
                   </div>
                 </div>
               ))}
             </div>
           )}
+
+          {totalParticipants > 4 && (
+            <>
+              {/* Primary view same as 2-person PIP */}
+              <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
+                {primaryPeerId && (
+                  <>
+                    <video
+                      autoPlay
+                      playsInline
+                      className="h-full w-full object-cover"
+                      ref={(el) => {
+                        const stream = peerStreams[primaryPeerId];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <audio
+                      data-remote
+                      autoPlay
+                      ref={(el) => {
+                        const stream = peerStreams[primaryPeerId];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                      Speaker
+                    </div>
+                  </>
+                )}
+
+                <video
+                  ref={localPipRef}
+                  autoPlay
+                  playsInline
+                  className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
+                />
+                <div className="absolute bottom-4 right-4 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                  {displayName}
+                </div>
+              </div>
+
+              {/* Scrollable strip of other participants */}
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {secondaryPeerIds.map((pid) => (
+                  <div
+                    key={pid}
+                    className="relative h-24 w-40 flex-shrink-0 rounded-xl overflow-hidden bg-neutral-900"
+                  >
+                    <video
+                      autoPlay
+                      playsInline
+                      className="h-full w-full object-cover"
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <audio
+                      data-remote
+                      autoPlay
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (el && stream && el.srcObject !== stream) {
+                          el.srcObject = stream;
+                        }
+                      }}
+                    />
+                    <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                      Guest
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        {/* NOTE: debug logs no longer rendered in the UI.
-           We still keep `logs` & `log()` for future dev, but nothing is shown. */}
+        {/* Debug logs are kept in state (for dev) but not rendered now. */}
       </div>
     </div>
   );
