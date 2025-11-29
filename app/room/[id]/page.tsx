@@ -1,19 +1,19 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import type { RealtimeChannel } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabaseClient";
 
 // Types
 type RealtimeSubscribeStatus =
-  | 'SUBSCRIBED'
-  | 'CLOSED'
-  | 'TIMED_OUT'
-  | 'CHANNEL_ERROR';
+  | "SUBSCRIBED"
+  | "CLOSED"
+  | "TIMED_OUT"
+  | "CHANNEL_ERROR";
 
 type WebRTCPayload = {
-  type: 'offer' | 'answer' | 'ice';
+  type: "offer" | "answer" | "ice";
   from: string;
   to?: string;
   sdp?: RTCSessionDescriptionInit;
@@ -38,11 +38,11 @@ export default function RoomPage() {
 
   // Stable per-tab clientId
   const clientId = useMemo(() => {
-    if (typeof window === 'undefined') return 'server';
-    const existing = sessionStorage.getItem('clientId');
+    if (typeof window === "undefined") return "server";
+    const existing = sessionStorage.getItem("clientId");
     if (existing) return existing;
     const id = crypto.randomUUID();
-    sessionStorage.setItem('clientId', id);
+    sessionStorage.setItem("clientId", id);
     return id;
   }, []);
 
@@ -51,19 +51,29 @@ export default function RoomPage() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
+
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+  const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
+  const [displayName, setDisplayName] = useState<string>("You");
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
-      rest.length ? JSON.stringify(rest) : ''
+      rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
   };
+
+  // ---- Load display name from localStorage -------------------
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("displayName");
+    if (saved) setDisplayName(saved);
+  }, []);
 
   // ---- Load room name + code from Supabase -------------------
   useEffect(() => {
@@ -72,13 +82,13 @@ export default function RoomPage() {
     (async () => {
       try {
         const { data, error } = await supabase
-          .from('rooms')
-          .select('name, code')
-          .eq('id', roomId)
+          .from("rooms")
+          .select("name, code")
+          .eq("id", roomId)
           .maybeSingle();
 
         if (error) {
-          log('room load error', { message: error.message });
+          log("room load error", { message: error.message });
           return;
         }
 
@@ -89,7 +99,7 @@ export default function RoomPage() {
           });
         }
       } catch (err) {
-        log('room load error', { err: (err as Error).message });
+        log("room load error", { err: (err as Error).message });
       }
     })();
   }, [roomId]);
@@ -107,23 +117,23 @@ export default function RoomPage() {
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: ['stun:stun.l.google.com:19302'] }],
+      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
 
     const remoteStream = new MediaStream();
 
     pc.onconnectionstatechange = () => {
       log(`pc(${remoteId}) state: ${pc.connectionState}`);
-      if (pc.connectionState === 'connected') setConnected(true);
+      if (pc.connectionState === "connected") setConnected(true);
     };
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         channel.send({
-          type: 'broadcast',
-          event: 'webrtc',
+          type: "broadcast",
+          event: "webrtc",
           payload: {
-            type: 'ice',
+            type: "ice",
             from: clientId,
             to: remoteId,
             candidate: e.candidate.toJSON(),
@@ -133,7 +143,6 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-      // Merge incoming tracks into our stable stream
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
@@ -146,7 +155,7 @@ export default function RoomPage() {
         }
       }
       upsertPeerStream(remoteId, remoteStream);
-      log('ontrack', { from: remoteId, kind: e.track?.kind });
+      log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
     // Add local tracks if we already have them
@@ -156,8 +165,8 @@ export default function RoomPage() {
         .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
       // Ensure we still receive even if local is missing
-      pc.addTransceiver('video', { direction: 'recvonly' });
-      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.addTransceiver("video", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" });
     }
 
     const peer: Peer = { pc, remoteStream };
@@ -181,12 +190,12 @@ export default function RoomPage() {
     await pc.setLocalDescription(offer);
 
     channel.send({
-      type: 'broadcast',
-      event: 'webrtc',
-      payload: { type: 'offer', from: clientId, to: toId, sdp: offer },
+      type: "broadcast",
+      event: "webrtc",
+      payload: { type: "offer", from: clientId, to: toId, sdp: offer },
     });
 
-    log('sent offer', { to: toId });
+    log("sent offer", { to: toId });
   }
 
   async function handleOffer(
@@ -198,7 +207,6 @@ export default function RoomPage() {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    // Ensure local tracks exist
     if (localStreamRef.current && pc.getSenders().length === 0) {
       localStreamRef.current
         .getTracks()
@@ -209,12 +217,12 @@ export default function RoomPage() {
     await pc.setLocalDescription(answer);
 
     channel.send({
-      type: 'broadcast',
-      event: 'webrtc',
-      payload: { type: 'answer', from: clientId, to: fromId, sdp: answer },
+      type: "broadcast",
+      event: "webrtc",
+      payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
     });
 
-    log('sent answer', { to: fromId });
+    log("sent answer", { to: fromId });
   }
 
   async function handleAnswer(
@@ -224,7 +232,7 @@ export default function RoomPage() {
     const peer = peersRef.current.get(fromId);
     if (!peer) return;
     await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    log('applied answer', { from: fromId });
+    log("applied answer", { from: fromId });
   }
 
   async function handleIce(fromId: string, candidate: RTCIceCandidateInit) {
@@ -232,9 +240,9 @@ export default function RoomPage() {
     if (!peer) return;
     try {
       await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      log('added ice', { from: fromId });
+      log("added ice", { from: fromId });
     } catch (err) {
-      log('ice error', { err: (err as Error).message });
+      log("ice error", { err: (err as Error).message });
     }
   }
 
@@ -249,7 +257,6 @@ export default function RoomPage() {
 
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = stream;
-      // local preview must be muted to avoid feedback
       localVideoRef.current.muted = true;
       await localVideoRef.current.play().catch(() => {});
     }
@@ -260,7 +267,7 @@ export default function RoomPage() {
   useEffect(() => {
     const tryPlayAll = async () => {
       const audios =
-        document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+        document.querySelectorAll<HTMLAudioElement>("audio[data-remote]");
       for (const a of Array.from(audios)) {
         try {
           await a.play();
@@ -290,55 +297,65 @@ export default function RoomPage() {
 
         // Broadcast signaling
         channel.on(
-          'broadcast',
-          { event: 'webrtc' },
+          "broadcast",
+          { event: "webrtc" },
           async (message: { payload: WebRTCPayload }) => {
             const { payload } = message;
             const { type, from, to } = payload || {};
             if (!type || from === clientId) return;
             if (to && to !== clientId) return;
 
-            if (type === 'offer' && payload.sdp) {
+            if (type === "offer" && payload.sdp) {
               await handleOffer(from, payload.sdp, channel);
-            } else if (type === 'answer' && payload.sdp) {
+            } else if (type === "answer" && payload.sdp) {
               await handleAnswer(from, payload.sdp);
-            } else if (type === 'ice' && payload.candidate) {
+            } else if (type === "ice" && payload.candidate) {
               await handleIce(from, payload.candidate);
             }
           }
         );
 
-        // Presence sync -> know who to call
-        channel.on('presence', { event: 'sync' }, () => {
+        // Presence sync -> know who to call + names
+        channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
-          const others: string[] = Object.values(state)
-            .flat()
-            .map((m: any) => m?.clientId)
-            .filter((id: string) => id && id !== clientId);
+          const others: string[] = [];
+          const labels: Record<string, string> = {};
+
+          Object.values(state).forEach((arr) => {
+            arr.forEach((m: any) => {
+              if (!m?.clientId) return;
+              if (m.clientId === clientId) return;
+              others.push(m.clientId);
+              labels[m.clientId] =
+                (m.name as string | undefined) ||
+                m.clientId.slice(0, 8) ||
+                "Guest";
+            });
+          });
 
           setPeerIds(others);
+          setPeerLabels(labels);
 
           // Proactively offer to peers we don't yet have a PC for
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
-                log('offer error', { e: (e as Error).message })
+                log("offer error", { e: (e as Error).message })
               );
             }
           });
         });
 
-        // Subscribe, then track presence
+        // Subscribe, then track presence (include name)
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
-          if (status === 'SUBSCRIBED') {
-            log('subscribed to channel', { roomId, clientId });
-            channel.track({ clientId });
+          if (status === "SUBSCRIBED") {
+            log("subscribed to channel", { roomId, clientId });
+            channel.track({ clientId, name: displayName });
           }
         });
 
         channelRef.current = channel;
 
-        // Cleanup on unmount
         const cleanup = () => {
           try {
             if (channelRef.current) {
@@ -351,7 +368,7 @@ export default function RoomPage() {
 
         if (!isMounted) cleanup();
       } catch (err) {
-        log('init error', { err: (err as Error).message });
+        log("init error", { err: (err as Error).message });
       }
     })();
 
@@ -382,13 +399,13 @@ export default function RoomPage() {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId]);
+  }, [roomId, clientId, displayName]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
     setNeedsUnmute(false);
     const audios =
-      document.querySelectorAll<HTMLAudioElement>('audio[data-remote]');
+      document.querySelectorAll<HTMLAudioElement>("audio[data-remote]");
     for (const a of Array.from(audios)) {
       try {
         await a.play();
@@ -417,21 +434,20 @@ export default function RoomPage() {
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-semibold">
-              {roomInfo?.name || 'Any-Speak Room'}
+              {roomInfo?.name || "Any-Speak Room"}
             </h1>
             <p className="text-sm text-neutral-400">
-              Room ID:{' '}
+              Room ID:{" "}
               <span className="font-mono break-all">{roomId}</span>
             </p>
             {roomInfo?.code && (
               <p className="text-xs text-neutral-400 mt-1">
-                Code:{' '}
-                <span className="font-mono">{roomInfo.code}</span>
+                Code: <span className="font-mono">{roomInfo.code}</span>
               </p>
             )}
             <p className="text-xs text-neutral-500 mt-1">
-              You:{' '}
-              <span className="font-mono">{clientId.slice(0, 8)}</span>{' '}
+              You: <span className="font-semibold">{displayName}</span>{" "}
+              (<span className="font-mono">{clientId.slice(0, 8)}</span>){" "}
               {connected ? (
                 <span className="text-emerald-400">● connected</span>
               ) : (
@@ -514,7 +530,7 @@ export default function RoomPage() {
                 }}
               />
               <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                {pid.slice(0, 8)}
+                {peerLabels[pid] ?? pid.slice(0, 8)}
               </div>
             </div>
           ))}
@@ -526,7 +542,7 @@ export default function RoomPage() {
             Debug logs
           </summary>
           <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
-            {logs.join('\n')}
+            {logs.join("\n")}
           </pre>
         </details>
       </div>
