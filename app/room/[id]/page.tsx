@@ -512,9 +512,25 @@ export default function RoomPage() {
           </span>
         </div>
 
-        <div className="flex-1 flex items-center justify-center">
-          <h1 className="text-xl font-semibold tracking-wide">Any-Speak</h1>
-        </div>
+        <div className="relative flex-1 min-h-[calc(100vh-96px)] rounded-2xl overflow-hidden bg-neutral-900 flex items-center justify-center">
+  {/* main remote */}
+  <video
+    ref={remoteMainRef}
+    autoPlay
+    playsInline
+    className="max-h-full max-w-full object-contain"
+  />
+
+  {/* self PIP – always anchored to bottom-right of this container */}
+  <video
+    ref={localPipRef}
+    autoPlay
+    muted
+    playsInline
+    className="pointer-events-none absolute bottom-4 right-4 h-24 w-32 rounded-xl border border-neutral-700/60 bg-black/70 object-cover shadow-lg shadow-black/60"
+  />
+</div>
+
 
         <div className="flex items-center justify-end gap-2 min-w-[220px]">
           <Pill tone="status" active={connected}>
@@ -636,3 +652,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
