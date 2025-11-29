@@ -52,9 +52,9 @@ export default function RoomPage() {
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
-  // NEW: room metadata for display
+  // Room metadata (for header)
   const [roomCode, setRoomCode] = useState<string | null>(null);
-  // (we can add roomName later if you want it)
+  // (roomName is easy to add later if we want)
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -406,13 +406,17 @@ export default function RoomPage() {
     audioTrack.enabled = !audioTrack.enabled;
   };
 
+  // Layout helpers for PIP
+  const primaryPeerId = peerIds[0] ?? null;
+  const secondaryPeerIds = primaryPeerId ? peerIds.slice(1) : [];
+
   // ---- Render -----------------------------------------------
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
       <div className="mx-auto max-w-6xl p-4 space-y-4">
-        {/* Header */}
-        <header className="relative flex items-center justify-between px-2 py-3">
-          {/* LEFT: room code (real code from DB) */}
+        {/* Header - mobile friendly, centered title */}
+        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-2 py-3">
+          {/* LEFT: room code pill */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-neutral-400">Code</span>
             <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
@@ -421,12 +425,12 @@ export default function RoomPage() {
           </div>
 
           {/* CENTER: app title */}
-          <h1 className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-2xl font-semibold tracking-tight">
+          <h1 className="text-2xl font-semibold tracking-tight text-center">
             Any-Speak
           </h1>
 
           {/* RIGHT: connection status + controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-end gap-2">
             <span
               className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
                 connected
@@ -467,65 +471,104 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Video Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Local self-view */}
+        {/* MAIN VIDEO + THUMBNAILS (PIP-style) */}
+        <div className="flex flex-col gap-3">
+          {/* Primary view:
+              - If there is a peer: show them full-screen, local self in PIP.
+              - Otherwise: show local self full-screen. */}
           <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-            <video
-              ref={localVideoRef}
-              autoPlay
-              playsInline
-              className="h-full w-full object-cover"
-            />
-            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-              You
-            </div>
+            {primaryPeerId ? (
+              <>
+                {/* Remote as main */}
+                <video
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-cover"
+                  ref={(el) => {
+                    const stream = peerStreams[primaryPeerId];
+                    if (el && stream && el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
+                />
+                {/* Audio for primary peer */}
+                <audio
+                  data-remote
+                  autoPlay
+                  ref={(el) => {
+                    const stream = peerStreams[primaryPeerId];
+                    if (el && stream && el.srcObject !== stream) {
+                      el.srcObject = stream;
+                    }
+                  }}
+                />
+                {/* Local PIP */}
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
+                />
+                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                  {primaryPeerId.slice(0, 8)}
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Only me in the room */}
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-cover"
+                />
+                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
+                  You
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Remote tiles */}
-          {peerIds.map((pid) => (
-            <div
-              key={pid}
-              className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
-            >
-              <video
-                autoPlay
-                playsInline
-                className="h-full w-full object-cover"
-                ref={(el) => {
-                  const stream = peerStreams[pid];
-                  if (el && stream && el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                }}
-              />
-              {/* Hidden audio element to force autoplay */}
-              <audio
-                data-remote
-                autoPlay
-                ref={(el) => {
-                  const stream = peerStreams[pid];
-                  if (el && stream && el.srcObject !== stream) {
-                    el.srcObject = stream;
-                  }
-                }}
-              />
-              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                {pid.slice(0, 8)}
-              </div>
+          {/* Additional participants as scrollable thumbnails */}
+          {secondaryPeerIds.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {secondaryPeerIds.map((pid) => (
+                <div
+                  key={pid}
+                  className="relative h-24 w-40 flex-shrink-0 rounded-xl overflow-hidden bg-neutral-900"
+                >
+                  <video
+                    autoPlay
+                    playsInline
+                    className="h-full w-full object-cover"
+                    ref={(el) => {
+                      const stream = peerStreams[pid];
+                      if (el && stream && el.srcObject !== stream) {
+                        el.srcObject = stream;
+                      }
+                    }}
+                  />
+                  <audio
+                    data-remote
+                    autoPlay
+                    ref={(el) => {
+                      const stream = peerStreams[pid];
+                      if (el && stream && el.srcObject !== stream) {
+                        el.srcObject = stream;
+                      }
+                    }}
+                  />
+                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                    {pid.slice(0, 8)}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
 
-        {/* Debug / logs */}
-        <details className="mt-4">
-          <summary className="cursor-pointer text-sm text-neutral-400">
-            Debug logs
-          </summary>
-          <pre className="mt-2 whitespace-pre-wrap text-xs bg-black/50 p-3 rounded-xl border border-neutral-800 max-h-64 overflow-auto">
-            {logs.join("\n")}
-          </pre>
-        </details>
+        {/* NOTE: debug logs no longer rendered in the UI.
+           We still keep `logs` & `log()` for future dev, but nothing is shown. */}
       </div>
     </div>
   );
