@@ -56,9 +56,12 @@ export default function RoomPage() {
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [needsUnmute, setNeedsUnmute] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<string[]>([]); // kept for debugging, not rendered
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
+
+  const [micOn, setMicOn] = useState(false); // default muted
+  const [camOn, setCamOn] = useState(true);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -136,6 +139,16 @@ export default function RoomPage() {
     pc.onconnectionstatechange = () => {
       log(`pc(${remoteId}) state: ${pc.connectionState}`);
       if (pc.connectionState === "connected") setConnected(true);
+      if (
+        pc.connectionState === "disconnected" ||
+        pc.connectionState === "failed" ||
+        pc.connectionState === "closed"
+      ) {
+        // if all peers gone, mark disconnected
+        setTimeout(() => {
+          if (peersRef.current.size === 0) setConnected(false);
+        }, 0);
+      }
     };
 
     pc.onicecandidate = (e) => {
@@ -265,7 +278,17 @@ export default function RoomPage() {
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    // If a local video element already exists, attach immediately
+    // default: mic muted, camera on
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = false;
+      setMicOn(false);
+    }
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      setCamOn(videoTrack.enabled);
+    }
+
     if (localVideoRef.current) {
       attachLocalVideoRef(localVideoRef.current);
     }
@@ -423,64 +446,78 @@ export default function RoomPage() {
     if (!localStreamRef.current) return;
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
     if (!videoTrack) return;
-    videoTrack.enabled = !videoTrack.enabled;
+    const next = !videoTrack.enabled;
+    videoTrack.enabled = next;
+    setCamOn(next);
   };
 
   const toggleMic = async () => {
     if (!localStreamRef.current) return;
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
     if (!audioTrack) return;
-    audioTrack.enabled = !audioTrack.enabled;
+    const next = !audioTrack.enabled;
+    audioTrack.enabled = next;
+    setMicOn(next);
   };
 
   const firstRemoteId = peerIds[0] ?? null;
-  const firstRemoteStream = firstRemoteId
-    ? peerStreams[firstRemoteId]
-    : null;
+  const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
+
+  // pill helpers
+  const pillBase =
+    "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
+
+  const connectedClass = connected
+    ? "bg-emerald-600/90 text-white border-emerald-500"
+    : "bg-red-900/70 text-red-200 border-red-700";
+
+  const micClass = micOn
+    ? "bg-neutral-800 text-neutral-50 border-neutral-600"
+    : "bg-red-900/80 text-red-100 border-red-700";
+
+  const camClass = camOn
+    ? "bg-neutral-100 text-neutral-900 border-neutral-300"
+    : "bg-red-900/80 text-red-100 border-red-700";
 
   // ---- Render -----------------------------------------------
   return (
     <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
-      <div className="mx-auto max-w-6xl p-4 space-y-4">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-semibold">Any-Speak</h1>
-
+      <div className="mx-auto max-w-6xl p-3 md:p-4 space-y-4">
+        {/* Top bar */}
+        <header className="flex items-center justify-between gap-2 flex-wrap">
+          {/* Left: room code */}
+          <div className="flex items-center gap-2">
             {roomInfo?.code && (
-              <div className="mt-1 flex items-center gap-2 text-xs text-neutral-300">
-                <span className="opacity-70">Code</span>
-                <span className="px-3 py-1 rounded-full bg-neutral-800 border border-neutral-700 font-mono tracking-[0.25em]">
+              <>
+                <span className="text-xs text-neutral-400">Room Code</span>
+                <span className="px-3 py-1 rounded-full bg-neutral-900 border border-neutral-700 font-mono tracking-[0.25em] text-xs md:text-sm">
                   {roomInfo.code}
                 </span>
-              </div>
+              </>
             )}
-
-            <p className="text-xs text-neutral-500 mt-1">
-              Connected as{" "}
-              <span className="font-semibold text-neutral-200">
-                {displayName}
-              </span>{" "}
-              {connected ? (
-                <span className="text-emerald-400 ml-1">● connected</span>
-              ) : (
-                <span className="text-neutral-500 ml-1">● connecting…</span>
-              )}
-            </p>
           </div>
 
-          {/* Desktop controls */}
-          <div className="hidden md:flex items-center gap-2">
+          {/* Center: title */}
+          <div className="flex-1 text-center order-first md:order-none">
+            <h1 className="text-lg md:text-xl font-semibold">Any-Speak</h1>
+          </div>
+
+          {/* Right: status + toggles */}
+          <div className="flex items-center gap-2">
+            <span className={`${pillBase} ${connectedClass}`}>
+              {connected ? "Connected" : "Offline"}
+            </span>
             <button
               onClick={toggleMic}
-              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
+              className={`${pillBase} ${micClass}`}
             >
-              Toggle Mic
+              {micOn ? "Mic On" : "Mic Off"}
             </button>
             <button
               onClick={toggleCamera}
-              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
+              className={`${pillBase} ${camClass}`}
             >
-              Toggle Cam
+              {camOn ? "Cam On" : "Cam Off"}
             </button>
           </div>
         </header>
@@ -544,7 +581,7 @@ export default function RoomPage() {
             </div>
 
             {/* Local PiP */}
-            <div className="absolute bottom-3 right-3 w-36 h-24 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70">
+            <div className="absolute bottom-3 right-3 w-32 h-20 md:w-40 md:h-24 rounded-xl overflow-hidden border border-neutral-700 bg-black/70">
               <video
                 ref={attachLocalVideoRef}
                 autoPlay
@@ -559,7 +596,7 @@ export default function RoomPage() {
         )}
 
         {peerIds.length > 1 && (
-          // 3+ participants: grid layout
+          // 3+ participants: simple grid for now
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Local self-view */}
             <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
@@ -610,20 +647,22 @@ export default function RoomPage() {
         )}
       </div>
 
-      {/* Mobile control bar */}
-      <div className="fixed bottom-3 inset-x-0 flex justify-center gap-3 md:hidden">
-        <button
-          onClick={toggleMic}
-          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
-        >
-          Toggle Mic
-        </button>
-        <button
-          onClick={toggleCamera}
-          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
-        >
-          Toggle Cam
-        </button>
+      {/* Mobile control bar (extra quick access) */}
+      <div className="fixed bottom-3 inset-x-0 flex justify-center gap-3 md:hidden pointer-events-none">
+        <div className="flex gap-3 rounded-full bg-neutral-900/90 px-3 py-2 pointer-events-auto">
+          <button
+            onClick={toggleMic}
+            className={`${pillBase} ${micClass} px-3 py-1`}
+          >
+            {micOn ? "Mic On" : "Mic Off"}
+          </button>
+          <button
+            onClick={toggleCamera}
+            className={`${pillBase} ${camClass} px-3 py-1`}
+          >
+            {camOn ? "Cam On" : "Cam Off"}
+          </button>
+        </div>
       </div>
     </div>
   );
