@@ -152,8 +152,6 @@ export default function RoomPage() {
         setConnected(true);
       }
       if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        // When a peer fully disconnects, we’ll clean up via presence,
-        // but this keeps the status pill honest.
         setConnected(false);
       }
     };
@@ -293,7 +291,6 @@ export default function RoomPage() {
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) videoTrack.enabled = true;
 
-    // local preview wiring happens in useEffect below
     return stream;
   }
 
@@ -313,11 +310,7 @@ export default function RoomPage() {
       // @ts-ignore
       el.playsInline = true;
       el.setAttribute("playsinline", "true");
-      el
-        .play()
-        .catch(() => {
-          /* ignored */
-        });
+      el.play().catch(() => {});
     };
 
     attach(localMainRef.current);
@@ -343,7 +336,7 @@ export default function RoomPage() {
           setRoomCode(data.code);
         }
       } catch {
-        // non-fatal if this fails
+        // non-fatal
       }
     })();
   }, [roomId]);
@@ -418,7 +411,6 @@ export default function RoomPage() {
           setPeerIds(nextPeerIds);
           setPeerNames((prev) => ({ ...prev, ...nextPeerNames }));
 
-          // choose layout primary
           if (nextPeerIds.length === 0) {
             setPrimaryId("local");
             setConnected(false);
@@ -534,7 +526,11 @@ export default function RoomPage() {
   const showGridLayout = remoteIds.length >= 2;
 
   const primaryRemoteId =
-    showPipLayout || showGridLayout ? primaryId !== "local" ? primaryId : remoteIds[0] : null;
+    (showPipLayout || showGridLayout) && remoteIds.length > 0
+      ? primaryId !== "local"
+        ? primaryId
+        : remoteIds[0]
+      : null;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -590,29 +586,21 @@ export default function RoomPage() {
           <div className="relative flex-1 rounded-2xl overflow-hidden bg-neutral-900">
             {/* main remote */}
             <video
-              ref={remoteMainRef}
               autoPlay
               playsInline
               className="h-full w-full object-cover"
-              // attach stream
-              data-peer={primaryRemoteId}
-            />
-            {/* attach stream inline */}
-            {(() => {
-              const stream = peerStreams[primaryRemoteId];
-              if (remoteMainRef.current && stream) {
-                if (remoteMainRef.current.srcObject !== stream) {
-                  remoteMainRef.current.srcObject = stream;
+              ref={(el) => {
+                remoteMainRef.current = el;
+                const stream = el && peerStreams[primaryRemoteId];
+                if (el && stream && el.srcObject !== stream) {
+                  el.srcObject = stream;
                   // @ts-ignore
-                  remoteMainRef.current.playsInline = true;
-                  remoteMainRef.current.setAttribute("playsinline", "true");
-                  remoteMainRef.current
-                    .play()
-                    .catch(() => {});
+                  el.playsInline = true;
+                  el.setAttribute("playsinline", "true");
+                  el.play().catch(() => {});
                 }
-              }
-            })()}
-
+              }}
+            />
             <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
               {peerNames[primaryRemoteId] ?? "Partner"}
             </div>
@@ -632,7 +620,7 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* 2+ peers: simple grid (everyone equal size, including you) */}
+        {/* 2+ peers: simple grid */}
         {showGridLayout && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 flex-1">
             {/* local tile */}
