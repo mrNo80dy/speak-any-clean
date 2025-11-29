@@ -507,10 +507,7 @@ export default function RoomPage() {
             <span className={`${pillBase} ${connectedClass}`}>
               {connected ? "Connected" : "Offline"}
             </span>
-            <button
-              onClick={toggleMic}
-              className={`${pillBase} ${micClass}`}
-            >
+            <button onClick={toggleMic} className={`${pillBase} ${micClass}`}>
               {micOn ? "Mic On" : "Mic Off"}
             </button>
             <button
@@ -562,7 +559,11 @@ export default function RoomPage() {
               playsInline
               className="h-full w-full object-cover"
               ref={(el) => {
-                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
+                if (
+                  el &&
+                  firstRemoteStream &&
+                  el.srcObject !== firstRemoteStream
+                ) {
                   el.srcObject = firstRemoteStream;
                 }
               }}
@@ -571,7 +572,11 @@ export default function RoomPage() {
               data-remote
               autoPlay
               ref={(el) => {
-                if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
+                if (
+                  el &&
+                  firstRemoteStream &&
+                  el.srcObject !== firstRemoteStream
+                ) {
                   el.srcObject = firstRemoteStream;
                 }
               }}
@@ -645,24 +650,6 @@ export default function RoomPage() {
             ))}
           </div>
         )}
-      </div>
-
-      {/* Mobile control bar (extra quick access) */}
-      <div className="fixed bottom-3 inset-x-0 flex justify-center gap-3 md:hidden pointer-events-none">
-        <div className="flex gap-3 rounded-full bg-neutral-900/90 px-3 py-2 pointer-events-auto">
-          <button
-            onClick={toggleMic}
-            className={`${pillBase} ${micClass} px-3 py-1`}
-          >
-            {micOn ? "Mic On" : "Mic Off"}
-          </button>
-          <button
-            onClick={toggleCamera}
-            className={`${pillBase} ${camClass} px-3 py-1`}
-          >
-            {camOn ? "Cam On" : "Cam Off"}
-          </button>
-        </div>
       </div>
     </div>
   );
