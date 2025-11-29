@@ -429,42 +429,40 @@ export default function RoomPage() {
 
   // ---- Render -----------------------------------------------
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 pb-20 md:pb-8">
       <div className="mx-auto max-w-6xl p-4 space-y-4">
-        <header className="flex items-center justify-between">
+        <header className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold">
               {roomInfo?.name || "Any-Speak Room"}
             </h1>
-            <p className="text-sm text-neutral-400">
-              Room ID:{" "}
-              <span className="font-mono break-all">{roomId}</span>
-            </p>
             {roomInfo?.code && (
               <p className="text-xs text-neutral-400 mt-1">
                 Code: <span className="font-mono">{roomInfo.code}</span>
               </p>
             )}
             <p className="text-xs text-neutral-500 mt-1">
-              You: <span className="font-semibold">{displayName}</span>{" "}
-              (<span className="font-mono">{clientId.slice(0, 8)}</span>){" "}
+              Connected as{" "}
+              <span className="font-semibold">{displayName}</span>{" "}
               {connected ? (
-                <span className="text-emerald-400">● connected</span>
+                <span className="text-emerald-400 ml-1">● connected</span>
               ) : (
-                <span className="text-neutral-500">● connecting…</span>
+                <span className="text-neutral-500 ml-1">● connecting…</span>
               )}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Controls sit at top on desktop, bottom on mobile */}
+          <div className="hidden md:flex items-center gap-2">
             <button
               onClick={toggleMic}
-              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700"
+              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
             >
               Toggle Mic
             </button>
             <button
               onClick={toggleCamera}
-              className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700"
+              className="px-3 py-1.5 text-sm rounded-xl bg-neutral-800 hover:bg-neutral-700"
             >
               Toggle Cam
             </button>
@@ -474,7 +472,7 @@ export default function RoomPage() {
         {needsUnmute && (
           <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
             <p className="text-sm">
-              Your browser blocked autoplay with sound. Click below to start
+              Your browser blocked autoplay with sound. Tap below to start
               remote audio.
             </p>
             <button
@@ -536,7 +534,7 @@ export default function RoomPage() {
           ))}
         </div>
 
-        {/* Debug / logs */}
+        {/* Debug / logs (dev only) */}
         <details className="mt-4">
           <summary className="cursor-pointer text-sm text-neutral-400">
             Debug logs
@@ -545,6 +543,22 @@ export default function RoomPage() {
             {logs.join("\n")}
           </pre>
         </details>
+      </div>
+
+      {/* Mobile control bar */}
+      <div className="fixed bottom-3 inset-x-0 flex justify-center gap-3 md:hidden">
+        <button
+          onClick={toggleMic}
+          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
+        >
+          Toggle Mic
+        </button>
+        <button
+          onClick={toggleCamera}
+          className="px-4 py-2 text-sm rounded-full bg-neutral-800/90 hover:bg-neutral-700"
+        >
+          Toggle Cam
+        </button>
       </div>
     </div>
   );
