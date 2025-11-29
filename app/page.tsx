@@ -18,7 +18,7 @@ export default function HomePage() {
 
   const generateRoomCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
- const handleCreateRoom = async () => {
+const handleCreateRoom = async () => {
   const name = roomName.trim();
   if (!name) return;
 
@@ -27,7 +27,6 @@ export default function HomePage() {
     console.log("[CreateRoom] start", { name });
     const code = generateRoomCode();
 
-    // Try the insert
     const { data, error } = await supabase
       .from("rooms")
       .insert({ name, code, is_active: true })
@@ -45,10 +44,7 @@ export default function HomePage() {
       return;
     }
 
-    // 🔹 Show the short room code so you can type it on your phone
-    alert(`Room created.\n\nRoom code: ${data.code}\n\nUse this on your phone to join.`);
-
-    // Only navigate when we truly have an id
+    // we just go straight to the room; the code is visible there now
     router.push(`/room/${data.id}`);
   } catch (e: any) {
     console.error("[CreateRoom] unexpected error", e);
@@ -191,4 +187,5 @@ export default function HomePage() {
     </div>
   );
 }
+
 
