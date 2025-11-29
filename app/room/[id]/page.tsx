@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
-// Types
+// ---- Types ------------------------------------------------------------------
+
 type RealtimeSubscribeStatus =
   | "SUBSCRIBED"
   | "CLOSED"
@@ -26,12 +27,52 @@ type Peer = {
 };
 
 type PeerStreams = Record<string, MediaStream>;
+type PeerNames = Record<string, string>;
+
+// ---- Small UI components ----------------------------------------------------
+
+function Pill({
+  children,
+  active,
+  tone,
+  onClick,
+}: {
+  children: React.ReactNode;
+  active?: boolean;
+  tone: "status" | "neutral";
+  onClick?: () => void;
+}) {
+  const base =
+    "inline-flex items-center justify-center rounded-full px-4 py-1.5 text-sm font-medium transition-colors whitespace-nowrap";
+  let classes = base;
+
+  if (tone === "status") {
+    classes += active
+      ? " bg-emerald-700 text-emerald-50"
+      : " bg-red-900 text-red-300";
+  } else {
+    // neutral pill (mic / cam)
+    classes += active
+      ? " bg-emerald-700 text-emerald-50"
+      : " bg-neutral-800 text-neutral-200";
+  }
+
+  if (onClick) classes += " cursor-pointer hover:brightness-110";
+
+  return (
+    <button type="button" onClick={onClick} className={classes}>
+      {children}
+    </button>
+  );
+}
+
+// ---- Main component ---------------------------------------------------------
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
-  // Stable per-tab clientId
+  // Stable per-tab ID so reconnects in this tab look like same peer
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const existing = sessionStorage.getItem("clientId");
@@ -41,34 +82,28 @@ export default function RoomPage() {
     return id;
   }, []);
 
-  // ---- Refs / state -----------------------------------------
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
 
-  // local media
-  const localMainRef = useRef<HTMLVideoElement | null>(null);
-  const localPipRef = useRef<HTMLVideoElement | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const [hasLocalStream, setHasLocalStream] = useState(false);
-
-  // peers
-  const peersRef = useRef<Map<string, Peer>>(new Map());
-  const [peerIds, setPeerIds] = useState<string[]>([]);
-  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
-
-  // UI state
-  const [needsUnmute, setNeedsUnmute] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
-
-  // Room metadata (for header)
   const [roomCode, setRoomCode] = useState<string | null>(null);
 
-  // Local display name (“Chad”, “Chad’s phone”, etc)
-  const [displayName, setDisplayName] = useState<string>("You");
+  const [localDisplayName, setLocalDisplayName] = useState<string>("You");
+  const [peerIds, setPeerIds] = useState<string[]>([]);
+  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+  const [peerNames, setPeerNames] = useState<PeerNames>({});
+  const [connected, setConnected] = useState(false);
 
-  // Mic / cam state (mic starts muted)
-  const [micEnabled, setMicEnabled] = useState<boolean>(false);
-  const [camEnabled, setCamEnabled] = useState<boolean>(true);
+  // layout: whose video is primary (big) when there’s exactly one partner
+  const [primaryId, setPrimaryId] = useState<"local" | string>("local");
+
+  // local media state
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [micOn, setMicOn] = useState(false); // default muted
+  const [camOn, setCamOn] = useState(true);
+
+  // optional internal debug buffer (not rendered now, but handy)
+  const [logs, setLogs] = useState<string[]>([]);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -77,41 +112,23 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 200));
   };
 
-  // ---- Load display name from localStorage ------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem("displayName");
-    if (saved) setDisplayName(saved);
-  }, []);
+  // ---------------------------------------------------------------------------
+  // Refs
+  // ---------------------------------------------------------------------------
 
-  // ---- Fetch real room code from Supabase -------------------
-  useEffect(() => {
-    if (!roomId) return;
-    let cancelled = false;
+  const channelRef = useRef<RealtimeChannel | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Map<string, Peer>>(new Map());
 
-    (async () => {
-      const { data, error } = await supabase
-        .from("rooms")
-        .select("name, code")
-        .eq("id", roomId)
-        .maybeSingle();
+  // video element refs
+  const localMainRef = useRef<HTMLVideoElement | null>(null);
+  const localPipRef = useRef<HTMLVideoElement | null>(null);
+  const remoteMainRef = useRef<HTMLVideoElement | null>(null);
 
-      if (error) {
-        console.error("Failed to load room metadata", error);
-        return;
-      }
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
 
-      if (!cancelled) {
-        setRoomCode(data?.code ?? null);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [roomId]);
-
-  // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => {
       if (prev[remoteId] === stream) return prev;
@@ -131,7 +148,14 @@ export default function RoomPage() {
 
     pc.onconnectionstatechange = () => {
       log(`pc(${remoteId}) state: ${pc.connectionState}`);
-      if (pc.connectionState === "connected") setConnected(true);
+      if (pc.connectionState === "connected") {
+        setConnected(true);
+      }
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+        // When a peer fully disconnects, we’ll clean up via presence,
+        // but this keeps the status pill honest.
+        setConnected(false);
+      }
     };
 
     pc.onicecandidate = (e) => {
@@ -150,7 +174,7 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-      // Merge incoming tracks into our stable stream
+      // merge incoming tracks into a stable stream
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
@@ -166,13 +190,13 @@ export default function RoomPage() {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
-    // Add local tracks if we already have them
+    // add local tracks if we already have them
     if (localStreamRef.current) {
       localStreamRef.current
         .getTracks()
         .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
-      // Ensure we still receive even if local is missing
+      // still receive if our local is missing
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
     }
@@ -215,7 +239,6 @@ export default function RoomPage() {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    // Ensure local tracks exist
     if (localStreamRef.current && pc.getSenders().length === 0) {
       localStreamRef.current
         .getTracks()
@@ -234,10 +257,7 @@ export default function RoomPage() {
     log("sent answer", { to: fromId });
   }
 
-  async function handleAnswer(
-    fromId: string,
-    sdp: RTCSessionDescriptionInit
-  ) {
+  async function handleAnswer(fromId: string, sdp: RTCSessionDescriptionInit) {
     const peer = peersRef.current.get(fromId);
     if (!peer) return;
     await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -262,62 +282,86 @@ export default function RoomPage() {
       audio: true,
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
     };
+
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
+    setLocalStream(stream);
 
-    // Apply initial mic/cam state (mic muted by default)
-    stream.getAudioTracks().forEach((t) => {
-      t.enabled = micEnabled;
-    });
-    stream.getVideoTracks().forEach((t) => {
-      t.enabled = camEnabled;
-    });
+    // default: camera on, mic OFF
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) audioTrack.enabled = false; // muted by default
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) videoTrack.enabled = true;
 
-    setHasLocalStream(true);
+    // local preview wiring happens in useEffect below
     return stream;
   }
 
-  // Attach local stream to whichever video elements exist
+  // ---------------------------------------------------------------------------
+  // Attach local stream into any visible <video> elements
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
-    if (!hasLocalStream || !localStreamRef.current) return;
+    if (!localStream) return;
 
-    const els: HTMLVideoElement[] = [];
-    if (localMainRef.current) els.push(localMainRef.current);
-    if (localPipRef.current) els.push(localPipRef.current);
-
-    for (const el of els) {
-      if (!el) continue;
-      if (el.srcObject !== localStreamRef.current) {
-        el.srcObject = localStreamRef.current;
+    const attach = (el: HTMLVideoElement | null) => {
+      if (!el) return;
+      if (el.srcObject !== localStream) {
+        el.srcObject = localStream;
       }
       el.muted = true;
-      el.playsInline = true as any;
+      // @ts-ignore
+      el.playsInline = true;
       el.setAttribute("playsinline", "true");
       el
         .play()
         .catch(() => {
-          /* ignore */
+          /* ignored */
         });
-    }
-  }, [hasLocalStream]);
-
-  // Attach remote streams to hidden <audio> elements to force autoplay
-  useEffect(() => {
-    const tryPlayAll = async () => {
-      const audios =
-        document.querySelectorAll<HTMLAudioElement>("audio[data-remote]");
-      for (const a of Array.from(audios)) {
-        try {
-          await a.play();
-        } catch {
-          setNeedsUnmute(true);
-        }
-      }
     };
-    tryPlayAll();
-  }, [peerStreams]);
 
-  // ---- Lifecycle: join room, wire realtime -------------------
+    attach(localMainRef.current);
+    attach(localPipRef.current);
+  }, [localStream]);
+
+  // ---------------------------------------------------------------------------
+  // Initial data: room code + display name
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!roomId) return;
+
+    // fetch room code
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("rooms")
+          .select("code")
+          .eq("id", roomId)
+          .maybeSingle();
+        if (!error && data?.code) {
+          setRoomCode(data.code);
+        }
+      } catch {
+        // non-fatal if this fails
+      }
+    })();
+  }, [roomId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem("displayName");
+    if (saved && saved.trim()) {
+      setLocalDisplayName(saved.trim());
+    } else {
+      setLocalDisplayName("You");
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // WebRTC + presence lifecycle
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     if (!roomId || !clientId) return;
     let isMounted = true;
@@ -333,7 +377,7 @@ export default function RoomPage() {
           },
         });
 
-        // Broadcast signaling
+        // broadcast signaling
         channel.on(
           "broadcast",
           { event: "webrtc" },
@@ -353,18 +397,41 @@ export default function RoomPage() {
           }
         );
 
-        // Presence sync -> know who to call
+        // presence -> know who is in the room + their names
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
-          const others: string[] = Object.values(state)
-            .flat()
-            .map((m: any) => m?.clientId)
-            .filter((id: string) => id && id !== clientId);
+          const entries = Object.values(state).flat() as any[];
 
-          setPeerIds(others);
+          const others = entries.filter((m) => m?.clientId && m.clientId !== clientId);
 
-          // Proactively offer to peers we don't yet have a PC for
-          others.forEach((id) => {
+          const nextPeerIds = others.map((m) => m.clientId as string);
+          const nextPeerNames: PeerNames = {};
+          others.forEach((m) => {
+            const id = m.clientId as string;
+            const name: string =
+              typeof m.displayName === "string" && m.displayName.trim()
+                ? m.displayName.trim()
+                : "Partner";
+            nextPeerNames[id] = name;
+          });
+
+          setPeerIds(nextPeerIds);
+          setPeerNames((prev) => ({ ...prev, ...nextPeerNames }));
+
+          // choose layout primary
+          if (nextPeerIds.length === 0) {
+            setPrimaryId("local");
+            setConnected(false);
+          } else if (nextPeerIds.length === 1) {
+            setPrimaryId(nextPeerIds[0]);
+            setConnected(true);
+          } else {
+            setPrimaryId(nextPeerIds[0]);
+            setConnected(true);
+          }
+
+          // make offers to any peer we don't yet have a PC for
+          nextPeerIds.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
                 log("offer error", { e: (e as Error).message })
@@ -373,17 +440,16 @@ export default function RoomPage() {
           });
         });
 
-        // Subscribe, then track presence
+        // subscribe then track our presence
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
-            channel.track({ clientId });
+            channel.track({ clientId, displayName: localDisplayName });
           }
         });
 
         channelRef.current = channel;
 
-        // Cleanup on unmount
         const cleanup = () => {
           try {
             if (channelRef.current) {
@@ -391,7 +457,9 @@ export default function RoomPage() {
               channelRef.current.unsubscribe();
               channelRef.current = null;
             }
-          } catch {}
+          } catch {
+            // ignore
+          }
         };
 
         if (!isMounted) cleanup();
@@ -403,148 +471,171 @@ export default function RoomPage() {
     return () => {
       isMounted = false;
 
-      // Close PCs
+      // close peer connections
       peersRef.current.forEach(({ pc }) => {
         try {
           pc.close();
-        } catch {}
+        } catch {
+          // ignore
+        }
       });
       peersRef.current.clear();
 
-      // Stop local media
+      // stop local media
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
+        setLocalStream(null);
       }
 
-      // Unsubscribe channel
+      // unsubscribe channel
       try {
         if (channelRef.current) {
           channelRef.current.untrack();
           channelRef.current.unsubscribe();
           channelRef.current = null;
         }
-      } catch {}
+      } catch {
+        // ignore
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId]);
+  }, [roomId, clientId, localDisplayName]);
 
-  // ---- UI controls ------------------------------------------
-  const handleUnmuteClick = async () => {
-    setNeedsUnmute(false);
-    const audios =
-      document.querySelectorAll<HTMLAudioElement>("audio[data-remote]");
-    for (const a of Array.from(audios)) {
-      try {
-        await a.play();
-      } catch {}
-    }
-  };
+  // ---------------------------------------------------------------------------
+  // Controls
+  // ---------------------------------------------------------------------------
 
-  const toggleCamera = () => {
-    setCamEnabled((prev) => {
+  const handleToggleMic = () => {
+    setMicOn((prev) => {
       const next = !prev;
-      if (localStreamRef.current) {
-        localStreamRef.current
-          .getVideoTracks()
-          .forEach((t) => (t.enabled = next));
-      }
+      const track = localStreamRef.current?.getAudioTracks()[0];
+      if (track) track.enabled = next;
       return next;
     });
   };
 
-  const toggleMic = () => {
-    setMicEnabled((prev) => {
+  const handleToggleCam = () => {
+    setCamOn((prev) => {
       const next = !prev;
-      if (localStreamRef.current) {
-        localStreamRef.current
-          .getAudioTracks()
-          .forEach((t) => (t.enabled = next));
-      }
+      const track = localStreamRef.current?.getVideoTracks()[0];
+      if (track) track.enabled = next;
       return next;
     });
   };
 
+  // ---------------------------------------------------------------------------
   // Layout helpers
-  const totalParticipants = 1 + peerIds.length;
-  const primaryPeerId = peerIds[0] ?? null;
-  const secondaryPeerIds = primaryPeerId ? peerIds.slice(1) : [];
+  // ---------------------------------------------------------------------------
 
-  // ---- Render -----------------------------------------------
+  const remoteIds = peerIds;
+
+  const showPipLayout = remoteIds.length === 1;
+  const showGridLayout = remoteIds.length >= 2;
+
+  const primaryRemoteId =
+    showPipLayout || showGridLayout ? primaryId !== "local" ? primaryId : remoteIds[0] : null;
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
   return (
-    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100">
-      <div className="mx-auto max-w-6xl p-4 space-y-4">
-        {/* Header: single logical row, flex-wrap for small screens */}
-        <header className="flex flex-wrap items-center gap-3 px-2 py-3">
-          {/* LEFT: room code pill */}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-neutral-400">Code</span>
-            <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
-              {roomCode ?? "------"}
-            </span>
-          </div>
+    <div className="min-h-screen w-full bg-neutral-950 text-neutral-100 flex flex-col">
+      {/* Header */}
+      <header className="w-full px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-neutral-900">
+        <div className="flex items-center gap-2 min-w-[120px]">
+          <span className="text-sm text-neutral-400">Room Code</span>
+          <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
+            {roomCode ?? "------"}
+          </span>
+        </div>
 
-          {/* CENTER: app title */}
-          <div className="flex-1 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Any-Speak
-            </h1>
-          </div>
+        <div className="flex-1 flex items-center justify-center">
+          <h1 className="text-xl font-semibold tracking-wide">Any-Speak</h1>
+        </div>
 
-          {/* RIGHT: connection status + controls */}
-          <div className="flex items-center gap-2 ml-auto">
-            <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
-                connected
-                  ? "bg-emerald-600/20 text-emerald-300"
-                  : "bg-red-600/20 text-red-300"
-              }`}
-            >
-              {connected ? "Connected" : "Offline"}
-            </span>
+        <div className="flex items-center justify-end gap-2 min-w-[220px]">
+          <Pill tone="status" active={connected}>
+            {connected ? "Connected" : "Offline"}
+          </Pill>
+          <Pill tone="neutral" active={micOn} onClick={handleToggleMic}>
+            {micOn ? "Mic On" : "Mic Off"}
+          </Pill>
+          <Pill tone="neutral" active={camOn} onClick={handleToggleCam}>
+            {camOn ? "Cam On" : "Cam Off"}
+          </Pill>
+        </div>
+      </header>
 
-            <button
-              onClick={toggleMic}
-              className={`px-3 py-1.5 rounded-xl text-sm transition-colors ${
-                micEnabled
-                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                  : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
-              }`}
-            >
-              {micEnabled ? "Mic On" : "Mic Off"}
-            </button>
-            <button
-              onClick={toggleCamera}
-              className={`px-3 py-1.5 rounded-xl text-sm transition-colors ${
-                camEnabled
-                  ? "bg-neutral-200 text-neutral-900 hover:bg-neutral-300"
-                  : "bg-neutral-800 text-neutral-100 hover:bg-neutral-700"
-              }`}
-            >
-              {camEnabled ? "Cam On" : "Cam Off"}
-            </button>
-          </div>
-        </header>
-
-        {needsUnmute && (
-          <div className="p-3 rounded-xl bg-amber-900/30 border border-amber-500/30">
-            <p className="text-sm">
-              Your browser blocked autoplay with sound. Tap below to start
-              remote audio.
-            </p>
-            <button
-              onClick={handleUnmuteClick}
-              className="mt-2 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-sm"
-            >
-              Unmute Remote Audio
-            </button>
+      {/* Main video area */}
+      <div className="flex-1 w-full p-4 flex flex-col">
+        {/* 0 peers: just show yourself full screen */}
+        {remoteIds.length === 0 && (
+          <div className="relative flex-1 rounded-2xl overflow-hidden bg-neutral-900">
+            <video
+              ref={localMainRef}
+              autoPlay
+              playsInline
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+              {localDisplayName}
+            </div>
           </div>
         )}
 
-        {/* MAIN VIDEO AREA: different layouts depending on participant count */}
-        <div className="flex flex-col gap-3">
-          {totalParticipants === 1 && (
-            // Only me in the room
+        {/* 1 peer: remote big, you as PIP */}
+        {showPipLayout && primaryRemoteId && (
+          <div className="relative flex-1 rounded-2xl overflow-hidden bg-neutral-900">
+            {/* main remote */}
+            <video
+              ref={remoteMainRef}
+              autoPlay
+              playsInline
+              className="h-full w-full object-cover"
+              // attach stream
+              data-peer={primaryRemoteId}
+            />
+            {/* attach stream inline */}
+            {(() => {
+              const stream = peerStreams[primaryRemoteId];
+              if (remoteMainRef.current && stream) {
+                if (remoteMainRef.current.srcObject !== stream) {
+                  remoteMainRef.current.srcObject = stream;
+                  // @ts-ignore
+                  remoteMainRef.current.playsInline = true;
+                  remoteMainRef.current.setAttribute("playsinline", "true");
+                  remoteMainRef.current
+                    .play()
+                    .catch(() => {});
+                }
+              }
+            })()}
+
+            <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+              {peerNames[primaryRemoteId] ?? "Partner"}
+            </div>
+
+            {/* local PIP */}
+            <div className="absolute bottom-4 right-4 w-40 h-24 rounded-xl overflow-hidden border border-neutral-800 bg-neutral-900/70">
+              <video
+                ref={localPipRef}
+                autoPlay
+                playsInline
+                className="h-full w-full object-cover"
+              />
+              <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                {localDisplayName}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2+ peers: simple grid (everyone equal size, including you) */}
+        {showGridLayout && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 flex-1">
+            {/* local tile */}
             <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
               <video
                 ref={localMainRef}
@@ -552,192 +643,41 @@ export default function RoomPage() {
                 playsInline
                 className="h-full w-full object-cover"
               />
-              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                {displayName}
+              <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                {localDisplayName}
               </div>
             </div>
-          )}
 
-          {totalParticipants === 2 && (
-            // PIP layout: remote full, local small
-            <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-              {/* Remote main */}
-              {primaryPeerId && (
-                <>
-                  <video
-                    autoPlay
-                    playsInline
-                    className="h-full w-full object-cover"
-                    ref={(el) => {
-                      const stream = peerStreams[primaryPeerId];
-                      if (el && stream && el.srcObject !== stream) {
-                        el.srcObject = stream;
-                      }
-                    }}
-                  />
-                  <audio
-                    data-remote
-                    autoPlay
-                    ref={(el) => {
-                      const stream = peerStreams[primaryPeerId];
-                      if (el && stream && el.srcObject !== stream) {
-                        el.srcObject = stream;
-                      }
-                    }}
-                  />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                    Partner
-                  </div>
-                </>
-              )}
-
-              {/* Local PIP */}
-              <video
-                ref={localPipRef}
-                autoPlay
-                playsInline
-                className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
-              />
-              <div className="absolute bottom-4 right-4 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                {displayName}
-              </div>
-            </div>
-          )}
-
-          {totalParticipants >= 3 && totalParticipants <= 4 && (
-            // Grid layout: everyone visible (up to 4)
-            <div className="grid grid-cols-2 gap-2 rounded-2xl bg-neutral-900 p-2">
-              {/* Local tile */}
-              <div className="relative rounded-xl overflow-hidden bg-black aspect-video">
-                <video
-                  ref={localMainRef}
-                  autoPlay
-                  playsInline
-                  className="h-full w-full object-cover"
-                />
-                <div className="absolute bottom-1 left-1 text-xs bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                  {displayName}
-                </div>
-              </div>
-
-              {/* Peer tiles */}
-              {peerIds.slice(0, 3).map((pid) => (
+            {/* remote tiles */}
+            {remoteIds.map((id) => {
+              const stream = peerStreams[id];
+              return (
                 <div
-                  key={pid}
-                  className="relative rounded-xl overflow-hidden bg-black aspect-video"
+                  key={id}
+                  className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video"
                 >
                   <video
                     autoPlay
                     playsInline
                     className="h-full w-full object-cover"
                     ref={(el) => {
-                      const stream = peerStreams[pid];
                       if (el && stream && el.srcObject !== stream) {
                         el.srcObject = stream;
+                        // @ts-ignore
+                        el.playsInline = true;
+                        el.setAttribute("playsinline", "true");
+                        el.play().catch(() => {});
                       }
                     }}
                   />
-                  <audio
-                    data-remote
-                    autoPlay
-                    ref={(el) => {
-                      const stream = peerStreams[pid];
-                      if (el && stream && el.srcObject !== stream) {
-                        el.srcObject = stream;
-                      }
-                    }}
-                  />
-                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                    Guest
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                    {peerNames[id] ?? "Partner"}
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-
-          {totalParticipants > 4 && (
-            <>
-              {/* Primary view same as 2-person PIP */}
-              <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
-                {primaryPeerId && (
-                  <>
-                    <video
-                      autoPlay
-                      playsInline
-                      className="h-full w-full object-cover"
-                      ref={(el) => {
-                        const stream = peerStreams[primaryPeerId];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[primaryPeerId];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/60 px-2 py-1 rounded">
-                      Speaker
-                    </div>
-                  </>
-                )}
-
-                <video
-                  ref={localPipRef}
-                  autoPlay
-                  playsInline
-                  className="absolute bottom-3 right-3 h-24 w-24 rounded-xl border border-neutral-700 bg-black/60 object-cover"
-                />
-                <div className="absolute bottom-4 right-4 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                  {displayName}
-                </div>
-              </div>
-
-              {/* Scrollable strip of other participants */}
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {secondaryPeerIds.map((pid) => (
-                  <div
-                    key={pid}
-                    className="relative h-24 w-40 flex-shrink-0 rounded-xl overflow-hidden bg-neutral-900"
-                  >
-                    <video
-                      autoPlay
-                      playsInline
-                      className="h-full w-full object-cover"
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
-                      Guest
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* Debug logs are kept in state (for dev) but not rendered now. */}
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
