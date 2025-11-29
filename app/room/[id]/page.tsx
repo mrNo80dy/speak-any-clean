@@ -52,12 +52,43 @@ export default function RoomPage() {
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
 
+  // NEW: room metadata for display
+  const [roomCode, setRoomCode] = useState<string | null>(null);
+  // (we can add roomName later if you want it)
+
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
   };
+
+  // ---- Fetch real room code from Supabase -------------------
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from("rooms")
+        .select("name, code")
+        .eq("id", roomId)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Failed to load room metadata", error);
+        return;
+      }
+
+      if (!cancelled) {
+        setRoomCode(data?.code ?? null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -381,13 +412,11 @@ export default function RoomPage() {
       <div className="mx-auto max-w-6xl p-4 space-y-4">
         {/* Header */}
         <header className="relative flex items-center justify-between px-2 py-3">
-          {/* LEFT: room code */}
+          {/* LEFT: room code (real code from DB) */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-neutral-400">Code</span>
             <span className="inline-flex items-center rounded-full bg-neutral-800 px-3 py-1 text-xs font-mono tracking-[0.35em] text-neutral-100">
-              {typeof roomId === "string"
-                ? roomId.slice(0, 6).toUpperCase()
-                : "------"}
+              {roomCode ?? "------"}
             </span>
           </div>
 
