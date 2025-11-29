@@ -51,7 +51,6 @@ function Pill({
       ? " bg-emerald-700 text-emerald-50"
       : " bg-red-900 text-red-300";
   } else {
-    // neutral pill (mic / cam)
     classes += active
       ? " bg-emerald-700 text-emerald-50"
       : " bg-neutral-800 text-neutral-200";
@@ -94,16 +93,14 @@ export default function RoomPage() {
   const [peerNames, setPeerNames] = useState<PeerNames>({});
   const [connected, setConnected] = useState(false);
 
-  // layout: whose video is primary (big) when there’s exactly one partner
+  // whose video is primary when there’s exactly one partner
   const [primaryId, setPrimaryId] = useState<"local" | string>("local");
 
   // local media state
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [micOn, setMicOn] = useState(false); // default muted
   const [camOn, setCamOn] = useState(true);
 
-  // optional internal debug buffer (not rendered now, but handy)
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<string[]>([]); // internal debug
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -119,11 +116,6 @@ export default function RoomPage() {
   const channelRef = useRef<RealtimeChannel | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
-
-  // video element refs
-  const localMainRef = useRef<HTMLVideoElement | null>(null);
-  const localPipRef = useRef<HTMLVideoElement | null>(null);
-  const remoteMainRef = useRef<HTMLVideoElement | null>(null);
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -151,7 +143,10 @@ export default function RoomPage() {
       if (pc.connectionState === "connected") {
         setConnected(true);
       }
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+      if (
+        pc.connectionState === "disconnected" ||
+        pc.connectionState === "failed"
+      ) {
         setConnected(false);
       }
     };
@@ -172,7 +167,6 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-      // merge incoming tracks into a stable stream
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
@@ -194,7 +188,6 @@ export default function RoomPage() {
         .getTracks()
         .forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
-      // still receive if our local is missing
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
     }
@@ -283,39 +276,30 @@ export default function RoomPage() {
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
-    setLocalStream(stream);
 
     // default: camera on, mic OFF
     const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) audioTrack.enabled = false; // muted by default
+    if (audioTrack) audioTrack.enabled = false;
     const videoTrack = stream.getVideoTracks()[0];
     if (videoTrack) videoTrack.enabled = true;
 
     return stream;
   }
 
-  // ---------------------------------------------------------------------------
-  // Attach local stream into any visible <video> elements
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    if (!localStream) return;
-
-    const attach = (el: HTMLVideoElement | null) => {
-      if (!el) return;
-      if (el.srcObject !== localStream) {
-        el.srcObject = localStream;
-      }
+  // helper to attach local stream to any local video
+  const attachLocalVideo = (el: HTMLVideoElement | null) => {
+    if (!el) return;
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
       el.muted = true;
       // @ts-ignore
       el.playsInline = true;
       el.setAttribute("playsinline", "true");
       el.play().catch(() => {});
-    };
-
-    attach(localMainRef.current);
-    attach(localPipRef.current);
-  }, [localStream]);
+    }
+  };
 
   // ---------------------------------------------------------------------------
   // Initial data: room code + display name
@@ -324,7 +308,6 @@ export default function RoomPage() {
   useEffect(() => {
     if (!roomId) return;
 
-    // fetch room code
     (async () => {
       try {
         const { data, error } = await supabase
@@ -332,9 +315,7 @@ export default function RoomPage() {
           .select("code")
           .eq("id", roomId)
           .maybeSingle();
-        if (!error && data?.code) {
-          setRoomCode(data.code);
-        }
+        if (!error && data?.code) setRoomCode(data.code);
       } catch {
         // non-fatal
       }
@@ -344,11 +325,8 @@ export default function RoomPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem("displayName");
-    if (saved && saved.trim()) {
-      setLocalDisplayName(saved.trim());
-    } else {
-      setLocalDisplayName("You");
-    }
+    if (saved && saved.trim()) setLocalDisplayName(saved.trim());
+    else setLocalDisplayName("You");
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -370,7 +348,6 @@ export default function RoomPage() {
           },
         });
 
-        // broadcast signaling
         channel.on(
           "broadcast",
           { event: "webrtc" },
@@ -390,12 +367,13 @@ export default function RoomPage() {
           }
         );
 
-        // presence -> know who is in the room + their names
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
           const entries = Object.values(state).flat() as any[];
 
-          const others = entries.filter((m) => m?.clientId && m.clientId !== clientId);
+          const others = entries.filter(
+            (m) => m?.clientId && m.clientId !== clientId
+          );
 
           const nextPeerIds = others.map((m) => m.clientId as string);
           const nextPeerNames: PeerNames = {};
@@ -422,7 +400,6 @@ export default function RoomPage() {
             setConnected(true);
           }
 
-          // make offers to any peer we don't yet have a PC for
           nextPeerIds.forEach((id) => {
             if (!peersRef.current.has(id)) {
               makeOffer(id, channel).catch((e) =>
@@ -432,7 +409,6 @@ export default function RoomPage() {
           });
         });
 
-        // subscribe then track our presence
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
@@ -449,9 +425,7 @@ export default function RoomPage() {
               channelRef.current.unsubscribe();
               channelRef.current = null;
             }
-          } catch {
-            // ignore
-          }
+          } catch {}
         };
 
         if (!isMounted) cleanup();
@@ -463,33 +437,25 @@ export default function RoomPage() {
     return () => {
       isMounted = false;
 
-      // close peer connections
       peersRef.current.forEach(({ pc }) => {
         try {
           pc.close();
-        } catch {
-          // ignore
-        }
+        } catch {}
       });
       peersRef.current.clear();
 
-      // stop local media
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
-        setLocalStream(null);
       }
 
-      // unsubscribe channel
       try {
         if (channelRef.current) {
           channelRef.current.untrack();
           channelRef.current.unsubscribe();
           channelRef.current = null;
         }
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, clientId, localDisplayName]);
@@ -521,7 +487,6 @@ export default function RoomPage() {
   // ---------------------------------------------------------------------------
 
   const remoteIds = peerIds;
-
   const showPipLayout = remoteIds.length === 1;
   const showGridLayout = remoteIds.length >= 2;
 
@@ -565,15 +530,15 @@ export default function RoomPage() {
       </header>
 
       {/* Main video area */}
-      <div className="flex-1 w-full p-4 flex flex-col">
+      <div className="flex-1 w-full p-4 flex flex-col min-h-0">
         {/* 0 peers: just show yourself full screen */}
         {remoteIds.length === 0 && (
-          <div className="relative flex-1 rounded-2xl overflow-hidden bg-neutral-900">
+          <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-neutral-900">
             <video
-              ref={localMainRef}
+              ref={attachLocalVideo}
               autoPlay
               playsInline
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
             <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
               {localDisplayName}
@@ -583,16 +548,16 @@ export default function RoomPage() {
 
         {/* 1 peer: remote big, you as PIP */}
         {showPipLayout && primaryRemoteId && (
-          <div className="relative flex-1 rounded-2xl overflow-hidden bg-neutral-900">
+          <div className="relative flex-1 min-h-0 rounded-2xl overflow-hidden bg-neutral-900">
             {/* main remote */}
             <video
               autoPlay
               playsInline
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
               ref={(el) => {
-                remoteMainRef.current = el;
-                const stream = el && peerStreams[primaryRemoteId];
-                if (el && stream && el.srcObject !== stream) {
+                if (!el) return;
+                const stream = peerStreams[primaryRemoteId];
+                if (stream && el.srcObject !== stream) {
                   el.srcObject = stream;
                   // @ts-ignore
                   el.playsInline = true;
@@ -608,10 +573,10 @@ export default function RoomPage() {
             {/* local PIP */}
             <div className="absolute bottom-4 right-4 w-40 h-24 rounded-xl overflow-hidden border border-neutral-800 bg-neutral-900/70">
               <video
-                ref={localPipRef}
+                ref={attachLocalVideo}
                 autoPlay
                 playsInline
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
               />
               <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
                 {localDisplayName}
@@ -622,14 +587,14 @@ export default function RoomPage() {
 
         {/* 2+ peers: simple grid */}
         {showGridLayout && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 flex-1 min-h-0">
             {/* local tile */}
             <div className="relative rounded-2xl overflow-hidden bg-neutral-900 aspect-video">
               <video
-                ref={localMainRef}
+                ref={attachLocalVideo}
                 autoPlay
                 playsInline
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
               />
               <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
                 {localDisplayName}
@@ -647,9 +612,10 @@ export default function RoomPage() {
                   <video
                     autoPlay
                     playsInline
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-contain"
                     ref={(el) => {
-                      if (el && stream && el.srcObject !== stream) {
+                      if (!el) return;
+                      if (stream && el.srcObject !== stream) {
                         el.srcObject = stream;
                         // @ts-ignore
                         el.playsInline = true;
