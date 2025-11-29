@@ -24,7 +24,7 @@ type TranscriptPayload = {
   from: string;
   text: string;
   lang: string;
-  name?: string; // 👈 new: carry speaker name with each transcript
+  name?: string; // speaker name, sent with each transcript
 };
 
 type Peer = {
@@ -49,6 +49,8 @@ type ChatMessage = {
   isLocal: boolean;
   at: number;
 };
+
+type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -92,12 +94,20 @@ export default function RoomPage() {
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showCaptions, setShowCaptions] = useState(false);
-  const [captionLines, setCaptionLines] = useState<number>(3); // 👈 user-adjustable
+  const [captionLines, setCaptionLines] = useState<number>(3);
   const [autoSpeak] = useState(true); // reserved for later TTS
 
   // Hand raise
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
   const [myHandUp, setMyHandUp] = useState(false);
+
+  // STT status
+  const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
+  const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
+
+  // Manual text captions
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [textInput, setTextInput] = useState("");
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -289,7 +299,7 @@ export default function RoomPage() {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    // ✅ IMPORTANT: send back on the same "webrtc" event
+    // send back on the same "webrtc" event
     channel.send({
       type: "broadcast",
       event: "webrtc",
@@ -354,8 +364,11 @@ export default function RoomPage() {
     const w = window as any;
     const SpeechRecognitionCtor =
       w.SpeechRecognition || w.webkitSpeechRecognition;
+
     if (!SpeechRecognitionCtor) {
       log("speech recognition not supported");
+      setSttStatus("unsupported");
+      setSttErrorMessage("Device browser does not support live captions.");
       return;
     }
 
@@ -363,6 +376,11 @@ export default function RoomPage() {
     rec.continuous = true;
     rec.interimResults = true;
     rec.lang = (navigator.language as string) || "en-US";
+
+    rec.onstart = () => {
+      setSttStatus("ok");
+      setSttErrorMessage(null);
+    };
 
     rec.onresult = (event: any) => {
       const results = event.results;
@@ -387,7 +405,7 @@ export default function RoomPage() {
         isLocal: true,
       });
 
-      // Broadcast to room (now includes name)
+      // Broadcast to room (include name so other devices know who)
       if (channelRef.current) {
         channelRef.current.send({
           type: "broadcast",
@@ -399,11 +417,24 @@ export default function RoomPage() {
 
     rec.onerror = (event: any) => {
       log("stt error", { error: event.error });
+      setSttStatus("error");
+      setSttErrorMessage(event.error || "Speech recognition error.");
+
+      // On mobile, repeated errors can cause constant dinging.
+      // If it's not-allowed or service-related, stop trying.
+      if (
+        event.error === "not-allowed" ||
+        event.error === "service-not-allowed"
+      ) {
+        try {
+          rec.stop();
+        } catch {}
+      }
     };
 
     rec.onend = () => {
-      // Browser stops occasionally; restart if mic is still on
-      if (micOnRef.current) {
+      // Browser stops occasionally; restart if mic is still on *and* no hard error
+      if (micOnRef.current && sttStatus !== "unsupported") {
         try {
           rec.start();
         } catch {
@@ -427,7 +458,7 @@ export default function RoomPage() {
   useEffect(() => {
     const rec = recognitionRef.current;
     if (!rec) return;
-    if (micOn) {
+    if (micOn && sttStatus !== "unsupported") {
       try {
         rec.start();
       } catch {
@@ -438,7 +469,7 @@ export default function RoomPage() {
         rec.stop();
       } catch {}
     }
-  }, [micOn]);
+  }, [micOn, sttStatus]);
 
   // Attach remote streams to hidden <audio> to force autoplay
   useEffect(() => {
@@ -502,7 +533,6 @@ export default function RoomPage() {
             const { from, text, lang, name } = payload;
             if (!text || !from || from === clientId) return;
 
-            // Prefer explicit name from payload, then presence label
             const fromName =
               name ??
               peerLabelsRef.current[from] ??
@@ -668,6 +698,38 @@ export default function RoomPage() {
     }
   };
 
+  // Manual text caption submit
+  const handleTextSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = textInput.trim();
+    if (!text) return;
+
+    const lang = "en-US"; // for now
+    const fromName = displayName || "You";
+
+    // Local message
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: "en-US",
+      originalText: text,
+      translatedText: text,
+      isLocal: true,
+    });
+
+    // Broadcast as transcript so others see it the same as STT
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
+      });
+    }
+
+    setTextInput("");
+  };
+
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
 
@@ -757,13 +819,25 @@ export default function RoomPage() {
                 </select>
               )}
             </div>
+
+            {/* Text input toggle */}
+            <button
+              onClick={() => setShowTextInput((v) => !v)}
+              className={`${pillBase} ${
+                showTextInput
+                  ? "bg-emerald-600 text-white border-emerald-500"
+                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+            >
+              Text
+            </button>
           </div>
         </header>
 
         {/* Main content area: fills the whole screen behind the header */}
         <main className="absolute inset-0 pt-10 md:pt-14">
           {needsUnmute && (
-            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-md w[90%] p-3 rounded-xl bg-amber-900/80 border border-amber-500/60 shadow-lg">
+            <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 max-w-md w-[90%] p-3 rounded-xl bg-amber-900/80 border border-amber-500/60 shadow-lg">
               <p className="text-sm">
                 Your browser blocked autoplay with sound. Tap below to start
                 remote audio.
@@ -774,6 +848,17 @@ export default function RoomPage() {
               >
                 Unmute Remote Audio
               </button>
+            </div>
+          )}
+
+          {/* Optional small STT status text (helpful on phone) */}
+          {showCaptions && sttStatus !== "ok" && (
+            <div className="absolute top-16 left-4 z-20 text-[10px] md:text-xs text-amber-300 bg-black/60 px-2 py-1 rounded">
+              {sttStatus === "unsupported"
+                ? "Live captions mic not supported on this device. Use Text button."
+                : sttStatus === "error"
+                ? sttErrorMessage || "Live captions mic error. Use Text button."
+                : "Checking live captions mic..."}
             </div>
           )}
 
@@ -1048,6 +1133,29 @@ export default function RoomPage() {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* Text input for manual captions (toggleable) */}
+          {showTextInput && (
+            <form
+              onSubmit={handleTextSubmit}
+              className="pointer-events-auto absolute inset-x-0 bottom-16 flex justify-center"
+            >
+              <div className="flex gap-2 w-[92%] max-w-xl">
+                <input
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder="Type a quick caption…"
+                  className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 rounded-full text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
+                  Send
+                </button>
+              </div>
+            </form>
           )}
         </main>
 
