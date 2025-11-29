@@ -1,26 +1,87 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type {
+  RealtimeChannel,
+  RealtimeChannelSendResponse,
+} from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabaseClient";
 
-// NOTE: This is a simplified placeholder hook to get the app compiling
-// and give you local audio/video + controls. Remote streams will be
-// wired up later with proper WebRTC + Supabase signaling.
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+];
+
+type SignalChannel = RealtimeChannel & {
+  send: (args: {
+    type: "broadcast";
+    event: "signal";
+    payload: any;
+  }) => Promise<RealtimeChannelSendResponse>;
+  isReady: () => boolean;
+};
+
+function createSignalChannel(roomId: string): SignalChannel {
+  const base = supabase.channel(`signal-${roomId}`, {
+    config: { broadcast: { self: false } },
+  });
+
+  let ready = false;
+  const queue: Array<() => Promise<any>> = [];
+
+  const safeSend: SignalChannel["send"] = (args) => {
+    if (ready) return base.send(args as any);
+
+    return new Promise((resolve, reject) => {
+      queue.push(() => {
+        const p = base.send(args as any);
+        p.then(resolve).catch(reject);
+        return p;
+      });
+    });
+  };
+
+  // we just treat status as a string; no fancy typing needed
+  base.subscribe((status: string) => {
+    if (status === "SUBSCRIBED") {
+      ready = true;
+      const pending = queue.splice(0);
+      pending.forEach((fn) => fn());
+    }
+  });
+
+  return Object.assign(base, {
+    send: safeSend,
+    isReady: () => ready,
+  });
+}
 
 type LiveParticipant = { id: string };
 
-function useWebRTCHook(
+/**
+ * Full WebRTC hook:
+ * - gets local mic+camera
+ * - uses Supabase Realtime as a signaling channel
+ * - creates RTCPeerConnections between participants
+ * - exposes localStream + remoteStreams + audio/video toggles
+ */
+export default function useWebRTCHook(
   roomId: string,
   myPeerId: string,
   liveParticipants: LiveParticipant[]
 ) {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStreams] = useState<Record<string, MediaStream>>({});
+  const [remoteStreams, setRemoteStreams] = useState<
+    Record<string, MediaStream>
+  >({});
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
 
-  // Get local media (audio + video)
+  const pcs = useRef<Record<string, RTCPeerConnection>>({});
+  const signalCh = useRef<SignalChannel | null>(null);
+
+  // Get local media once
   useEffect(() => {
-    let cancelled = false;
+    let stopped = false;
 
     navigator.mediaDevices
       .getUserMedia({
@@ -28,7 +89,7 @@ function useWebRTCHook(
         video: { width: 1280, height: 720 },
       })
       .then((stream) => {
-        if (!cancelled) {
+        if (!stopped) {
           setLocalStream(stream);
         }
       })
@@ -37,27 +98,145 @@ function useWebRTCHook(
       });
 
     return () => {
-      cancelled = true;
-      if (localStream) {
-        localStream.getTracks().forEach((t) => t.stop());
-      }
+      stopped = true;
+      // optional: stop tracks on unmount
+      // localStream?.getTracks().forEach((t) => t.stop());
     };
-    // we intentionally do NOT include localStream in deps to avoid
-    // stopping/restarting it over and over
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, myPeerId]);
+  }, []); // run once
+
+  const getPC = useCallback(
+    (peerId: string) => {
+      if (pcs.current[peerId]) return pcs.current[peerId];
+
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
+      // attach local tracks
+      if (localStream) {
+        localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+      }
+
+      // when we get remote tracks from this peer
+      pc.ontrack = ({ streams }) => {
+        const stream = streams[0];
+        if (stream) {
+          setRemoteStreams((prev) => ({ ...prev, [peerId]: stream }));
+        }
+      };
+
+      // pass ICE candidates through Supabase signaling
+      pc.onicecandidate = (ev) => {
+        if (!ev.candidate || !signalCh.current) return;
+        signalCh.current.send({
+          type: "broadcast",
+          event: "signal",
+          payload: {
+            room_id: roomId,
+            sender_id: myPeerId,
+            target_id: peerId,
+            type: "ice",
+            candidate: ev.candidate.toJSON(),
+          },
+        });
+      };
+
+      pcs.current[peerId] = pc;
+      return pc;
+    },
+    [localStream, myPeerId, roomId]
+  );
+
+  // Signaling listener
+  useEffect(() => {
+    if (!roomId || !myPeerId) return;
+
+    const ch = createSignalChannel(roomId);
+    signalCh.current = ch;
+
+    ch.on("broadcast", { event: "signal" }, async ({ payload }) => {
+      if (!payload) return;
+      const { sender_id, target_id, type, sdp, candidate } = payload;
+
+      // ignore our own messages
+      if (sender_id === myPeerId) return;
+      // if there's a specific target and it's not us, ignore
+      if (target_id && target_id !== myPeerId) return;
+
+      const pc = getPC(sender_id);
+
+      if (type === "offer") {
+        await pc.setRemoteDescription(sdp);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        ch.send({
+          type: "broadcast",
+          event: "signal",
+          payload: {
+            room_id: roomId,
+            sender_id: myPeerId,
+            target_id: sender_id,
+            type: "answer",
+            sdp: answer,
+          },
+        });
+      }
+
+      if (type === "answer") {
+        await pc.setRemoteDescription(sdp);
+      }
+
+      if (type === "ice" && candidate) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (err) {
+          console.warn("addIceCandidate error:", err);
+        }
+      }
+    });
+
+    return () => {
+      ch.unsubscribe();
+      signalCh.current = null;
+    };
+  }, [roomId, myPeerId, getPC]);
+
+  // When participants list changes, we initiate offers to new peers
+  useEffect(() => {
+    (async () => {
+      for (const p of liveParticipants) {
+        if (p.id === myPeerId) continue;
+        if (!pcs.current[p.id]) {
+          const pc = getPC(p.id);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          signalCh.current?.send({
+            type: "broadcast",
+            event: "signal",
+            payload: {
+              room_id: roomId,
+              sender_id: myPeerId,
+              target_id: p.id,
+              type: "offer",
+              sdp: offer,
+            },
+          });
+        }
+      }
+    })();
+  }, [liveParticipants, myPeerId, roomId, getPC]);
 
   const toggleAudio = () => {
-    setAudioEnabled((prev) => {
-      const next = !prev;
+    setAudioEnabled((v) => {
+      const next = !v;
       localStream?.getAudioTracks().forEach((t) => (t.enabled = next));
       return next;
     });
   };
 
   const toggleVideo = () => {
-    setVideoEnabled((prev) => {
-      const next = !prev;
+    setVideoEnabled((v) => {
+      const next = !v;
       localStream?.getVideoTracks().forEach((t) => (t.enabled = next));
       return next;
     });
@@ -72,5 +251,3 @@ function useWebRTCHook(
     toggleVideo,
   };
 }
-
-export default useWebRTCHook;
