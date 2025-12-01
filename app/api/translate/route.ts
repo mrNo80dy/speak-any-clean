@@ -1,35 +1,48 @@
 // app/api/translate/route.ts
 import { NextResponse } from "next/server";
 
+const LIBRE_ENDPOINT = "https://libretranslate.de/translate";
+
+// Optional: force this route to always run on the server
+export const dynamic = "force-dynamic";
+
+type TranslateBody = {
+  text?: string;
+  fromLang?: string;
+  toLang?: string;
+};
+
+function normalizeLang(code?: string): string {
+  if (!code) return "en";
+  // "en-US" -> "en", "pt-BR" -> "pt"
+  return code.split("-")[0].toLowerCase();
+}
+
 export async function POST(req: Request) {
   try {
-    const { from, to, text } = await req.json();
+    const body = (await req.json()) as TranslateBody;
+    const rawText = (body.text ?? "").trim();
+    const fromLang = body.fromLang || "en-US";
+    const toLang = body.toLang || "en-US";
 
-    if (!text || !from || !to) {
+    const displayTargetLang = toLang || fromLang || "en-US";
+
+    // Nothing to translate or same language → just echo.
+    if (!rawText || normalizeLang(fromLang) === normalizeLang(toLang)) {
       return NextResponse.json(
-        { error: "Missing from/to/text" },
-        { status: 400 }
+        { translatedText: rawText, targetLang: displayTargetLang },
+        { status: 200 }
       );
     }
 
-    // Map locale-style codes ("en-US") to simple codes ("en")
-    const source = from.split("-")[0] || "en";
-    const target = to.split("-")[0] || "en";
+    const source = normalizeLang(fromLang);
+    const target = normalizeLang(toLang);
 
-    const url =
-      process.env.LIBRETRANSLATE_URL ??
-      "https://libretranslate.de/translate";
-
-    const res = await fetch(url, {
+    const res = await fetch(LIBRE_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(process.env.LIBRETRANSLATE_API_KEY
-          ? { Authorization: `Bearer ${process.env.LIBRETRANSLATE_API_KEY}` }
-          : {}),
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        q: text,
+        q: rawText,
         source,
         target,
         format: "text",
@@ -37,31 +50,32 @@ export async function POST(req: Request) {
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error("Translate error", res.status, body);
-      // Fall back to original text if call fails
+      // Upstream failed → fall back to original text
       return NextResponse.json(
-        { translatedText: text, targetLang: to, error: "upstream-failed" },
+        {
+          translatedText: rawText,
+          targetLang: displayTargetLang,
+          error: "upstream-error",
+        },
         { status: 200 }
       );
     }
 
-    const data = await res.json();
-    const translated =
-      (data.translatedText as string) ||
-      (data.translation as string) ||
-      (data.translated as string) ||
-      text;
+    const data = (await res.json()) as { translatedText?: string };
+    const translated = (data.translatedText ?? rawText).trim();
 
-    return NextResponse.json({
-      translatedText: translated,
-      targetLang: to,
-    });
+    return NextResponse.json(
+      { translatedText: translated, targetLang: displayTargetLang },
+      { status: 200 }
+    );
   } catch (err) {
     console.error("Translate route error", err);
-    // Generic fallback
     return NextResponse.json(
-      { translatedText: "", targetLang: "en-US", error: "route-error" },
+      {
+        translatedText: "",
+        targetLang: "en-US",
+        error: "route-error",
+      },
       { status: 200 }
     );
   }
