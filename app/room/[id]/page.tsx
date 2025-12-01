@@ -64,18 +64,33 @@ async function translateText(
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
   const trimmed = text.trim();
-  if (!trimmed) {
-    return { translatedText: "", targetLang: toLang };
-  }
+  if (!trimmed) return { translatedText: "", targetLang: toLang };
 
-  // If languages match, no translation needed.
   if (fromLang === toLang) {
     return { translatedText: trimmed, targetLang: toLang };
   }
 
-  // TODO: hook into real translation (LibreTranslate, API route, etc.)
-  // For now we just echo the original text so the pipeline is wired.
-  return { translatedText: trimmed, targetLang: toLang };
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ from: fromLang, to: toLang, text: trimmed }),
+    });
+
+    if (!res.ok) {
+      // fall back to original
+      return { translatedText: trimmed, targetLang: toLang };
+    }
+
+    const data = await res.json();
+    const translated = (data.translatedText as string) || trimmed;
+    const target = (data.targetLang as string) || toLang;
+
+    return { translatedText: translated, targetLang: target };
+  } catch {
+    // network error → fall back
+    return { translatedText: trimmed, targetLang: toLang };
+  }
 }
 
 export default function RoomPage() {
@@ -1247,3 +1262,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
