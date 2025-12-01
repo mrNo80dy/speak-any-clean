@@ -58,14 +58,21 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
+/**
+ * Front-end helper: call our /api/translate route.
+ * Each device can ask for its own target language.
+ */
 async function translateText(
   fromLang: string,
   toLang: string,
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
   const trimmed = text.trim();
-  if (!trimmed) return { translatedText: "", targetLang: toLang };
+  if (!trimmed) {
+    return { translatedText: "", targetLang: toLang };
+  }
 
+  // If languages match, no translation needed.
   if (fromLang === toLang) {
     return { translatedText: trimmed, targetLang: toLang };
   }
@@ -74,22 +81,28 @@ async function translateText(
     const res = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ from: fromLang, to: toLang, text: trimmed }),
+      body: JSON.stringify({
+        from: fromLang,
+        to: toLang,
+        text: trimmed,
+      }),
     });
 
     if (!res.ok) {
-      // fall back to original
-      return { translatedText: trimmed, targetLang: toLang };
+      console.error("translateText: bad response", res.status);
+      return { translatedText: trimmed, targetLang: fromLang };
     }
 
     const data = await res.json();
-    const translated = (data.translatedText as string) || trimmed;
-    const target = (data.targetLang as string) || toLang;
+    const translated =
+      (data?.translatedText as string | undefined)?.trim() || trimmed;
+    const target =
+      (data?.targetLang as string | undefined) || toLang || fromLang;
 
     return { translatedText: translated, targetLang: target };
-  } catch {
-    // network error → fall back
-    return { translatedText: trimmed, targetLang: toLang };
+  } catch (err) {
+    console.error("translateText error", err);
+    return { translatedText: trimmed, targetLang: fromLang };
   }
 }
 
@@ -484,8 +497,6 @@ export default function RoomPage() {
       setSttStatus("error");
       setSttErrorMessage(event.error || "Speech recognition error.");
 
-      // On mobile, repeated errors can cause constant dinging.
-      // If it's not-allowed or service-related, stop trying.
       if (
         event.error === "not-allowed" ||
         event.error === "service-not-allowed"
@@ -852,7 +863,7 @@ export default function RoomPage() {
             <h1 className="text-lg md:text-xl font-semibold">Any-Speak</h1>
           </div>
 
-          {/* Right: status + toggles */}
+          {/* Right: status + toggles + language selector */}
           <div className="flex items-center gap-2">
             <span className={`${pillBase} ${connectedClass}`}>
               {connected ? "Connected" : "Offline"}
@@ -907,22 +918,22 @@ export default function RoomPage() {
             >
               Text
             </button>
-          </div>
 
-          {/* Language selector for how YOU want to read captions */}
-          <div className="flex items-center gap-1">
-            <span className="hidden md:inline text-[10px] text-neutral-300">
-              Show in
-            </span>
-            <select
-              value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value)}
-              className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
-            >
-              <option value="en-US">English</option>
-              <option value="pt-BR">Português (Brasil)</option>
-              {/* add more later */}
-            </select>
+            {/* Language selector for how YOU want to read captions */}
+            <div className="flex items-center gap-1">
+              <span className="hidden md:inline text-[10px] text-neutral-300">
+                Show in
+              </span>
+              <select
+                value={targetLang}
+                onChange={(e) => setTargetLang(e.target.value)}
+                className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
+              >
+                <option value="en-US">English</option>
+                <option value="pt-BR">Português (Brasil)</option>
+                {/* add more later */}
+              </select>
+            </div>
           </div>
         </header>
 
@@ -1123,7 +1134,8 @@ export default function RoomPage() {
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
                         <span>
-                          {peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}
+                          {peerLabels[spotlightId] ??
+                            spotlightId.slice(0, 8)}
                         </span>
                       </div>
                     </>
@@ -1262,4 +1274,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
