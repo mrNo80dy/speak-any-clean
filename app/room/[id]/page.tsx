@@ -72,7 +72,7 @@ async function translateText(
     return { translatedText: "", targetLang: toLang };
   }
 
-  // If languages match, no translation needed.
+  // If languages match, skip the network call but still show correct arrow
   if (fromLang === toLang) {
     return { translatedText: trimmed, targetLang: toLang };
   }
@@ -82,29 +82,33 @@ async function translateText(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: fromLang,
-        to: toLang,
         text: trimmed,
+        fromLang,
+        toLang,
       }),
     });
 
     if (!res.ok) {
-      console.error("translateText: bad response", res.status);
-      return { translatedText: trimmed, targetLang: fromLang };
+      // Fallback: show original text but keep the requested target language
+      return { translatedText: trimmed, targetLang: toLang };
     }
 
-    const data = await res.json();
-    const translated =
-      (data?.translatedText as string | undefined)?.trim() || trimmed;
-    const target =
-      (data?.targetLang as string | undefined) || toLang || fromLang;
+    const data = (await res.json()) as {
+      translatedText?: string;
+      targetLang?: string;
+      error?: string;
+    };
 
-    return { translatedText: translated, targetLang: target };
+    return {
+      translatedText: (data.translatedText ?? trimmed).trim(),
+      targetLang: data.targetLang ?? toLang,
+    };
   } catch (err) {
     console.error("translateText error", err);
-    return { translatedText: trimmed, targetLang: fromLang };
+    return { translatedText: trimmed, targetLang: toLang };
   }
 }
+
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -780,42 +784,43 @@ export default function RoomPage() {
 
   // Manual text caption submit
   const handleTextSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const text = textInput.trim();
-    if (!text) return;
+  e.preventDefault();
+  const text = textInput.trim();
+  if (!text) return;
 
-    const lang = "en-US"; // for now
-    const fromName = displayName || "You";
+  const lang = "en-US"; // for now your manual text is English
+  const fromName = displayName || "You";
 
-    const target = targetLangRef.current || "en-US";
-    const { translatedText, targetLang } = await translateText(
-      lang,
-      target,
-      text
-    );
+  const target = targetLangRef.current || "en-US";
+  const { translatedText, targetLang } = await translateText(
+    lang,
+    target,
+    text
+  );
 
-    // Local message
-    pushMessage({
-      fromId: clientId,
-      fromName,
-      originalLang: lang,
-      translatedLang: targetLang,
-      originalText: text,
-      translatedText,
-      isLocal: true,
+  // Local message
+  pushMessage({
+    fromId: clientId,
+    fromName,
+    originalLang: lang,
+    translatedLang: targetLang,
+    originalText: text,
+    translatedText,
+    isLocal: true,
+  });
+
+  // Broadcast as transcript so others see it the same as STT
+  if (channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "transcript",
+      payload: { from: clientId, text, lang, name: fromName },
     });
+  }
 
-    // Broadcast as transcript so others see it the same as STT
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "transcript",
-        payload: { from: clientId, text, lang, name: fromName },
-      });
-    }
+  setTextInput("");
+};
 
-    setTextInput("");
-  };
 
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
@@ -1274,3 +1279,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
