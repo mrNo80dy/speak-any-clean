@@ -12,12 +12,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // Map locale-style codes to simple language codes if needed
+    // Map locale-style codes ("en-US") to simple codes ("en")
     const source = from.split("-")[0] || "en";
     const target = to.split("-")[0] || "en";
 
-    // Example: LibreTranslate-compatible endpoint
-    const url = process.env.LIBRETRANSLATE_URL ?? "https://libretranslate.de/translate";
+    const url =
+      process.env.LIBRETRANSLATE_URL ??
+      "https://libretranslate.de/translate";
 
     const res = await fetch(url, {
       method: "POST",
@@ -38,15 +39,19 @@ export async function POST(req: Request) {
     if (!res.ok) {
       const body = await res.text();
       console.error("Translate error", res.status, body);
+      // Fall back to original text if call fails
       return NextResponse.json(
         { translatedText: text, targetLang: to, error: "upstream-failed" },
-        { status: 200 } // fall back gracefully
+        { status: 200 }
       );
     }
 
     const data = await res.json();
     const translated =
-      data.translatedText || data.translation || data.translated || text;
+      (data.translatedText as string) ||
+      (data.translation as string) ||
+      (data.translated as string) ||
+      text;
 
     return NextResponse.json({
       translatedText: translated,
@@ -54,8 +59,9 @@ export async function POST(req: Request) {
     });
   } catch (err) {
     console.error("Translate route error", err);
+    // Generic fallback
     return NextResponse.json(
-      { translatedText: text ?? "", targetLang: "en-US", error: "route-error" },
+      { translatedText: "", targetLang: "en-US", error: "route-error" },
       { status: 200 }
     );
   }
