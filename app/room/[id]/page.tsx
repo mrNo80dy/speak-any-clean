@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
@@ -52,6 +58,26 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
+async function translateText(
+  fromLang: string,
+  toLang: string,
+  text: string
+): Promise<{ translatedText: string; targetLang: string }> {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return { translatedText: "", targetLang: toLang };
+  }
+
+  // If languages match, no translation needed.
+  if (fromLang === toLang) {
+    return { translatedText: trimmed, targetLang: toLang };
+  }
+
+  // TODO: hook into real translation (LibreTranslate, API route, etc.)
+  // For now we just echo the original text so the pipeline is wired.
+  return { translatedText: trimmed, targetLang: toLang };
+}
+
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
@@ -96,6 +122,14 @@ export default function RoomPage() {
   const [showCaptions, setShowCaptions] = useState(false);
   const [captionLines, setCaptionLines] = useState<number>(3);
   const [autoSpeak] = useState(true); // reserved for later TTS
+
+  // Translation target language (what *you* want to read)
+  const [targetLang, setTargetLang] = useState<string>(
+    (typeof navigator !== "undefined" && navigator.language) || "en-US"
+  );
+  const targetLangRef = useRef<string>(
+    (typeof navigator !== "undefined" && navigator.language) || "en-US"
+  );
 
   // Hand raise
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
@@ -142,6 +176,11 @@ export default function RoomPage() {
   useEffect(() => {
     micOnRef.current = micOn;
   }, [micOn]);
+
+  // keep targetLang in a ref so STT + transcript handler can read latest
+  useEffect(() => {
+    targetLangRef.current = targetLang;
+  }, [targetLang]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -382,30 +421,40 @@ export default function RoomPage() {
       setSttErrorMessage(null);
     };
 
-    rec.onresult = (event: any) => {
+    rec.onresult = async (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
       const last = results[results.length - 1];
       if (!last.isFinal) return;
 
-      const text = (last[0]?.transcript || "").trim();
+      const raw = last[0]?.transcript || "";
+      const text = raw.trim();
       if (!text) return;
-      const lang = rec.lang || "en-US";
 
+      const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
+
+      // Translate into whatever *this device* wants to read
+      const target = targetLangRef.current || "en-US";
+      const { translatedText, targetLang } = await translateText(
+        lang,
+        target,
+        text
+      );
 
       // Local message
       pushMessage({
         fromId: clientId,
         fromName,
         originalLang: lang,
-        translatedLang: "en-US", // TODO: real translation
+        translatedLang: targetLang,
         originalText: text,
-        translatedText: text,
+        translatedText,
         isLocal: true,
       });
 
-      // Broadcast to room (include name so other devices know who)
+      // Broadcast original text + source lang + name.
+      // Each receiver translates for themselves.
       if (channelRef.current) {
         channelRef.current.send({
           type: "broadcast",
@@ -539,20 +588,25 @@ export default function RoomPage() {
               from.slice(0, 8) ??
               "Guest";
 
-            // TODO: replace with real translation
-            const translated = text;
+            // Translate into *this* device's preferred reading language
+            const target = targetLangRef.current || "en-US";
+            const { translatedText, targetLang } = await translateText(
+              lang,
+              target,
+              text
+            );
 
             pushMessage({
               fromId: from,
               fromName,
               originalLang: lang,
-              translatedLang: "en-US",
+              translatedLang: targetLang,
               originalText: text,
-              translatedText: translated,
+              translatedText,
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translated, "en-US");
+            // Later: if (autoSpeak) speakText(translatedText, targetLang);
           }
         );
 
@@ -699,7 +753,7 @@ export default function RoomPage() {
   };
 
   // Manual text caption submit
-  const handleTextSubmit = (e: React.FormEvent) => {
+  const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
     if (!text) return;
@@ -707,14 +761,21 @@ export default function RoomPage() {
     const lang = "en-US"; // for now
     const fromName = displayName || "You";
 
+    const target = targetLangRef.current || "en-US";
+    const { translatedText, targetLang } = await translateText(
+      lang,
+      target,
+      text
+    );
+
     // Local message
     pushMessage({
       fromId: clientId,
       fromName,
       originalLang: lang,
-      translatedLang: "en-US",
+      translatedLang: targetLang,
       originalText: text,
-      translatedText: text,
+      translatedText,
       isLocal: true,
     });
 
@@ -831,6 +892,22 @@ export default function RoomPage() {
             >
               Text
             </button>
+          </div>
+
+          {/* Language selector for how YOU want to read captions */}
+          <div className="flex items-center gap-1">
+            <span className="hidden md:inline text-[10px] text-neutral-300">
+              Show in
+            </span>
+            <select
+              value={targetLang}
+              onChange={(e) => setTargetLang(e.target.value)}
+              className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
+            >
+              <option value="en-US">English</option>
+              <option value="pt-BR">Português (Brasil)</option>
+              {/* add more later */}
+            </select>
           </div>
         </header>
 
@@ -1031,8 +1108,7 @@ export default function RoomPage() {
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
                         <span>
-                          {peerLabels[spotlightId] ??
-                            spotlightId.slice(0, 8)}
+                          {peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}
                         </span>
                       </div>
                     </>
