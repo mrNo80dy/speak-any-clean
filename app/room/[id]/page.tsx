@@ -72,7 +72,7 @@ async function translateText(
     return { translatedText: "", targetLang: toLang };
   }
 
-  // If languages match, skip the network call but still show correct arrow
+  // If languages match, skip the API call but still show the right arrow
   if (fromLang === toLang) {
     return { translatedText: trimmed, targetLang: toLang };
   }
@@ -89,25 +89,32 @@ async function translateText(
     });
 
     if (!res.ok) {
-      // Fallback: show original text but keep the requested target language
+      console.warn("[translateText] /api/translate not ok", res.status);
+      // Fallback: show original text, keep requested target language
       return { translatedText: trimmed, targetLang: toLang };
     }
 
     const data = (await res.json()) as {
       translatedText?: string;
-      targetLang?: string;
       error?: string;
     };
 
-    return {
-      translatedText: (data.translatedText ?? trimmed).trim(),
-      targetLang: data.targetLang ?? toLang,
-    };
+    const maybe = (data.translatedText ?? "").trim();
+
+    // If the API gave us nothing or signaled an error, fall back to English
+    const translated =
+      maybe.length > 0 && !data.error ? maybe : trimmed;
+
+    // IMPORTANT: always trust the device’s chosen target language,
+    // not whatever the server echoes back.
+    return { translatedText: translated, targetLang: toLang };
   } catch (err) {
-    console.error("translateText error", err);
+    console.error("[translateText] error", err);
+    // Network / server failure → still show English text, arrow to chosen lang
     return { translatedText: trimmed, targetLang: toLang };
   }
 }
+
 
 
 export default function RoomPage() {
@@ -1279,4 +1286,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
