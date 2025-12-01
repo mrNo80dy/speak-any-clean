@@ -61,13 +61,20 @@ export async function POST(req: Request) {
       );
     }
 
-    const data = (await res.json()) as { translatedText?: string };
-    const translated = (data.translatedText ?? rawText).trim();
+   const data = (await res.json()) as {
+  translatedText?: string;
+  error?: string;
+};
 
-    return NextResponse.json(
-      { translatedText: translated, targetLang: displayTargetLang },
-      { status: 200 }
-    );
+const maybe = (data.translatedText ?? "").trim();
+const translated =
+  maybe.length > 0 && !data.error ? maybe : rawText;
+
+return NextResponse.json(
+  { translatedText: translated, targetLang: displayTargetLang },
+  { status: 200 }
+);
+
   } catch (err) {
     console.error("Translate route error", err);
     return NextResponse.json(
