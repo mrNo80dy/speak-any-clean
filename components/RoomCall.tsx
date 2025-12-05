@@ -52,7 +52,7 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
-// simple local helper; you can later wire this to /api/translate
+// Call the real translation API route
 async function translateText(
   fromLang: string,
   toLang: string,
@@ -68,10 +68,48 @@ async function translateText(
     return { translatedText: trimmed, targetLang: toLang };
   }
 
-  // TODO: hook into real translation (LibreTranslate, API route, etc.)
-  // For now we just echo the original text so the pipeline is wired.
-  return { translatedText: trimmed, targetLang: toLang };
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: trimmed,
+        fromLang,
+        toLang,
+      }),
+    });
+
+    if (!res.ok) {
+      console.warn(
+        "[RoomCall.translateText] /api/translate returned status",
+        res.status
+      );
+      // Fall back to original text
+      return { translatedText: trimmed, targetLang: toLang };
+    }
+
+    const data = (await res.json()) as {
+      translatedText?: string;
+      targetLang?: string;
+      error?: string;
+    };
+
+    const translated = (data.translatedText ?? "").trim();
+    const effectiveTarget = data.targetLang || toLang;
+
+    if (!translated) {
+      // No usable translation → fall back to original
+      return { translatedText: trimmed, targetLang: effectiveTarget };
+    }
+
+    return { translatedText: translated, targetLang: effectiveTarget };
+  } catch (err) {
+    console.error("[RoomCall.translateText] error talking to /api/translate", err);
+    // Network or server error → fall back to original text
+    return { translatedText: trimmed, targetLang: toLang };
+  }
 }
+
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
