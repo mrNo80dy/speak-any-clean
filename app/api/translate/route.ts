@@ -27,16 +27,35 @@ export async function POST(req: Request) {
 
     const displayTargetLang = toLang || fromLang || "en-US";
 
+    const source = normalizeLang(fromLang);
+    const target = normalizeLang(toLang);
+
+    const debugBase = {
+      rawText,
+      fromLang,
+      toLang,
+      source,
+      target,
+    };
+
     // Nothing to translate or same language → just echo.
-    if (!rawText || normalizeLang(fromLang) === normalizeLang(toLang)) {
+    if (!rawText || source === target) {
       return NextResponse.json(
-        { translatedText: rawText, targetLang: displayTargetLang },
+        {
+          translatedText: rawText,
+          targetLang: displayTargetLang,
+          debug: {
+            ...debugBase,
+            reason: "same-lang-or-empty",
+            upstreamStatus: null,
+            upstreamError: null,
+            upstreamRawTranslated: null,
+            usedFallback: true,
+          },
+        },
         { status: 200 }
       );
     }
-
-    const source = normalizeLang(fromLang);
-    const target = normalizeLang(toLang);
 
     const res = await fetch(LIBRE_ENDPOINT, {
       method: "POST",
@@ -56,25 +75,43 @@ export async function POST(req: Request) {
           translatedText: rawText,
           targetLang: displayTargetLang,
           error: "upstream-error",
+          debug: {
+            ...debugBase,
+            reason: "upstream-error",
+            upstreamStatus: res.status,
+            upstreamError: null,
+            upstreamRawTranslated: null,
+            usedFallback: true,
+          },
         },
         { status: 200 }
       );
     }
 
-   const data = (await res.json()) as {
-  translatedText?: string;
-  error?: string;
-};
+    const data = (await res.json()) as {
+      translatedText?: string;
+      error?: string;
+    };
 
-const maybe = (data.translatedText ?? "").trim();
-const translated =
-  maybe.length > 0 && !data.error ? maybe : rawText;
+    const maybe = (data.translatedText ?? "").trim();
+    const translated =
+      maybe.length > 0 && !data.error ? maybe : rawText;
 
-return NextResponse.json(
-  { translatedText: translated, targetLang: displayTargetLang },
-  { status: 200 }
-);
-
+    return NextResponse.json(
+      {
+        translatedText: translated,
+        targetLang: displayTargetLang,
+        debug: {
+          ...debugBase,
+          reason: "ok",
+          upstreamStatus: res.status,
+          upstreamError: data.error ?? null,
+          upstreamRawTranslated: data.translatedText ?? null,
+          usedFallback: translated === rawText,
+        },
+      },
+      { status: 200 }
+    );
   } catch (err) {
     console.error("Translate route error", err);
     return NextResponse.json(
@@ -82,6 +119,11 @@ return NextResponse.json(
         translatedText: "",
         targetLang: "en-US",
         error: "route-error",
+        debug: {
+          reason: "route-error",
+          errorMessage:
+            err instanceof Error ? err.message : String(err),
+        },
       },
       { status: 200 }
     );
