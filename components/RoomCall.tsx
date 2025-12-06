@@ -143,10 +143,7 @@ export default function RoomPage() {
   const [targetLang, setTargetLang] = useState<string>(
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
-  const targetLangRef = useRef<string>(
-    (typeof navigator !== "undefined" && navigator.language) || "en-US"
-  );
-
+  
   // Hand raise
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
   const [myHandUp, setMyHandUp] = useState(false);
