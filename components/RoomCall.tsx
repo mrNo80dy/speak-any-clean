@@ -143,7 +143,7 @@ export default function RoomPage() {
   const [targetLang, setTargetLang] = useState<string>(
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
-  
+
   // Hand raise
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
   const [myHandUp, setMyHandUp] = useState(false);
@@ -442,9 +442,9 @@ export default function RoomPage() {
       const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
 
-           // Translate into whatever *this device* wants to read
+      // Translate into whatever *this device* wants to read
       const target = targetLang || "en-US";
-      const { translatedText, targetLang } = await translateText(
+      const { translatedText, targetLang: effectiveTarget } = await translateText(
         lang,
         target,
         text
@@ -455,7 +455,7 @@ export default function RoomPage() {
         fromId: clientId,
         fromName,
         originalLang: lang,
-        translatedLang: targetLang,
+        translatedLang: effectiveTarget,
         originalText: text,
         translatedText,
         isLocal: true,
@@ -507,7 +507,7 @@ export default function RoomPage() {
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayName]);
+  }, [displayName, targetLang]); // <-- include targetLang so STT uses latest "Show in"
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -594,26 +594,22 @@ export default function RoomPage() {
               from.slice(0, 8) ??
               "Guest";
 
-           // Translate into *this* device's preferred reading language
+            // Translate into *this* device's preferred reading language
             const target = targetLang || "en-US";
-            const { translatedText, targetLang } = await translateText(
-              lang,
-              target,
-              text
-            );
-
+            const { translatedText, targetLang: effectiveTarget } =
+              await translateText(lang, target, text);
 
             pushMessage({
               fromId: from,
               fromName,
               originalLang: lang,
-              translatedLang: targetLang,
+              translatedLang: effectiveTarget,
               originalText: text,
               translatedText,
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translatedText, targetLang);
+            // Later: if (autoSpeak) speakText(translatedText, effectiveTarget);
           }
         );
 
@@ -769,7 +765,7 @@ export default function RoomPage() {
     const fromName = displayName || "You";
     const target = targetLang || "en-US";
 
-    const { translatedText, targetLang } = await translateText(
+    const { translatedText, targetLang: effectiveTarget } = await translateText(
       lang,
       target,
       text
@@ -780,7 +776,7 @@ export default function RoomPage() {
       fromId: clientId,
       fromName,
       originalLang: lang,
-      translatedLang: targetLang,
+      translatedLang: effectiveTarget,
       originalText: text,
       translatedText,
       isLocal: true,
@@ -1076,7 +1072,7 @@ export default function RoomPage() {
                     playsInline
                     className="h-full w-full object-cover"
                   />
-                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     {myHandUp && <span>✋</span>}
                     <span>You</span>
                   </div>
