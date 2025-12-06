@@ -1,27 +1,21 @@
-"use client";
+// lib/supabaseClient.ts
+import { createClient } from '@supabase/supabase-js';
 
-import { createClient } from "@supabase/supabase-js";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// Reuse the same client across the browser session
+export const supabase =
+  (typeof window !== 'undefined' && (window as any).__ANY_SPEAK_SB__)
+    ? (window as any).__ANY_SPEAK_SB__
+    : createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: false,             // you’re not using auth yet
+          storageKey: 'any-speak-auth',      // avoid key collisions across clients
+        },
+        realtime: { params: { eventsPerSecond: 25 } },
+      });
 
-// Fail fast (helps avoid mysterious 404/401 at runtime)
-if (!url || !anon) {
-  // Throw only on client to avoid SSR crash loops
-  if (typeof window !== "undefined") {
-    throw new Error(
-      "[supabase] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY. " +
-      "Set them in Vercel → Project → Settings → Environment Variables."
-    );
-  }
+if (typeof window !== 'undefined') {
+  (window as any).__ANY_SPEAK_SB__ = supabase;
 }
-
-if (typeof window !== "undefined") {
-  console.log("[supabase] URL:", url);
-  console.log("[supabase] ANON length:", (anon || "").length);
-}
-
-export const supabase = createClient(url!, anon!, {
-  auth: { persistSession: false, autoRefreshToken: true },
-  realtime: { params: { eventsPerSecond: 10 } },
-});

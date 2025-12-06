@@ -1,54 +1,50 @@
 "use client";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 
-type Props = {
+type VideoGridProps = {
   localStream: MediaStream | null;
-  peerConnections: Record<string, RTCPeerConnection>;
+  remoteStreams: Record<string, MediaStream>;
   audioEnabled: boolean;
   videoEnabled: boolean;
 };
 
-export function VideoGrid({ localStream, peerConnections }: Props) {
+export function VideoGrid({
+  localStream,
+  remoteStreams,
+}: VideoGridProps) {
   const [selectedPeerId, setSelectedPeerId] = useState<string | "local">("local");
 
   const localMainRef = useRef<HTMLVideoElement>(null);
   const localThumbRef = useRef<HTMLVideoElement>(null);
   const remoteRefs = useRef<Record<string, HTMLVideoElement>>({});
 
-  const remoteStreams = useMemo(() => {
-    const entries = Object.entries(peerConnections);
-    const map: Record<string, MediaStream | null> = {};
-    for (const [peerId, pc] of entries) {
-      // Grab the first remote stream from tracks
-      const streams = pc.getReceivers()
-        .map((r) => r.track)
-        .filter(Boolean)
-        // @ts-ignore
-        .map((track: MediaStreamTrack) => new MediaStream([track]));
-      // Combine all remote tracks into one stream per peer (video+audio)
-      const combined = new MediaStream();
-      for (const recv of pc.getReceivers()) {
-        if (recv.track) combined.addTrack(recv.track);
-      }
-      map[peerId] = combined.getTracks().length ? combined : null;
-    }
-    return map;
-  }, [peerConnections]);
+  const remoteIds = useMemo(
+    () => Object.keys(remoteStreams),
+    [remoteStreams]
+  );
 
-  // Attach local streams to both main & thumb when selected
+  // Attach local stream to main & thumbnail
   useEffect(() => {
-    const els = [localMainRef.current, localThumbRef.current].filter(Boolean) as HTMLVideoElement[];
-    for (const el of els) {
+    const elements = [localMainRef.current, localThumbRef.current].filter(
+      Boolean
+    ) as HTMLVideoElement[];
+
+    for (const el of elements) {
       if (!el || !localStream) continue;
       el.srcObject = localStream;
       el.muted = true;
-      el.playsInline = true as any; // iOS
+      el.playsInline = true as any;
       el.setAttribute("playsinline", "true");
-      el.play().catch(() => {});
+      el
+        .play()
+        .catch(() => {
+          /* ignore autoplay errors */
+        });
     }
   }, [localStream]);
 
-  // Attach remote streams when elements mount / streams change
+  // Attach remote streams to refs
   useEffect(() => {
     for (const [peerId, stream] of Object.entries(remoteStreams)) {
       const el = remoteRefs.current[peerId];
@@ -58,13 +54,15 @@ export function VideoGrid({ localStream, peerConnections }: Props) {
       el.setAttribute("playsinline", "true");
       el.autoplay = true;
       el.muted = false;
-      el.play().catch(() => {});
+      el
+        .play()
+        .catch(() => {
+          /* ignore autoplay errors */
+        });
     }
   }, [remoteStreams]);
 
-  const remoteIds = Object.keys(remoteStreams).filter((id) => remoteStreams[id]);
-
-  // Default selection: if any remote exists, show it as main
+  // Default selection: if a remote exists, show it as main
   useEffect(() => {
     if (selectedPeerId === "local" && remoteIds.length > 0) {
       setSelectedPeerId(remoteIds[0]);
@@ -76,7 +74,10 @@ export function VideoGrid({ localStream, peerConnections }: Props) {
       {/* Main video */}
       <div className="flex-1 bg-black flex items-center justify-center relative">
         {selectedPeerId === "local" ? (
-          <video ref={localMainRef} className="max-h-full max-w-full object-contain" />
+          <video
+            ref={localMainRef}
+            className="max-h-full max-w-full object-contain"
+          />
         ) : (
           <video
             id={`remote-main-${selectedPeerId}`}
@@ -95,7 +96,9 @@ export function VideoGrid({ localStream, peerConnections }: Props) {
           ref={localThumbRef}
           onClick={() => setSelectedPeerId("local")}
           className={`w-24 h-24 object-cover cursor-pointer border-2 ${
-            selectedPeerId === "local" ? "border-blue-500" : "border-transparent"
+            selectedPeerId === "local"
+              ? "border-blue-500"
+              : "border-transparent"
           }`}
         />
 
@@ -109,7 +112,9 @@ export function VideoGrid({ localStream, peerConnections }: Props) {
             }}
             onClick={() => setSelectedPeerId(id)}
             className={`w-24 h-24 object-cover cursor-pointer border-2 ${
-              selectedPeerId === id ? "border-blue-500" : "border-transparent"
+              selectedPeerId === id
+                ? "border-blue-500"
+                : "border-transparent"
             }`}
           />
         ))}

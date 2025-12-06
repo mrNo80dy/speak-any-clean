@@ -1,269 +1,250 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   RealtimeChannel,
   RealtimeChannelSendResponse,
 } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
-type PeerMap = Record<string, RTCPeerConnection>;
-const ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+];
 
-/** The exact arg shape Supabase `channel.send` accepts */
-type SignalArgs = {
-  type: "broadcast" | "presence" | "postgres_changes";
-  event: string;
-  payload?: any;
-  [key: string]: any;
-};
-
-/** A Realtime channel with a safe, promise-returning send and a readiness flag */
 type SignalChannel = RealtimeChannel & {
-  send: (args: SignalArgs, opts?: Record<string, any>) => Promise<RealtimeChannelSendResponse>;
+  send: (args: {
+    type: "broadcast";
+    event: "signal";
+    payload: any;
+  }) => Promise<RealtimeChannelSendResponse>;
   isReady: () => boolean;
 };
 
-/** Inline signaling channel that is safe to call `send()` before SUBSCRIBED */
-function createInlineSignalChannel(roomId: string): SignalChannel {
+function createSignalChannel(roomId: string): SignalChannel {
   const base = supabase.channel(`signal-${roomId}`, {
     config: { broadcast: { self: false } },
   });
 
   let ready = false;
+  const queue: Array<() => Promise<any>> = [];
 
-  // Queue thunks that actually perform the send and resolve/reject the original promise.
-  const queue: Array<() => Promise<RealtimeChannelSendResponse>> = [];
+  const safeSend: SignalChannel["send"] = (args) => {
+    if (ready) return base.send(args as any);
 
-  const safeSend: SignalChannel["send"] = (args, opts) => {
-    if (ready) {
-      return base.send(args as any, opts as any);
-    }
-    return new Promise<RealtimeChannelSendResponse>((resolve, reject) => {
-      queue.push(() =>
-        base.send(args as any, opts as any).then(resolve).catch(reject)
-      );
+    return new Promise((resolve, reject) => {
+      queue.push(() => {
+        const p = base.send(args as any);
+        p.then(resolve).catch(reject);
+        return p;
+      });
     });
   };
 
-  base.subscribe((status) => {
+  // we just treat status as a string; no fancy typing needed
+  base.subscribe((status: string) => {
     if (status === "SUBSCRIBED") {
       ready = true;
       const pending = queue.splice(0);
-      for (const run of pending) run();
+      pending.forEach((fn) => fn());
     }
   });
 
   return Object.assign(base, {
     send: safeSend,
     isReady: () => ready,
-  }) as SignalChannel;
+  });
 }
 
-export function useWebRTC(
-  roomId: string | null,
-  myPeerId: string | null,
-  liveParticipants: Array<{ id: string }>
+type LiveParticipant = { id: string };
+
+/**
+ * Full WebRTC hook:
+ * - gets local mic+camera
+ * - uses Supabase Realtime as a signaling channel
+ * - creates RTCPeerConnections between participants
+ * - exposes localStream + remoteStreams + audio/video toggles
+ */
+export default function useWebRTCHook(
+  roomId: string,
+  myPeerId: string,
+  liveParticipants: LiveParticipant[]
 ) {
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<
+    Record<string, MediaStream>
+  >({});
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
-  const peerConnectionsRef = useRef<PeerMap>({});
-  const signalChRef = useRef<SignalChannel | null>(null);
+  const pcs = useRef<Record<string, RTCPeerConnection>>({});
+  const signalCh = useRef<SignalChannel | null>(null);
 
-  // Get local media when we have a room and peer id
+  // Get local media once
   useEffect(() => {
-    if (!roomId || !myPeerId) return;
-
     let stopped = false;
 
-    (async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-        });
-        if (!stopped) setLocalStream(stream);
-      } catch (err) {
+    navigator.mediaDevices
+      .getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: { width: 1280, height: 720 },
+      })
+      .then((stream) => {
+        if (!stopped) {
+          setLocalStream(stream);
+        }
+      })
+      .catch((err) => {
         console.error("getUserMedia failed:", err);
-      }
-    })();
+      });
 
     return () => {
       stopped = true;
-      // We keep tracks alive; toggles/cleanup handled elsewhere.
+      // optional: stop tracks on unmount
+      // localStream?.getTracks().forEach((t) => t.stop());
     };
-  }, [roomId, myPeerId]);
+  }, []); // run once
 
-  // helper: get or create PC to a peer
-  const getOrCreatePC = useCallback(
-    (otherId: string) => {
-      const existing = peerConnectionsRef.current[otherId];
-      if (existing) return existing;
+  const getPC = useCallback(
+    (peerId: string) => {
+      if (pcs.current[peerId]) return pcs.current[peerId];
 
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
-      // add local tracks
+      // attach local tracks
       if (localStream) {
-        for (const track of localStream.getTracks()) {
-          pc.addTrack(track, localStream);
-        }
+        localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       }
 
-      // remote tracks consumed elsewhere (e.g., a VideoGrid reading receivers)
-      pc.ontrack = () => {};
+      // when we get remote tracks from this peer
+      pc.ontrack = ({ streams }) => {
+        const stream = streams[0];
+        if (stream) {
+          setRemoteStreams((prev) => ({ ...prev, [peerId]: stream }));
+        }
+      };
 
+      // pass ICE candidates through Supabase signaling
       pc.onicecandidate = (ev) => {
-        if (!ev.candidate || !signalChRef.current || !roomId || !myPeerId) return;
-        signalChRef.current.send({
+        if (!ev.candidate || !signalCh.current) return;
+        signalCh.current.send({
           type: "broadcast",
           event: "signal",
           payload: {
             room_id: roomId,
             sender_id: myPeerId,
-            target_id: otherId,
+            target_id: peerId,
             type: "ice",
             candidate: ev.candidate.toJSON(),
           },
-        }).catch((e) => console.warn("send ice failed:", e));
+        });
       };
 
-      // try ICE restart on disconnect
-      pc.oniceconnectionstatechange = async () => {
-        if (pc.iceConnectionState === "disconnected") {
-          setTimeout(async () => {
-            try {
-              const offer = await pc.createOffer({ iceRestart: true });
-              await pc.setLocalDescription(offer);
-              await signalChRef.current?.send({
-                type: "broadcast",
-                event: "signal",
-                payload: {
-                  room_id: roomId,
-                  sender_id: myPeerId,
-                  target_id: otherId,
-                  type: "offer",
-                  sdp: { type: offer.type, sdp: offer.sdp },
-                },
-              });
-            } catch (e) {
-              console.warn("ICE restart failed:", e);
-            }
-          }, 2500);
-        }
-      };
-
-      peerConnectionsRef.current[otherId] = pc;
+      pcs.current[peerId] = pc;
       return pc;
     },
-    [localStream, roomId, myPeerId]
+    [localStream, myPeerId, roomId]
   );
 
-  // create an offer to a peer
-  const createOfferTo = useCallback(
-    async (otherId: string) => {
-      const pc = getOrCreatePC(otherId);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await signalChRef.current?.send({
-        type: "broadcast",
-        event: "signal",
-        payload: {
-          room_id: roomId,
-          sender_id: myPeerId,
-          target_id: otherId,
-          type: "offer",
-          sdp: { type: offer.type, sdp: offer.sdp },
-        },
-      });
-    },
-    [getOrCreatePC, roomId, myPeerId]
-  );
-
-  // subscribe to signaling for this room
+  // Signaling listener
   useEffect(() => {
     if (!roomId || !myPeerId) return;
 
-    const ch = createInlineSignalChannel(roomId)
-      .on("broadcast", { event: "signal" }, async ({ payload }) => {
-        if (!payload) return;
-        const { sender_id, target_id, type, sdp, candidate } = payload;
+    const ch = createSignalChannel(roomId);
+    signalCh.current = ch;
 
-        if (sender_id === myPeerId) return; // ignore own signals
-        if (target_id && target_id !== myPeerId) return; // not for me
+    ch.on("broadcast", { event: "signal" }, async ({ payload }) => {
+      if (!payload) return;
+      const { sender_id, target_id, type, sdp, candidate } = payload;
 
-        const pc = getOrCreatePC(sender_id);
+      // ignore our own messages
+      if (sender_id === myPeerId) return;
+      // if there's a specific target and it's not us, ignore
+      if (target_id && target_id !== myPeerId) return;
 
-        if (type === "offer" && sdp) {
-          await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await ch.send({
+      const pc = getPC(sender_id);
+
+      if (type === "offer") {
+        await pc.setRemoteDescription(sdp);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        ch.send({
+          type: "broadcast",
+          event: "signal",
+          payload: {
+            room_id: roomId,
+            sender_id: myPeerId,
+            target_id: sender_id,
+            type: "answer",
+            sdp: answer,
+          },
+        });
+      }
+
+      if (type === "answer") {
+        await pc.setRemoteDescription(sdp);
+      }
+
+      if (type === "ice" && candidate) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch (err) {
+          console.warn("addIceCandidate error:", err);
+        }
+      }
+    });
+
+    return () => {
+      ch.unsubscribe();
+      signalCh.current = null;
+    };
+  }, [roomId, myPeerId, getPC]);
+
+  // When participants list changes, we initiate offers to new peers
+  useEffect(() => {
+    (async () => {
+      for (const p of liveParticipants) {
+        if (p.id === myPeerId) continue;
+        if (!pcs.current[p.id]) {
+          const pc = getPC(p.id);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          signalCh.current?.send({
             type: "broadcast",
             event: "signal",
             payload: {
               room_id: roomId,
               sender_id: myPeerId,
-              target_id: sender_id,
-              type: "answer",
-              sdp: { type: answer.type, sdp: answer.sdp },
+              target_id: p.id,
+              type: "offer",
+              sdp: offer,
             },
           });
-        } else if (type === "answer" && sdp) {
-          await pc.setRemoteDescription(sdp as RTCSessionDescriptionInit);
-        } else if (type === "ice" && candidate) {
-          try {
-            await pc.addIceCandidate(candidate as RTCIceCandidateInit);
-          } catch (e) {
-            console.error("addIceCandidate failed:", e);
-          }
-        }
-      })
-      .subscribe();
-
-    signalChRef.current = ch; // <- ch is a SignalChannel
-
-    return () => {
-      ch.unsubscribe();
-      signalChRef.current = null;
-    };
-  }, [roomId, myPeerId, getOrCreatePC]);
-
-  // when live participants change, offer to any new ones
-  useEffect(() => {
-    if (!roomId || !myPeerId) return;
-    (async () => {
-      for (const p of liveParticipants) {
-        if (p.id !== myPeerId && !peerConnectionsRef.current[p.id]) {
-          await createOfferTo(p.id);
         }
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, myPeerId, liveParticipants.map((p) => p.id).join(",")]);
+  }, [liveParticipants, myPeerId, roomId, getPC]);
 
-  const toggleAudio = useCallback(() => {
+  const toggleAudio = () => {
     setAudioEnabled((v) => {
       const next = !v;
       localStream?.getAudioTracks().forEach((t) => (t.enabled = next));
       return next;
     });
-  }, [localStream]);
+  };
 
-  const toggleVideo = useCallback(() => {
+  const toggleVideo = () => {
     setVideoEnabled((v) => {
       const next = !v;
       localStream?.getVideoTracks().forEach((t) => (t.enabled = next));
       return next;
     });
-  }, [localStream]);
-
-  const peerConnections = useMemo(() => peerConnectionsRef.current, []);
+  };
 
   return {
     localStream,
-    peerConnections,
+    remoteStreams,
     audioEnabled,
     videoEnabled,
     toggleAudio,

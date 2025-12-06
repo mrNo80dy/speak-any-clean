@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useRoom } from "@/hooks/use-room";
-import { useWebRTC } from "@/hooks/use-webrtc-hook"; // <-- uses your renamed hook
+import useWebRTCHook from "@/hooks/use-webrtc-hook";
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { useTranslation } from "@/hooks/use-translation";
 import { useTextToSpeech } from "@/hooks/use-text-to-speech";
@@ -22,7 +22,16 @@ interface RoomViewProps {
 
 export function RoomView({ roomId }: RoomViewProps) {
   const router = useRouter();
-  const { room, participants, loading, error, joinRoom, leaveRoom } = useRoom(roomId);
+
+  // 🔹 This is where `room` is declared
+  const {
+    room,
+    participants,
+    loading,
+    error,
+    joinRoom,
+    leaveRoom,
+  } = useRoom(roomId);
 
   const [copied, setCopied] = useState(false);
   const [myPeerId] = useState(() => crypto.randomUUID());
@@ -34,8 +43,15 @@ export function RoomView({ roomId }: RoomViewProps) {
 
   const { enabled: ttsEnabled, speak, toggleEnabled: toggleTTS } = useTextToSpeech();
 
-  const { localStream, peerConnections, audioEnabled, videoEnabled, toggleAudio, toggleVideo } =
-    useWebRTC(joined ? roomId : null, joined ? myPeerId : null, participants);
+  // WebRTC: audio/video now, video-ready architecture
+  const {
+    localStream,
+    remoteStreams,
+    audioEnabled,
+    videoEnabled,
+    toggleAudio,
+    toggleVideo,
+  } = useWebRTCHook(roomId, myPeerId, participants);
 
   // Translation bus (broadcast to room + render captions)
   const { messages, addTranslation } = useTranslation(
@@ -107,7 +123,9 @@ export function RoomView({ roomId }: RoomViewProps) {
             <CardTitle className="text-red-600">Room Not Found</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-gray-600">The room you're looking for doesn't exist or has been deleted.</p>
+            <p className="text-gray-600">
+              The room you're looking for doesn't exist or has been deleted.
+            </p>
             <Button onClick={() => router.push("/")} className="w-full">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Home
@@ -161,12 +179,12 @@ export function RoomView({ roomId }: RoomViewProps) {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden flex">
+      <div className="flex-1 overflow-hidden flex relative">
         {/* Video Grid */}
         <div className={`flex-1 ${captionsVisible ? "md:w-2/3" : "w-full"}`}>
           <VideoGrid
             localStream={localStream}
-            peerConnections={peerConnections}
+            remoteStreams={remoteStreams}
             audioEnabled={audioEnabled}
             videoEnabled={videoEnabled}
           />
