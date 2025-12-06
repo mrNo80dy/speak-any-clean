@@ -66,33 +66,39 @@ async function translateText(
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
   const trimmed = text.trim();
+  const debugPrefix = `[${fromLang}→${toLang}]`; // <— shows per-device perception
+
   if (!trimmed) {
     return { translatedText: "", targetLang: toLang };
   }
 
   // If languages match, no translation needed.
   if (fromLang === toLang) {
-    return { translatedText: trimmed, targetLang: toLang };
+    return {
+      translatedText: `${debugPrefix} ${trimmed}`,
+      targetLang: toLang,
+    };
   }
 
   // For now, just clearly mark what we're "pretending" to show
   if (toLang.startsWith("pt")) {
     return {
-      translatedText: `【PT SIM】 ${trimmed}`,
+      translatedText: `${debugPrefix} 【PT SIM】 ${trimmed}`,
       targetLang: toLang,
     };
   }
 
   if (toLang.startsWith("en")) {
     return {
-      translatedText: `【EN SIM】 ${trimmed}`,
+      translatedText: `${debugPrefix} 【EN SIM】 ${trimmed}`,
       targetLang: toLang,
     };
   }
 
   // Fallback: no decoration
-  return { translatedText: trimmed, targetLang: toLang };
+  return { translatedText: `${debugPrefix} ${trimmed}`, targetLang: toLang };
 }
+
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
