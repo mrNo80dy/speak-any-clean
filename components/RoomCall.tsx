@@ -190,11 +190,6 @@ export default function RoomPage() {
     micOnRef.current = micOn;
   }, [micOn]);
 
-  // keep targetLang in a ref so STT + transcript handler can read latest
-  useEffect(() => {
-    targetLangRef.current = targetLang;
-  }, [targetLang]);
-
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -447,8 +442,8 @@ export default function RoomPage() {
       const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
 
-      // Translate into whatever *this device* wants to read
-      const target = targetLangRef.current || "en-US";
+           // Translate into whatever *this device* wants to read
+      const target = targetLang || "en-US";
       const { translatedText, targetLang } = await translateText(
         lang,
         target,
@@ -599,13 +594,14 @@ export default function RoomPage() {
               from.slice(0, 8) ??
               "Guest";
 
-            // Translate into *this* device's preferred reading language
-            const target = targetLangRef.current || "en-US";
+           // Translate into *this* device's preferred reading language
+            const target = targetLang || "en-US";
             const { translatedText, targetLang } = await translateText(
               lang,
               target,
               text
             );
+
 
             pushMessage({
               fromId: from,
@@ -719,7 +715,7 @@ export default function RoomPage() {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, displayName]);
+  }, [roomId, clientId, displayName, targetLang]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
@@ -771,7 +767,7 @@ export default function RoomPage() {
 
     const lang = "en-US"; // manual text assumed English for now
     const fromName = displayName || "You";
-    const target = targetLangRef.current || "en-US";
+    const target = targetLang || "en-US";
 
     const { translatedText, targetLang } = await translateText(
       lang,
@@ -804,7 +800,7 @@ export default function RoomPage() {
 
   // ---- DEBUG: simulate captions without STT / translate API --
   const simulateDebugCaption = () => {
-    const target = targetLangRef.current || "en-US";
+    const target = targetLang || "en-US";
 
     const pickText = (baseEn: string, basePt: string) =>
       target === "pt-BR" ? basePt : baseEn;
