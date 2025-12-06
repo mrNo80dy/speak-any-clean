@@ -1,122 +1,109 @@
 // app/api/translate/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 
-type TranslateBody = {
-  text?: string;
-  fromLang?: string;
-  toLang?: string;
-  from?: string;
-  to?: string;
+type TranslateRequestBody = {
+  text: string;
+  fromLang: string;
+  toLang: string;
 };
 
-// Map "en-US" → "en", "pt-BR" → "pt", etc.
-// LibreTranslate understands 2-letter codes.
-function normalizeLang(code?: string | null): string | null {
-  if (!code) return null;
-
-  const lower = code.toLowerCase();
-
-  if (lower.startsWith("en")) return "en";
-  if (lower.startsWith("pt")) return "pt";
-  if (lower.startsWith("es")) return "es";
-  if (lower.startsWith("fr")) return "fr";
-  if (lower.startsWith("de")) return "de";
-  if (lower.startsWith("it")) return "it";
-
-  // Fallback: if it’s already 2 letters, use as-is
-  if (lower.length === 2) return lower;
-
-  return null;
-}
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
+  let body: TranslateRequestBody;
   try {
-    const body = (await req.json()) as TranslateBody;
+    body = await req.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body" },
+      { status: 400 }
+    );
+  }
 
-    const text = (body.text || "").trim();
-    if (!text) {
-      return NextResponse.json(
-        { error: "Missing text" },
-        { status: 400 }
-      );
-    }
+  const { text, fromLang, toLang } = body;
 
-    // Support both {fromLang,toLang} and {from,to}
-    const fromInput = body.fromLang ?? body.from ?? null;
-    const toInput = body.toLang ?? body.to ?? null;
+  if (!text || !fromLang || !toLang) {
+    return NextResponse.json(
+      { error: "Missing text/fromLang/toLang" },
+      { status: 400 }
+    );
+  }
 
-    const source = normalizeLang(fromInput) ?? "auto";
-    const target = normalizeLang(toInput) ?? "en";
+  // Use either OPENAI_API_KEY or NEXT_PUBLIC_OPENAI_API_KEY
+  const apiKey =
+    process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
 
-    // If source and target are the same (and not "auto"), just echo
-    if (source !== "auto" && source === target) {
-      return NextResponse.json({
+  // If no key is set, just echo back the original text (but tell us in error)
+  if (!apiKey) {
+    console.error("No OpenAI API key configured");
+    return NextResponse.json(
+      {
         translatedText: text,
-        targetLang: target,
-        detectedSourceLang: source,
-      });
-    }
+        targetLang: toLang,
+        error: "Missing OPENAI_API_KEY",
+      },
+      { status: 200 }
+    );
+  }
 
-    // Call LibreTranslate (public instance).
-    // NOTE: This is just to get you moving; later we’ll swap to your own
-    // self-hosted or paid provider.
-    const apiRes = await fetch("https://libretranslate.de/translate", {
+  try {
+    const prompt = `Translate the following text from ${fromLang} to ${toLang}.
+Only return the translated text, nothing else.
+
+Text:
+${text}`;
+
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        // No auth key for this free public instance.
       },
       body: JSON.stringify({
-        q: text,
-        source,       // "auto" or language code
-        target,       // language code like "en" / "pt"
-        format: "text",
+        model: "gpt-4o-mini",
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: "You are a precise, concise translation engine.",
+          },
+          { role: "user", content: prompt },
+        ],
       }),
     });
 
-    if (!apiRes.ok) {
-      console.error("LibreTranslate error status", apiRes.status);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("OpenAI error", res.status, errText);
+      // Fall back to original text so the UI still works
       return NextResponse.json(
         {
-          translatedText: text, // fallback: original
-          targetLang: target,
-          error: `LibreTranslate status ${apiRes.status}`,
+          translatedText: text,
+          targetLang: toLang,
+          error: `openai_error_${res.status}`,
         },
         { status: 200 }
       );
     }
 
-    const data = await apiRes.json();
-
-    // LibreTranslate returns { translatedText: "..." }
+    const data = await res.json();
     const translated =
-      (data?.translatedText as string | undefined) ||
-      (data?.translated as string | undefined) ||
-      "";
+      data?.choices?.[0]?.message?.content?.trim() || text;
 
-    if (!translated.trim()) {
-      console.warn("LibreTranslate: empty translated text", data);
-      return NextResponse.json({
-        translatedText: text, // fallback
-        targetLang: target,
-        detectedSourceLang: data?.detectedLanguage?.language ?? source,
-      });
-    }
-
-    return NextResponse.json({
-      translatedText: translated.trim(),
-      targetLang: target,
-      detectedSourceLang: data?.detectedLanguage?.language ?? source,
-    });
-  } catch (err) {
-    console.error("translate route fatal error", err);
     return NextResponse.json(
       {
-        translatedText: "",
-        targetLang: "en",
-        error: "Internal translation error",
+        translatedText: translated,
+        targetLang: toLang,
       },
-      { status: 500 }
+      { status: 200 }
+    );
+  } catch (err: any) {
+    console.error("translate route exception", err);
+    return NextResponse.json(
+      {
+        translatedText: text,
+        targetLang: toLang,
+        error: "route_exception",
+      },
+      { status: 200 }
     );
   }
 }
