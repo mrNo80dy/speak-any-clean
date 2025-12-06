@@ -52,7 +52,14 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
-// Call the real translation API route
+/**
+ * DEBUG TRANSLATOR
+ * -----------------
+ * This version does NOT call /api/translate.
+ * It just decorates the original text so you can verify:
+ * - captions flow PC → phone and phone → PC
+ * - "Show in" selector per-device is working
+ */
 async function translateText(
   fromLang: string,
   toLang: string,
@@ -68,48 +75,24 @@ async function translateText(
     return { translatedText: trimmed, targetLang: toLang };
   }
 
-  try {
-    const res = await fetch("/api/translate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: trimmed,
-        fromLang,
-        toLang,
-      }),
-    });
-
-    if (!res.ok) {
-      console.warn(
-        "[RoomCall.translateText] /api/translate returned status",
-        res.status
-      );
-      // Fall back to original text
-      return { translatedText: trimmed, targetLang: toLang };
-    }
-
-    const data = (await res.json()) as {
-      translatedText?: string;
-      targetLang?: string;
-      error?: string;
+  // For now, just clearly mark what we're "pretending" to show
+  if (toLang.startsWith("pt")) {
+    return {
+      translatedText: `【PT SIM】 ${trimmed}`,
+      targetLang: toLang,
     };
-
-    const translated = (data.translatedText ?? "").trim();
-    const effectiveTarget = data.targetLang || toLang;
-
-    if (!translated) {
-      // No usable translation → fall back to original
-      return { translatedText: trimmed, targetLang: effectiveTarget };
-    }
-
-    return { translatedText: translated, targetLang: effectiveTarget };
-  } catch (err) {
-    console.error("[RoomCall.translateText] error talking to /api/translate", err);
-    // Network or server error → fall back to original text
-    return { translatedText: trimmed, targetLang: toLang };
   }
-}
 
+  if (toLang.startsWith("en")) {
+    return {
+      translatedText: `【EN SIM】 ${trimmed}`,
+      targetLang: toLang,
+    };
+  }
+
+  // Fallback: no decoration
+  return { translatedText: trimmed, targetLang: toLang };
+}
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -502,8 +485,6 @@ export default function RoomPage() {
       setSttStatus("error");
       setSttErrorMessage(event.error || "Speech recognition error.");
 
-      // On mobile, repeated errors can cause constant dinging.
-      // If it's not-allowed or service-related, stop trying.
       if (
         event.error === "not-allowed" ||
         event.error === "service-not-allowed"
@@ -828,7 +809,6 @@ export default function RoomPage() {
   const simulateDebugCaption = () => {
     const target = targetLangRef.current || "en-US";
 
-    // Helper to choose a simple translated text without calling any API
     const pickText = (baseEn: string, basePt: string) =>
       target === "pt-BR" ? basePt : baseEn;
 
@@ -1103,7 +1083,7 @@ export default function RoomPage() {
                     playsInline
                     className="h-full w-full object-cover"
                   />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     {myHandUp && <span>✋</span>}
                     <span>You</span>
                   </div>
@@ -1328,4 +1308,4 @@ export default function RoomPage() {
       </div>
     </div>
   );
-                         }
+}
