@@ -66,39 +66,33 @@ async function translateText(
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
   const trimmed = text.trim();
-  const debugPrefix = `[${fromLang}→${toLang}]`; // <— shows per-device perception
-
   if (!trimmed) {
     return { translatedText: "", targetLang: toLang };
   }
 
   // If languages match, no translation needed.
   if (fromLang === toLang) {
-    return {
-      translatedText: `${debugPrefix} ${trimmed}`,
-      targetLang: toLang,
-    };
+    return { translatedText: trimmed, targetLang: toLang };
   }
 
   // For now, just clearly mark what we're "pretending" to show
   if (toLang.startsWith("pt")) {
     return {
-      translatedText: `${debugPrefix} 【PT SIM】 ${trimmed}`,
+      translatedText: `【PT SIM】 ${trimmed}`,
       targetLang: toLang,
     };
   }
 
   if (toLang.startsWith("en")) {
     return {
-      translatedText: `${debugPrefix} 【EN SIM】 ${trimmed}`,
+      translatedText: `【EN SIM】 ${trimmed}`,
       targetLang: toLang,
     };
   }
 
   // Fallback: no decoration
-  return { translatedText: `${debugPrefix} ${trimmed}`, targetLang: toLang };
+  return { translatedText: trimmed, targetLang: toLang };
 }
-
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -167,6 +161,7 @@ export default function RoomPage() {
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
+    // console.log(line); // uncomment if you want to see in DevTools
   };
 
   // helper: whenever a local <video> mounts, attach the current stream
@@ -281,7 +276,7 @@ export default function RoomPage() {
 
     pc.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-        e.streams[0].getTracks().forEach((t) => {
+e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
             remoteStream.addTrack(t);
           }
@@ -448,9 +443,9 @@ export default function RoomPage() {
       const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
 
-      // Translate into whatever *this device* wants to read
+      // Translate into whatever *this device* wants to read RIGHT NOW
       const target = targetLang || "en-US";
-      const { translatedText, targetLang: effectiveTarget } = await translateText(
+      const { translatedText, targetLang: finalTarget } = await translateText(
         lang,
         target,
         text
@@ -461,7 +456,7 @@ export default function RoomPage() {
         fromId: clientId,
         fromName,
         originalLang: lang,
-        translatedLang: effectiveTarget,
+        translatedLang: finalTarget,
         originalText: text,
         translatedText,
         isLocal: true,
@@ -512,8 +507,7 @@ export default function RoomPage() {
       } catch {}
       recognitionRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayName, targetLang]); // <-- include targetLang so STT uses latest "Show in"
+  }, [displayName, targetLang, sttStatus]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -602,20 +596,20 @@ export default function RoomPage() {
 
             // Translate into *this* device's preferred reading language
             const target = targetLang || "en-US";
-            const { translatedText, targetLang: effectiveTarget } =
+            const { translatedText, targetLang: finalTarget } =
               await translateText(lang, target, text);
 
             pushMessage({
               fromId: from,
               fromName,
               originalLang: lang,
-              translatedLang: effectiveTarget,
+              translatedLang: finalTarget,
               originalText: text,
               translatedText,
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translatedText, effectiveTarget);
+            // Later: if (autoSpeak) speakText(translatedText, finalTarget);
           }
         );
 
@@ -716,7 +710,6 @@ export default function RoomPage() {
         }
       } catch {}
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, clientId, displayName, targetLang]);
 
   // ---- UI controls ------------------------------------------
@@ -771,7 +764,7 @@ export default function RoomPage() {
     const fromName = displayName || "You";
     const target = targetLang || "en-US";
 
-    const { translatedText, targetLang: effectiveTarget } = await translateText(
+    const { translatedText, targetLang: finalTarget } = await translateText(
       lang,
       target,
       text
@@ -782,7 +775,7 @@ export default function RoomPage() {
       fromId: clientId,
       fromName,
       originalLang: lang,
-      translatedLang: effectiveTarget,
+      translatedLang: finalTarget,
       originalText: text,
       translatedText,
       isLocal: true,
