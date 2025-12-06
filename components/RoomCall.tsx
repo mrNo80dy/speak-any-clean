@@ -52,13 +52,18 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
+type TranslateResponse = {
+  translatedText?: string;
+  targetLang?: string;
+  detectedSourceLang?: string;
+  error?: string;
+};
+
 /**
- * DEBUG TRANSLATOR
- * -----------------
- * This version does NOT call /api/translate.
- * It just decorates the original text so you can verify:
- * - captions flow PC → phone and phone → PC
- * - "Show in" selector per-device is working
+ * REAL TRANSLATOR
+ * ---------------
+ * Calls /api/translate with { text, fromLang, toLang }.
+ * If anything fails, we fall back to the original text.
  */
 async function translateText(
   fromLang: string,
@@ -75,23 +80,37 @@ async function translateText(
     return { translatedText: trimmed, targetLang: toLang };
   }
 
-  // For now, just clearly mark what we're "pretending" to show
-  if (toLang.startsWith("pt")) {
-    return {
-      translatedText: `【PT SIM】 ${trimmed}`,
-      targetLang: toLang,
-    };
-  }
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: trimmed,
+        fromLang,
+        toLang,
+      }),
+    });
 
-  if (toLang.startsWith("en")) {
-    return {
-      translatedText: `【EN SIM】 ${trimmed}`,
-      targetLang: toLang,
-    };
-  }
+    if (!res.ok) {
+      console.error("translate API not ok", res.status);
+      return { translatedText: trimmed, targetLang: toLang };
+    }
 
-  // Fallback: no decoration
-  return { translatedText: trimmed, targetLang: toLang };
+    const data: TranslateResponse = await res.json();
+
+    if (!data || !data.translatedText) {
+      console.warn("translate API missing translatedText", data);
+      return { translatedText: trimmed, targetLang: toLang };
+    }
+
+    return {
+      translatedText: data.translatedText,
+      targetLang: data.targetLang || toLang,
+    };
+  } catch (err) {
+    console.error("translate API failed", err);
+    return { translatedText: trimmed, targetLang: toLang };
+  }
 }
 
 export default function RoomPage() {
@@ -143,6 +162,9 @@ export default function RoomPage() {
   const [targetLang, setTargetLang] = useState<string>(
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
+  const targetLangRef = useRef<string>(
+    (typeof navigator !== "undefined" && navigator.language) || "en-US"
+  );
 
   // Hand raise
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
@@ -161,7 +183,6 @@ export default function RoomPage() {
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
-    // console.log(line); // uncomment if you want to see in DevTools
   };
 
   // helper: whenever a local <video> mounts, attach the current stream
@@ -190,6 +211,11 @@ export default function RoomPage() {
   useEffect(() => {
     micOnRef.current = micOn;
   }, [micOn]);
+
+  // keep targetLang in a ref so STT + transcript handler can read latest
+  useEffect(() => {
+    targetLangRef.current = targetLang;
+  }, [targetLang]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -276,7 +302,7 @@ export default function RoomPage() {
 
     pc.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-e.streams[0].getTracks().forEach((t) => {
+        e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
             remoteStream.addTrack(t);
           }
@@ -443,9 +469,9 @@ e.streams[0].getTracks().forEach((t) => {
       const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
 
-      // Translate into whatever *this device* wants to read RIGHT NOW
-      const target = targetLang || "en-US";
-      const { translatedText, targetLang: finalTarget } = await translateText(
+      // Translate into whatever *this device* wants to read
+      const target = targetLangRef.current || "en-US";
+      const { translatedText, targetLang } = await translateText(
         lang,
         target,
         text
@@ -456,7 +482,7 @@ e.streams[0].getTracks().forEach((t) => {
         fromId: clientId,
         fromName,
         originalLang: lang,
-        translatedLang: finalTarget,
+        translatedLang: targetLang,
         originalText: text,
         translatedText,
         isLocal: true,
@@ -507,7 +533,8 @@ e.streams[0].getTracks().forEach((t) => {
       } catch {}
       recognitionRef.current = null;
     };
-  }, [displayName, targetLang, sttStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayName]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -595,21 +622,24 @@ e.streams[0].getTracks().forEach((t) => {
               "Guest";
 
             // Translate into *this* device's preferred reading language
-            const target = targetLang || "en-US";
-            const { translatedText, targetLang: finalTarget } =
-              await translateText(lang, target, text);
+            const target = targetLangRef.current || "en-US";
+            const { translatedText, targetLang } = await translateText(
+              lang,
+              target,
+              text
+            );
 
             pushMessage({
               fromId: from,
               fromName,
               originalLang: lang,
-              translatedLang: finalTarget,
+              translatedLang: targetLang,
               originalText: text,
               translatedText,
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translatedText, finalTarget);
+            // Later: if (autoSpeak) speakText(translatedText, targetLang);
           }
         );
 
@@ -710,7 +740,8 @@ e.streams[0].getTracks().forEach((t) => {
         }
       } catch {}
     };
-  }, [roomId, clientId, displayName, targetLang]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, clientId, displayName]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
@@ -762,9 +793,9 @@ e.streams[0].getTracks().forEach((t) => {
 
     const lang = "en-US"; // manual text assumed English for now
     const fromName = displayName || "You";
-    const target = targetLang || "en-US";
+    const target = targetLangRef.current || "en-US";
 
-    const { translatedText, targetLang: finalTarget } = await translateText(
+    const { translatedText, targetLang } = await translateText(
       lang,
       target,
       text
@@ -775,7 +806,7 @@ e.streams[0].getTracks().forEach((t) => {
       fromId: clientId,
       fromName,
       originalLang: lang,
-      translatedLang: finalTarget,
+      translatedLang: targetLang,
       originalText: text,
       translatedText,
       isLocal: true,
@@ -795,7 +826,7 @@ e.streams[0].getTracks().forEach((t) => {
 
   // ---- DEBUG: simulate captions without STT / translate API --
   const simulateDebugCaption = () => {
-    const target = targetLang || "en-US";
+    const target = targetLangRef.current || "en-US";
 
     const pickText = (baseEn: string, basePt: string) =>
       target === "pt-BR" ? basePt : baseEn;
