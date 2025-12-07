@@ -1,109 +1,80 @@
 // app/api/translate/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-type TranslateRequestBody = {
-  text: string;
-  fromLang: string;
-  toLang: string;
-};
-
-export async function POST(req: Request) {
-  let body: TranslateRequestBody;
+export async function POST(req: NextRequest) {
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body" },
-      { status: 400 }
-    );
-  }
+    const { text, fromLang, toLang } = await req.json();
 
-  const { text, fromLang, toLang } = body;
+    if (!text || !toLang) {
+      return NextResponse.json(
+        { error: "Missing 'text' or 'toLang' in request body." },
+        { status: 400 }
+      );
+    }
 
-  if (!text || !fromLang || !toLang) {
-    return NextResponse.json(
-      { error: "Missing text/fromLang/toLang" },
-      { status: 400 }
-    );
-  }
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY is not set on the server." },
+        { status: 500 }
+      );
+    }
 
-  // Use either OPENAI_API_KEY or NEXT_PUBLIC_OPENAI_API_KEY
-  const apiKey =
-    process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
+    const systemPrompt =
+      "You are a translation engine. You ONLY return the translated text, no explanations or extra words.";
 
-  // If no key is set, just echo back the original text (but tell us in error)
-  if (!apiKey) {
-    console.error("No OpenAI API key configured");
-    return NextResponse.json(
-      {
-        translatedText: text,
-        targetLang: toLang,
-        error: "Missing OPENAI_API_KEY",
-      },
-      { status: 200 }
-    );
-  }
-
-  try {
-    const prompt = `Translate the following text from ${fromLang} to ${toLang}.
-Only return the translated text, nothing else.
+    const userPrompt = `Translate the following text from ${fromLang || "its original language"} to ${toLang}.
+Return ONLY the translated text.
 
 Text:
 ${text}`;
 
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        temperature: 0,
         messages: [
-          {
-            role: "system",
-            content: "You are a precise, concise translation engine.",
-          },
-          { role: "user", content: prompt },
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
         ],
+        temperature: 0,
       }),
     });
 
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("OpenAI error", res.status, errText);
-      // Fall back to original text so the UI still works
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("OpenAI API error:", response.status, errText);
       return NextResponse.json(
-        {
-          translatedText: text,
-          targetLang: toLang,
-          error: `openai_error_${res.status}`,
-        },
-        { status: 200 }
+        { error: "OpenAI API request failed." },
+        { status: 500 }
       );
     }
 
-    const data = await res.json();
-    const translated =
-      data?.choices?.[0]?.message?.content?.trim() || text;
+    const data = await response.json();
 
-    return NextResponse.json(
-      {
-        translatedText: translated,
-        targetLang: toLang,
-      },
-      { status: 200 }
-    );
+    const content =
+      data.choices?.[0]?.message?.content?.toString().trim() || "";
+
+    if (!content) {
+      return NextResponse.json(
+        { error: "No translation returned from OpenAI." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      translatedText: content,
+      targetLang: toLang,
+    });
   } catch (err: any) {
-    console.error("translate route exception", err);
+    console.error("API /translate error:", err?.message || err);
     return NextResponse.json(
-      {
-        translatedText: text,
-        targetLang: toLang,
-        error: "route_exception",
-      },
-      { status: 200 }
+      { error: "Unexpected error in /api/translate." },
+      { status: 500 }
     );
   }
 }
