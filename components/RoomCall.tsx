@@ -200,7 +200,7 @@ export default function RoomPage() {
     }
   };
 
-  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
+  function (msg: Omit<ChatMessage, "id" | "at">) {
     const full: ChatMessage = {
       ...msg,
       id: crypto.randomUUID(),
@@ -209,26 +209,44 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
-  function speakText(text: string, lang: string) {
-    if (typeof window === "undefined") return;
-    const synth = window.speechSynthesis;
-    if (!synth) return;
+ function speakText(text: string, lang: string) {
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
 
-    const trimmed = text.trim();
-    if (!trimmed) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
 
-    // Simple strategy: cancel any in-flight speech and speak latest line
-    try {
-      synth.cancel();
-    } catch {
-      // ignore
-    }
-
-    const utterance = new SpeechSynthesisUtterance(trimmed);
-    utterance.lang = lang || "en-US";
-    utterance.rate = 1.0; // you can tweak later if needed
-    synth.speak(utterance);
+  try {
+    synth.cancel();
+  } catch {
+    // ignore
   }
+
+  const utterance = new SpeechSynthesisUtterance(trimmed);
+
+  const voices = synth.getVoices();
+  if (voices && voices.length > 0) {
+    // Try exact match first (e.g. "pt-BR")
+    let voice =
+      voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+      // Fallback: match language only (e.g. "pt")
+      voices.find((v) =>
+        v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+      );
+
+    if (voice) {
+      utterance.voice = voice;
+    }
+  }
+
+  // Still set lang so browser knows our intent
+  utterance.lang = lang || "en-US";
+  utterance.rate = 1.0;
+
+  synth.speak(utterance);
+}
+
 
   // keep micOn in a ref so STT onend can see latest
   useEffect(() => {
