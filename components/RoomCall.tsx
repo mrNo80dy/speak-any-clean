@@ -506,25 +506,29 @@ export default function RoomPage() {
       );
 
       // Local message
-      pushMessage({
-        fromId: clientId,
-        fromName,
-        originalLang: lang,
-        translatedLang: targetLang,
-        originalText: text,
-        translatedText,
-        isLocal: true,
-      });
+pushMessage({
+  fromId: clientId,
+  fromName,
+  originalLang: lang,
+  translatedLang: targetLang,
+  originalText: text,
+  translatedText,
+  isLocal: true,
+});
 
-      // Broadcast original text + source lang + name.
-      // Each receiver translates for themselves.
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "transcript",
-          payload: { from: clientId, text, lang, name: fromName },
-        });
-      }
+// Speak the translated line on THIS device if Voice is on
+if (autoSpeakRef.current) {
+  speakText(translatedText, targetLang);
+}
+
+// Broadcast original text + source lang + name.
+if (channelRef.current) {
+  channelRef.current.send({
+    type: "broadcast",
+    event: "transcript",
+    payload: { from: clientId, text, lang, name: fromName },
+  });
+}
     };
 
     rec.onerror = (event: any) => {
