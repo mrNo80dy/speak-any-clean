@@ -198,9 +198,9 @@ export default function RoomPage() {
       el.setAttribute("playsinline", "true");
       el.play().catch(() => {});
     }
-  };
+    };
 
-  function (msg: Omit<ChatMessage, "id" | "at">) {
+  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
     const full: ChatMessage = {
       ...msg,
       id: crypto.randomUUID(),
