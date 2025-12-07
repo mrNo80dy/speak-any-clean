@@ -156,7 +156,9 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showCaptions, setShowCaptions] = useState(false);
   const [captionLines, setCaptionLines] = useState<number>(3);
-  const [autoSpeak] = useState(true); // reserved for later TTS
+
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const autoSpeakRef = useRef(true);
 
   // Translation target language (what *you* want to read)
   const [targetLang, setTargetLang] = useState<string>(
@@ -207,6 +209,27 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
+  function speakText(text: string, lang: string) {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // Simple strategy: cancel any in-flight speech and speak latest line
+    try {
+      synth.cancel();
+    } catch {
+      // ignore
+    }
+
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.lang = lang || "en-US";
+    utterance.rate = 1.0; // you can tweak later if needed
+    synth.speak(utterance);
+  }
+
   // keep micOn in a ref so STT onend can see latest
   useEffect(() => {
     micOnRef.current = micOn;
@@ -216,6 +239,11 @@ export default function RoomPage() {
   useEffect(() => {
     targetLangRef.current = targetLang;
   }, [targetLang]);
+
+  // keep autoSpeak in a ref so Supabase handler sees latest value
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak;
+  }, [autoSpeak]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -639,7 +667,10 @@ export default function RoomPage() {
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translatedText, targetLang);
+            // Speak the translated line on THIS device if Voice is on
+            if (autoSpeakRef.current) {
+              speakText(translatedText, targetLang);
+            }
           }
         );
 
@@ -972,6 +1003,18 @@ export default function RoomPage() {
                 Test CC
               </button>
             )}
+
+            {/* Voice playback toggle */}
+            <button
+              onClick={() => setAutoSpeak((v) => !v)}
+              className={`${pillBase} ${
+                autoSpeak
+                  ? "bg-emerald-500 text-white border-emerald-400"
+                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+            >
+              Voice
+            </button>
           </div>
 
           {/* Language selector for how YOU want to read captions */}
