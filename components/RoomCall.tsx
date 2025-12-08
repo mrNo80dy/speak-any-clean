@@ -157,6 +157,7 @@ export default function RoomPage() {
   const [showCaptions, setShowCaptions] = useState(false);
   const [captionLines, setCaptionLines] = useState<number>(3);
 
+  // Voice playback (TTS of translated text)
   const [autoSpeak, setAutoSpeak] = useState(true);
   const autoSpeakRef = useRef(true);
 
@@ -198,7 +199,7 @@ export default function RoomPage() {
       el.setAttribute("playsinline", "true");
       el.play().catch(() => {});
     }
-    };
+  };
 
   function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
     const full: ChatMessage = {
@@ -209,44 +210,43 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
- function speakText(text: string, lang: string) {
-  if (typeof window === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
+  function speakText(text: string, lang: string) {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth) return;
 
-  const trimmed = text.trim();
-  if (!trimmed) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-  try {
-    synth.cancel();
-  } catch {
-    // ignore
-  }
-
-  const utterance = new SpeechSynthesisUtterance(trimmed);
-
-  const voices = synth.getVoices();
-  if (voices && voices.length > 0) {
-    // Try exact match first (e.g. "pt-BR")
-    let voice =
-      voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
-      // Fallback: match language only (e.g. "pt")
-      voices.find((v) =>
-        v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
-      );
-
-    if (voice) {
-      utterance.voice = voice;
+    try {
+      synth.cancel();
+    } catch {
+      // ignore
     }
+
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+
+    const voices = synth.getVoices();
+    if (voices && voices.length > 0) {
+      // Try exact match first (e.g. "pt-BR")
+      let voice =
+        voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+        // Fallback: match language only (e.g. "pt")
+        voices.find((v) =>
+          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+        );
+
+      if (voice) {
+        utterance.voice = voice;
+      }
+    }
+
+    // Still set lang so browser knows our intent
+    utterance.lang = lang || "en-US";
+    utterance.rate = 1.0;
+
+    synth.speak(utterance);
   }
-
-  // Still set lang so browser knows our intent
-  utterance.lang = lang || "en-US";
-  utterance.rate = 1.0;
-
-  synth.speak(utterance);
-}
-
 
   // keep micOn in a ref so STT onend can see latest
   useEffect(() => {
@@ -299,6 +299,23 @@ export default function RoomPage() {
   }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
+
+  // ✅ New helper to ensure ONLY video track is added (no raw mic audio)
+  function ensureVideoTrack(pc: RTCPeerConnection) {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    const alreadySending = pc
+      .getSenders()
+      .some((s) => s.track && s.track.id === videoTrack.id);
+
+    if (!alreadySending) {
+      pc.addTrack(videoTrack, stream);
+    }
+  }
+
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => {
       if (prev[remoteId] === stream) return prev;
@@ -362,14 +379,12 @@ export default function RoomPage() {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
-    // Add local tracks if we already have them
+    // ✅ Only send VIDEO track; no audio track to peers
     if (localStreamRef.current) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      ensureVideoTrack(pc);
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
-      pc.addTransceiver("audio", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" }); // still receive remote audio if any
     }
 
     const peer: Peer = { pc, remoteStream };
@@ -380,11 +395,8 @@ export default function RoomPage() {
   async function makeOffer(toId: string, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(toId, channel);
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
-    }
+    // ✅ Make sure only video track is attached
+    ensureVideoTrack(pc);
 
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
@@ -410,11 +422,8 @@ export default function RoomPage() {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
-    }
+    // ✅ Make sure only video track is attached
+    ensureVideoTrack(pc);
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -452,8 +461,15 @@ export default function RoomPage() {
 
   async function acquireLocalMedia() {
     if (localStreamRef.current) return localStreamRef.current;
+
+    // ✅ Add noise/echo controls. This mostly affects the audio track
+    // (even though we don't send it over WebRTC anymore).
     const constraints: MediaStreamConstraints = {
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
     };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -524,29 +540,29 @@ export default function RoomPage() {
       );
 
       // Local message
-pushMessage({
-  fromId: clientId,
-  fromName,
-  originalLang: lang,
-  translatedLang: targetLang,
-  originalText: text,
-  translatedText,
-  isLocal: true,
-});
+      pushMessage({
+        fromId: clientId,
+        fromName,
+        originalLang: lang,
+        translatedLang: targetLang,
+        originalText: text,
+        translatedText,
+        isLocal: true,
+      });
 
-// Speak the translated line on THIS device if Voice is on
-if (autoSpeakRef.current) {
-  speakText(translatedText, targetLang);
-}
+      // Speak the translated line on THIS device if Voice is on
+      if (autoSpeakRef.current) {
+        speakText(translatedText, targetLang);
+      }
 
-// Broadcast original text + source lang + name.
-if (channelRef.current) {
-  channelRef.current.send({
-    type: "broadcast",
-    event: "transcript",
-    payload: { from: clientId, text, lang, name: fromName },
-  });
-}
+      // Broadcast original text + source lang + name.
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "transcript",
+          payload: { from: clientId, text, lang, name: fromName },
+        });
+      }
     };
 
     rec.onerror = (event: any) => {
