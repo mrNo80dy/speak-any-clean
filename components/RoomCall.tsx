@@ -650,7 +650,7 @@ export default function RoomPage() {
 
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
-            broadcast: { self: false },
+            broadcast: { self: true },
             presence: { key: clientId },
           },
         });
