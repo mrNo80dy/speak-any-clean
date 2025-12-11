@@ -606,30 +606,31 @@ export default function LearnPage() {
 
                 <div className="space-y-2">
                   {selectedLesson.phrases.map((phrase) => {
-                    const preview =
-                      phrase.texts[fromLang] ??
-                      phrase.texts["en-US"] ??
-                      Object.values(phrase.texts)[0];
+  const preview =
+    phrase.texts[fromLang] ??
+    phrase.texts["en-US"] ??
+    Object.values(phrase.texts)[0];
 
-                    return (
-                      <div
-                        key={phrase.id}
-                        className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2"
-                      >
-                        <div className="text-slate-50 text-sm">
-                          {preview}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleUseLessonPhrase(phrase)}
-                          className="border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
-                        >
-                          Use this phrase
-                        </Button>
-                      </div>
-                    );
-                  })}
+  return (
+    <div
+      key={phrase.id}
+      className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2"
+    >
+      <div className="text-slate-50 text-sm flex-1 min-w-0">
+        <span className="block truncate">{preview}</span>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => handleUseLessonPhrase(phrase)}
+        className="shrink-0 border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
+      >
+        Use this phrase
+      </Button>
+    </div>
+  );
+})}
+
                 </div>
               </div>
             )}
