@@ -211,42 +211,47 @@ export default function RoomPage() {
   }
 
   function speakText(text: string, lang: string) {
-    if (typeof window === "undefined") return;
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-
-    const trimmed = text.trim();
-    if (!trimmed) return;
-
-    try {
-      synth.cancel();
-    } catch {
-      // ignore
-    }
-
-    const utterance = new SpeechSynthesisUtterance(trimmed);
-
-    const voices = synth.getVoices();
-    if (voices && voices.length > 0) {
-      // Try exact match first (e.g. "pt-BR")
-      let voice =
-        voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
-        // Fallback: match language only (e.g. "pt")
-        voices.find((v) =>
-          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
-        );
-
-      if (voice) {
-        utterance.voice = voice;
-      }
-    }
-
-    // Still set lang so browser knows our intent
-    utterance.lang = lang || "en-US";
-    utterance.rate = 1.0;
-
-    synth.speak(utterance);
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) {
+    console.warn("speechSynthesis not available");
+    return;
   }
+
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  console.log("🔊 speakText called:", { text: trimmed, lang });
+
+  try {
+    synth.cancel();
+  } catch {
+    // ignore
+  }
+
+  const utterance = new SpeechSynthesisUtterance(trimmed);
+
+  const voices = synth.getVoices();
+  console.log("available voices:", voices?.map(v => v.lang));
+  if (voices && voices.length > 0) {
+    let voice =
+      voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+      voices.find((v) =>
+        v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+      );
+
+    if (voice) {
+      utterance.voice = voice;
+      console.log("using voice:", voice.lang, voice.name);
+    }
+  }
+
+  utterance.lang = lang || "en-US";
+  utterance.rate = 1.0;
+
+  synth.speak(utterance);
+}
+
 
   // keep micOn in a ref so STT onend can see latest
   useEffect(() => {
@@ -533,7 +538,7 @@ export default function RoomPage() {
 
       // Translate into whatever *this device* wants to read
       const target = targetLangRef.current || "en-US";
-         const { translatedText, targetLang } = await translateText(
+      const { translatedText, targetLang } = await translateText(
       lang,
       target,
       text
@@ -1041,7 +1046,7 @@ export default function RoomPage() {
               </button>
             )}
 
-            {/* Voice playback toggle */}
+                        {/* Voice playback toggle */}
             <button
               onClick={() => setAutoSpeak((v) => !v)}
               className={`${pillBase} ${
@@ -1051,6 +1056,16 @@ export default function RoomPage() {
               }`}
             >
               Voice
+            </button>
+
+            {/* Manual test voice button */}
+            <button
+              onClick={() =>
+                speakText("Olá, esta é a voz sintética do Any-Speak.", "pt-BR")
+              }
+              className={`${pillBase} bg-amber-500 text-black border-amber-400`}
+            >
+              Test PT Voice
             </button>
           </div>
 
