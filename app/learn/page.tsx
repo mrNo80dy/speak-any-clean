@@ -213,7 +213,7 @@ export default function LearnPage() {
   const [toLang, setToLang] = useState("pt-BR");
 
   const [sourceText, setSourceText] = useState("");
-  the [translatedText, setTranslatedText] = useState("");
+  const [translatedText, setTranslatedText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
