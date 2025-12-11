@@ -180,7 +180,7 @@ export default function PracticePage() {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50 p-4">
-      <Card className="w-full max-w-2xl bg-slate-900/80 border-slate-700 shadow-xl">
+      <Card className="w-full max-w-2xl bg-slate-800 border-slate-600 shadow-xl">
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <span>Translation + TTS Practice</span>
@@ -198,7 +198,7 @@ export default function PracticePage() {
                 id="fromLang"
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
-                className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-slate-100"
               >
                 <option value="en-US">English (US)</option>
                 <option value="pt-BR">Português (Brasil)</option>
