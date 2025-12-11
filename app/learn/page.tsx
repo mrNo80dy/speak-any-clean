@@ -20,7 +20,7 @@ type TranslateResponse = {
 
 type LessonPhrase = {
   id: string;
-  texts: Record<string, string>; // keyed by language code
+  texts: Record<string, string>;
 };
 
 type Lesson = {
@@ -30,15 +30,12 @@ type Lesson = {
   phrases: LessonPhrase[];
 };
 
-/**
- * Starter lessons – manual EN/PT so we’re not relying on the
- * translator for the teaching content itself.
- */
 const LESSONS: Lesson[] = [
   {
     id: "introductions",
     title: "Introductions",
-    description: "Simple ways to say who you are and ask about the other person.",
+    description:
+      "Simple ways to say who you are and ask about the other person.",
     phrases: [
       {
         id: "intro-1",
@@ -136,10 +133,6 @@ async function translateText(
   }
 }
 
-/**
- * TTS helper – currently browser speechSynthesis.
- * Later we can swap this to call /api/tts and keep the same interface.
- */
 function speakText(text: string, lang: string) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -154,10 +147,7 @@ function speakText(text: string, lang: string) {
   const doSpeak = () => {
     try {
       synth.cancel();
-    } catch {
-      // ignore
-    }
-
+    } catch {}
     const utterance = new SpeechSynthesisUtterance(trimmed);
     const voices = synth.getVoices();
 
@@ -237,9 +227,9 @@ export default function LearnPage() {
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
 
-  const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
+  const [selectedLessonId, setSelectedLessonId] =
+    useState<string>("introductions");
 
-  // STT setup for source + attempt
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -316,9 +306,7 @@ export default function LearnPage() {
       try {
         srcRec.stop();
         attRec.stop();
-      } catch {
-        // ignore
-      }
+      } catch {}
       sourceRecRef.current = null;
       attemptRecRef.current = null;
     };
@@ -411,7 +399,6 @@ export default function LearnPage() {
 
     setSourceText(textForFromLang);
 
-    // Auto-translate this phrase using current language pair
     setTimeout(() => {
       handleTranslate();
     }, 0);
@@ -419,7 +406,7 @@ export default function LearnPage() {
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
-      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl max-h-[90vh] flex flex-col">
+      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl flex flex-col">
         <CardHeader className="pb-2">
           <CardTitle className="flex flex-col gap-1">
             <span className="text-lg md:text-xl font-semibold">
@@ -432,7 +419,7 @@ export default function LearnPage() {
           </CardTitle>
         </CardHeader>
 
-        <CardContent className="flex-1 overflow-y-auto space-y-4 pr-1">
+        <CardContent className="space-y-4 pr-1">
           {/* Language selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
