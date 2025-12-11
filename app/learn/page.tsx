@@ -418,7 +418,7 @@ export default function LearnPage() {
           </div>
         </CardHeader>
 
-        <CardContent className="space-y-4 px-5 pb-4">
+        <CardContent className="space-y-3 px-5 pb-3">
           {/* Language selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -508,13 +508,15 @@ export default function LearnPage() {
           </div>
 
           {error && (
-            <div className="text-xs md:text-sm text-red-100 bg-red-800/80 border border-red-500 rounded-md px-3 py-2">
-              {error}
+            <div className="text-[11px] text-red-200">
+              {error === "not-allowed"
+                ? "Mic access was blocked by the browser. Check the microphone permission if you want to use speach input."
+                : error}
             </div>
           )}
 
           {sttWarning && (
-            <div className="text-[11px] text-amber-100 bg-amber-900/70 border border-amber-500 rounded-md px-3 py-2">
+            <div className="text-[11px] text-amber-200">
               {sttWarning}
             </div>
           )}
@@ -534,7 +536,7 @@ export default function LearnPage() {
           </div>
 
           {/* Practice section */}
-          <div className="space-y-2 border-t border-slate-600 pt-3">
+          <div className="space-y-2 border-t border-slate-600 pt-2">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">
                 Practice speaking the translation
@@ -580,7 +582,7 @@ export default function LearnPage() {
           </div>
 
           {/* Lesson mode */}
-          <div className="space-y-2 border-t border-slate-600 pt-3 pb-1">
+          <div className="space-y-2 border-t border-slate-600 pt-2 pb-1">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">
                 Lesson mode (guided phrases)
