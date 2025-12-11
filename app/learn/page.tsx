@@ -149,9 +149,15 @@ export default function LearnPage() {
 
   const [attemptText, setAttemptText] = useState("");
   const [attemptScore, setAttemptScore] = useState<number | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<any>(null);
 
+  const [isRecordingSource, setIsRecordingSource] = useState(false);
+  const [isRecordingAttempt, setIsRecordingAttempt] = useState(false);
+  const [sttSupported, setSttSupported] = useState<boolean | null>(null);
+
+  const sourceRecRef = useRef<any>(null);
+  const attemptRecRef = useRef<any>(null);
+
+  // Set up SpeechRecognition for source & attempt (if supported)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -161,15 +167,45 @@ export default function LearnPage() {
 
     if (!SpeechRecognitionCtor) {
       console.warn("[Learn] SpeechRecognition not supported on this device");
+      setSttSupported(false);
       return;
     }
 
-    const rec = new SpeechRecognitionCtor();
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.lang = toLang;
+    setSttSupported(true);
 
-    rec.onresult = (event: any) => {
+    // Source (your language)
+    const srcRec = new SpeechRecognitionCtor();
+    srcRec.continuous = false;
+    srcRec.interimResults = false;
+    srcRec.lang = fromLang;
+
+    srcRec.onresult = (event: any) => {
+      const results = event.results;
+      if (!results || results.length === 0) return;
+      const last = results[results.length - 1];
+      const raw = last[0]?.transcript || "";
+      const text = raw.trim();
+      setSourceText(text);
+      setIsRecordingSource(false);
+    };
+
+    srcRec.onerror = (event: any) => {
+      console.error("[Learn] source STT error", event.error);
+      setError(event.error || "Speech recognition error.");
+      setIsRecordingSource(false);
+    };
+
+    srcRec.onend = () => {
+      setIsRecordingSource(false);
+    };
+
+    // Attempt (target language)
+    const attRec = new SpeechRecognitionCtor();
+    attRec.continuous = false;
+    attRec.interimResults = false;
+    attRec.lang = toLang;
+
+    attRec.onresult = (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
       const last = results[results.length - 1];
@@ -180,30 +216,33 @@ export default function LearnPage() {
       if (translatedText) {
         setAttemptScore(scoreSimilarity(translatedText, text));
       }
-      setIsRecording(false);
+      setIsRecordingAttempt(false);
     };
 
-    rec.onerror = (event: any) => {
-      console.error("[Learn] STT error", event.error);
+    attRec.onerror = (event: any) => {
+      console.error("[Learn] attempt STT error", event.error);
       setError(event.error || "Speech recognition error.");
-      setIsRecording(false);
+      setIsRecordingAttempt(false);
     };
 
-    rec.onend = () => {
-      setIsRecording(false);
+    attRec.onend = () => {
+      setIsRecordingAttempt(false);
     };
 
-    recognitionRef.current = rec;
+    sourceRecRef.current = srcRec;
+    attemptRecRef.current = attRec;
 
     return () => {
       try {
-        rec.stop();
+        srcRec.stop();
+        attRec.stop();
       } catch {
         // ignore
       }
-      recognitionRef.current = null;
+      sourceRecRef.current = null;
+      attemptRecRef.current = null;
     };
-  }, [toLang, translatedText]);
+  }, [fromLang, toLang, translatedText]);
 
   async function handleTranslate() {
     setError(null);
@@ -234,37 +273,61 @@ export default function LearnPage() {
     speakText(translatedText, toLang);
   }
 
-  function handleStartAttempt() {
+  function handleStartSourceRecord() {
     setError(null);
-    if (!recognitionRef.current) {
+    if (!sttSupported || !sourceRecRef.current) {
       setError(
-        "This device/browser doesn’t support speech practice yet. You can still translate and listen."
+        "Speech input isn’t supported on this device. You can still type and translate."
       );
       return;
     }
     try {
-      setIsRecording(true);
-      setAttemptText("");
-      setAttemptScore(null);
-      recognitionRef.current.lang = toLang;
-      recognitionRef.current.start();
+      setIsRecordingSource(true);
+      sourceRecRef.current.lang = fromLang;
+      sourceRecRef.current.start();
     } catch (err) {
-      console.error("[Learn] start attempt error", err);
-      setIsRecording(false);
+      console.error("[Learn] start source error", err);
+      setIsRecordingSource(false);
     }
   }
 
+  function handleStartAttemptRecord() {
+    setError(null);
+    if (!translatedText) return;
+    if (!sttSupported || !attemptRecRef.current) {
+      setError(
+        "Speech practice isn’t supported on this device. You can still listen and repeat."
+      );
+      return;
+    }
+    try {
+      setIsRecordingAttempt(true);
+      setAttemptText("");
+      setAttemptScore(null);
+      attemptRecRef.current.lang = toLang;
+      attemptRecRef.current.start();
+    } catch (err) {
+      console.error("[Learn] start attempt error", err);
+      setIsRecordingAttempt(false);
+    }
+  }
+
+  const sttWarning =
+    sttSupported === false
+      ? "Speech features are not supported on this browser. You can still type, translate, and listen."
+      : null;
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-6">
-      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-500 shadow-2xl">
+      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl">
         <CardHeader className="pb-4">
           <CardTitle className="flex flex-col gap-1">
             <span className="text-xl md:text-2xl font-semibold">
               Any-Speak Learn
             </span>
             <span className="text-xs md:text-sm text-slate-200">
-              Build a sentence in your language, hear it in another, then
-              practice speaking it.
+              Type or speak in your language, hear it in another, then practice
+              saying it.
             </span>
           </CardTitle>
         </CardHeader>
@@ -273,14 +336,10 @@ export default function LearnPage() {
           {/* Language selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label
-                htmlFor="fromLang"
-                className="text-xs md:text-sm text-slate-100"
-              >
+              <Label className="text-xs md:text-sm text-slate-100">
                 From language
               </Label>
               <select
-                id="fromLang"
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -290,14 +349,10 @@ export default function LearnPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <Label
-                htmlFor="toLang"
-                className="text-xs md:text-sm text-slate-100"
-              >
+              <Label className="text-xs md:text-sm text-slate-100">
                 To language
               </Label>
               <select
-                id="toLang"
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -308,50 +363,67 @@ export default function LearnPage() {
             </div>
           </div>
 
-          {/* Source text */}
+          {/* Source text + source voice button */}
           <div className="space-y-1">
-            <Label
-              htmlFor="sourceText"
-              className="text-xs md:text-sm text-slate-100"
-            >
-              Your sentence
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs md:text-sm text-slate-100">
+                Your sentence
+              </Label>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleStartSourceRecord}
+                disabled={isRecordingSource}
+                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
+              >
+                {isRecordingSource ? "Listening…" : "Speak instead"}
+              </Button>
+            </div>
             <Textarea
-              id="sourceText"
               rows={3}
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
-              placeholder="Type what you want to say…"
+              placeholder="Type or speak what you want to say…"
               className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
           {/* Translate + play buttons */}
           <div className="flex flex-wrap gap-3">
-            <Button onClick={handleTranslate} disabled={loading}>
+            <Button
+              onClick={handleTranslate}
+              disabled={loading || !sourceText.trim()}
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60"
+            >
               {loading ? "Translating…" : "Translate"}
             </Button>
             <Button
               variant="outline"
               onClick={handlePlaySource}
-              disabled={!sourceText}
-              className="border-slate-400 text-slate-100"
+              disabled={!sourceText.trim()}
+              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
             >
               Play original
             </Button>
             <Button
               variant="outline"
               onClick={handlePlayTarget}
-              disabled={!translatedText}
-              className="border-slate-400 text-slate-100"
+              disabled={!translatedText.trim()}
+              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
             >
               Play translation
             </Button>
           </div>
 
           {error && (
-            <div className="text-sm text-red-300 bg-red-900/40 border border-red-700 rounded-md px-3 py-2">
+            <div className="text-sm text-red-100 bg-red-800/80 border border-red-500 rounded-md px-3 py-2">
               {error}
+            </div>
+          )}
+
+          {sttWarning && (
+            <div className="text-xs text-amber-100 bg-amber-900/70 border border-amber-500 rounded-md px-3 py-2">
+              {sttWarning}
             </div>
           )}
 
@@ -377,10 +449,11 @@ export default function LearnPage() {
               </Label>
               <Button
                 size="sm"
-                onClick={handleStartAttempt}
-                disabled={!translatedText || isRecording}
+                onClick={handleStartAttemptRecord}
+                disabled={!translatedText.trim() || isRecordingAttempt}
+                className="bg-blue-500 hover:bg-blue-400 text-slate-900 font-semibold disabled:opacity-60"
               >
-                {isRecording ? "Listening…" : "Record my attempt"}
+                {isRecordingAttempt ? "Listening…" : "Record my attempt"}
               </Button>
             </div>
 
@@ -391,7 +464,7 @@ export default function LearnPage() {
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || (
                   <span className="text-slate-400">
-                    Tap &quot;Record my attempt&quot; and speak in the target
+                    After recording, your attempt will appear here in the target
                     language.
                   </span>
                 )}
