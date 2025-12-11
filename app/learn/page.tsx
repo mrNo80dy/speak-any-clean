@@ -20,8 +20,7 @@ type TranslateResponse = {
 
 type LessonPhrase = {
   id: string;
-  // keyed by language code so we can support more later
-  texts: Record<string, string>;
+  texts: Record<string, string>; // keyed by language code
 };
 
 type Lesson = {
@@ -32,8 +31,8 @@ type Lesson = {
 };
 
 /**
- * Starter lessons – we manually provide EN/PT versions so we’re not
- * relying on the translator for the *teaching* content itself.
+ * Starter lessons – manual EN/PT so we’re not relying on the
+ * translator for the teaching content itself.
  */
 const LESSONS: Lesson[] = [
   {
@@ -138,9 +137,8 @@ async function translateText(
 }
 
 /**
- * NOTE: this still uses browser TTS under the hood. Later, we can
- * swap this implementation to call a /api/tts endpoint that uses a
- * real TTS provider or your cloned voice, and keep the same interface.
+ * TTS helper – currently browser speechSynthesis.
+ * Later we can swap this to call /api/tts and keep the same interface.
  */
 function speakText(text: string, lang: string) {
   if (typeof window === "undefined") return;
@@ -241,7 +239,7 @@ export default function LearnPage() {
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
 
-  // Set up SpeechRecognition (source + attempt) if supported
+  // STT setup for source + attempt
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -333,7 +331,7 @@ export default function LearnPage() {
     setAttemptScore(null);
 
     try {
-      const { translatedText, targetLang } = await translateText(
+      const { translatedText } = await translateText(
         fromLang,
         toLang,
         sourceText
@@ -412,38 +410,39 @@ export default function LearnPage() {
       Object.values(phrase.texts)[0];
 
     setSourceText(textForFromLang);
-    // auto-translate after setting
+
+    // Auto-translate this phrase using current language pair
     setTimeout(() => {
       handleTranslate();
     }, 0);
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-6">
-      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl">
-        <CardHeader className="pb-4">
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
+      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl max-h-[90vh] flex flex-col">
+        <CardHeader className="pb-2">
           <CardTitle className="flex flex-col gap-1">
-            <span className="text-xl md:text-2xl font-semibold">
+            <span className="text-lg md:text-xl font-semibold">
               Any-Speak Learn
             </span>
-            <span className="text-xs md:text-sm text-slate-200">
+            <span className="text-[11px] md:text-xs text-slate-200">
               Type or speak in your language, hear it in another, then practice
               saying it.
             </span>
           </CardTitle>
         </CardHeader>
 
-        <CardContent className="space-y-6">
+        <CardContent className="flex-1 overflow-y-auto space-y-4 pr-1">
           {/* Language selectors */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs md:text-sm text-slate-100">
+              <Label className="text-xs text-slate-100">
                 From language
               </Label>
               <select
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
-                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs md:text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
@@ -453,13 +452,13 @@ export default function LearnPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs md:text-sm text-slate-100">
+              <Label className="text-xs text-slate-100">
                 To language
               </Label>
               <select
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
-                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs md:text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
@@ -473,7 +472,7 @@ export default function LearnPage() {
           {/* Source text + source voice button */}
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs md:text-sm text-slate-100">
+              <Label className="text-xs text-slate-100">
                 Your sentence
               </Label>
               <Button
@@ -481,7 +480,7 @@ export default function LearnPage() {
                 variant="outline"
                 onClick={handleStartSourceRecord}
                 disabled={isRecordingSource}
-                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
+                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
               >
                 {isRecordingSource ? "Listening…" : "Speak instead"}
               </Button>
@@ -496,11 +495,11 @@ export default function LearnPage() {
           </div>
 
           {/* Translate + play buttons */}
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-2">
             <Button
               onClick={handleTranslate}
               disabled={loading || !sourceText.trim()}
-              className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60"
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-sm"
             >
               {loading ? "Translating…" : "Translate"}
             </Button>
@@ -508,7 +507,7 @@ export default function LearnPage() {
               variant="outline"
               onClick={handlePlaySource}
               disabled={!sourceText.trim()}
-              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
+              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-sm"
             >
               Play original
             </Button>
@@ -516,30 +515,30 @@ export default function LearnPage() {
               variant="outline"
               onClick={handlePlayTarget}
               disabled={!translatedText.trim()}
-              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60"
+              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-sm"
             >
               Play translation
             </Button>
           </div>
 
           {error && (
-            <div className="text-sm text-red-100 bg-red-800/80 border border-red-500 rounded-md px-3 py-2">
+            <div className="text-xs md:text-sm text-red-100 bg-red-800/80 border border-red-500 rounded-md px-3 py-2">
               {error}
             </div>
           )}
 
           {sttWarning && (
-            <div className="text-xs text-amber-100 bg-amber-900/70 border border-amber-500 rounded-md px-3 py-2">
+            <div className="text-[11px] text-amber-100 bg-amber-900/70 border border-amber-500 rounded-md px-3 py-2">
               {sttWarning}
             </div>
           )}
 
           {/* Translated text */}
           <div className="space-y-1">
-            <Label className="text-xs md:text-sm text-slate-100">
+            <Label className="text-xs text-slate-100">
               Translated sentence
             </Label>
-            <div className="min-h-[3rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
+            <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
               {translatedText || (
                 <span className="text-slate-400">
                   Translate a sentence to see it here.
@@ -549,7 +548,7 @@ export default function LearnPage() {
           </div>
 
           {/* Practice section */}
-          <div className="space-y-3 border-t border-slate-600 pt-4">
+          <div className="space-y-2 border-t border-slate-600 pt-3">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">
                 Practice speaking the translation
@@ -558,14 +557,14 @@ export default function LearnPage() {
                 size="sm"
                 onClick={handleStartAttemptRecord}
                 disabled={!translatedText.trim() || isRecordingAttempt}
-                className="bg-blue-500 hover:bg-blue-400 text-slate-900 font-semibold disabled:opacity-60"
+                className="bg-blue-500 hover:bg-blue-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
               >
                 {isRecordingAttempt ? "Listening…" : "Record my attempt"}
               </Button>
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs text-slate-300">
+              <Label className="text-[11px] text-slate-300">
                 What you said (recognized)
               </Label>
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
@@ -579,7 +578,7 @@ export default function LearnPage() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs text-slate-300">
+              <Label className="text-[11px] text-slate-300">
                 Accuracy (rough estimate)
               </Label>
               <div className="text-sm text-slate-50">
@@ -595,7 +594,7 @@ export default function LearnPage() {
           </div>
 
           {/* Lesson mode */}
-          <div className="space-y-3 border-t border-slate-600 pt-4">
+          <div className="space-y-2 border-t border-slate-600 pt-3 pb-1">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">
                 Lesson mode (guided phrases)
@@ -603,7 +602,7 @@ export default function LearnPage() {
               <select
                 value={selectedLessonId}
                 onChange={(e) => setSelectedLessonId(e.target.value)}
-                className="rounded-md border border-slate-500 bg-slate-900 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="rounded-md border border-slate-500 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {LESSONS.map((lesson) => (
                   <option key={lesson.id} value={lesson.id}>
@@ -616,6 +615,7 @@ export default function LearnPage() {
             {selectedLesson && (
               <div className="space-y-2 text-xs md:text-sm">
                 <p className="text-slate-300">{selectedLesson.description}</p>
+
                 <div className="space-y-2">
                   {selectedLesson.phrases.map((phrase) => {
                     const preview =
@@ -635,7 +635,7 @@ export default function LearnPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => handleUseLessonPhrase(phrase)}
-                          className="border-emerald-400 text-emerald-200 hover:bg-emerald-500/10"
+                          className="border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
                         >
                           Use this phrase
                         </Button>
