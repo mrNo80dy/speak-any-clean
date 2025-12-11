@@ -420,7 +420,7 @@ export default function LearnPage() {
 
         <CardContent className="space-y-3 px-5 pb-3">
           {/* Language selectors */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs text-slate-100">
                 From language
