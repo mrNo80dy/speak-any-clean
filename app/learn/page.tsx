@@ -408,18 +408,17 @@ export default function LearnPage() {
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
       <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl flex flex-col">
         <CardHeader className="pb-2">
-          <CardTitle className="flex flex-col gap-1">
-            <span className="text-lg md:text-xl font-semibold">
+          <div className="text-center">
+            <h2 className="text-2xl font-bold text-white">
               Any-Speak Learn
-            </span>
-            <span className="text-[11px] md:text-xs text-slate-200">
-              Type or speak in your language, hear it in another, then practice
-              saying it.
-            </span>
-          </CardTitle>
+            </h2>
+            <p className="text-xs md:text-sm text-slate-200 mt-1">
+            Type or speak in your language, hear it in another, then practice saying it.
+            </p>
+          </div>
         </CardHeader>
 
-        <CardContent className="space-y-4 px-5 pr-4">
+        <CardContent className="space-y-4 px-5 pb-4">
           {/* Language selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
