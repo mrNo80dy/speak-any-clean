@@ -533,36 +533,35 @@ export default function RoomPage() {
 
       // Translate into whatever *this device* wants to read
       const target = targetLangRef.current || "en-US";
-      const { translatedText, targetLang } = await translateText(
-        lang,
-        target,
-        text
-      );
+         const { translatedText, targetLang } = await translateText(
+      lang,
+      target,
+      text
+    );
 
-      // Local message
-      pushMessage({
-        fromId: clientId,
-        fromName,
-        originalLang: lang,
-        translatedLang: targetLang,
-        originalText: text,
-        translatedText,
-        isLocal: true,
+    // Local message (for your own captions)
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: targetLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
+    });
+
+    // ⛔ DO NOT speak your own message on this device.
+    // Only remote devices should voice this via the transcript handler.
+
+    // Broadcast original text + source lang + name
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
       });
+    }
 
-      // Speak the translated line on THIS device if Voice is on
-      if (autoSpeakRef.current) {
-        speakText(translatedText, targetLang);
-      }
-
-      // Broadcast original text + source lang + name.
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "transcript",
-          payload: { from: clientId, text, lang, name: fromName },
-        });
-      }
     };
 
     rec.onerror = (event: any) => {
