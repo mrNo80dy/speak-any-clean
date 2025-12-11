@@ -677,45 +677,66 @@ export default function RoomPage() {
 
         // Broadcast: transcripts (captions)
         channel.on(
-          "broadcast",
-          { event: "transcript" },
-          async (message: { payload: TranscriptPayload }) => {
-            const { payload } = message;
-            if (!payload) return;
-            const { from, text, lang, name } = payload;
-            if (!text || !from || from === clientId) return;
+  "broadcast",
+  { event: "transcript" },
+  async (message: { payload: TranscriptPayload }) => {
+    const { payload } = message;
+    if (!payload) return;
+    const { from, text, lang, name } = payload;
+    if (!text || !from) return;
 
-            const fromName =
-              name ??
-              peerLabelsRef.current[from] ??
-              from.slice(0, 8) ??
-              "Guest";
+    const isLocal = from === clientId;
 
-            // Translate into *this* device's preferred reading language
-            const target = targetLangRef.current || "en-US";
-            const { translatedText, targetLang } = await translateText(
-              lang,
-              target,
-              text
-            );
+    console.log("[Room] transcript event", {
+      from,
+      isLocal,
+      text,
+      lang,
+      targetLangPref: targetLangRef.current,
+    });
 
-            pushMessage({
-              fromId: from,
-              fromName,
-              originalLang: lang,
-              translatedLang: targetLang,
-              originalText: text,
-              translatedText,
-              isLocal: false,
-            });
+    const fromName =
+      name ??
+      peerLabelsRef.current[from] ??
+      from.slice(0, 8) ??
+      "Guest";
 
-            // Speak the translated line on THIS device if Voice is on
-            if (autoSpeakRef.current) {
-              speakText(translatedText, targetLang);
-            }
-          }
-        );
+    // Translate into *this* device's preferred reading language
+    const target = targetLangRef.current || "en-US";
+    const { translatedText, targetLang } = await translateText(
+      lang,
+      target,
+      text
+    );
 
+    console.log("[Room] transcript translated", {
+      from,
+      isLocal,
+      translatedText,
+      targetLang,
+    });
+
+    pushMessage({
+      fromId: from,
+      fromName,
+      originalLang: lang,
+      translatedLang: targetLang,
+      originalText: text,
+      translatedText,
+      isLocal,
+    });
+
+    // For now, speak BOTH local and remote to debug.
+    if (autoSpeakRef.current && translatedText) {
+      console.log("[Room] speaking translation", {
+        from,
+        isLocal,
+        speakLang: targetLang,
+      });
+      speakText(translatedText, targetLang);
+    }
+  }
+);
         // Broadcast: hand raise signals
         channel.on(
           "broadcast",
