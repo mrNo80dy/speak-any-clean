@@ -10,12 +10,89 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
 
 type TranslateResponse = {
   translatedText?: string;
   targetLang?: string;
   error?: string;
 };
+
+type LessonPhrase = {
+  id: string;
+  // keyed by language code so we can support more later
+  texts: Record<string, string>;
+};
+
+type Lesson = {
+  id: string;
+  title: string;
+  description: string;
+  phrases: LessonPhrase[];
+};
+
+/**
+ * Starter lessons – we manually provide EN/PT versions so we’re not
+ * relying on the translator for the *teaching* content itself.
+ */
+const LESSONS: Lesson[] = [
+  {
+    id: "introductions",
+    title: "Introductions",
+    description: "Simple ways to say who you are and ask about the other person.",
+    phrases: [
+      {
+        id: "intro-1",
+        texts: {
+          "en-US": "Hi, my name is Chad.",
+          "pt-BR": "Oi, meu nome é Chad.",
+        },
+      },
+      {
+        id: "intro-2",
+        texts: {
+          "en-US": "Nice to meet you.",
+          "pt-BR": "Prazer em te conhecer.",
+        },
+      },
+      {
+        id: "intro-3",
+        texts: {
+          "en-US": "Where are you from?",
+          "pt-BR": "De onde você é?",
+        },
+      },
+    ],
+  },
+  {
+    id: "travel-basics",
+    title: "Travel – basics",
+    description: "Useful phrases for getting around and asking for help.",
+    phrases: [
+      {
+        id: "travel-1",
+        texts: {
+          "en-US": "Excuse me, where is the bathroom?",
+          "pt-BR": "Com licença, onde fica o banheiro?",
+        },
+      },
+      {
+        id: "travel-2",
+        texts: {
+          "en-US": "How much does this cost?",
+          "pt-BR": "Quanto custa isso?",
+        },
+      },
+      {
+        id: "travel-3",
+        texts: {
+          "en-US": "Can you help me, please?",
+          "pt-BR": "Você pode me ajudar, por favor?",
+        },
+      },
+    ],
+  },
+];
 
 async function translateText(
   fromLang: string,
@@ -60,6 +137,11 @@ async function translateText(
   }
 }
 
+/**
+ * NOTE: this still uses browser TTS under the hood. Later, we can
+ * swap this implementation to call a /api/tts endpoint that uses a
+ * real TTS provider or your cloned voice, and keep the same interface.
+ */
 function speakText(text: string, lang: string) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -157,7 +239,9 @@ export default function LearnPage() {
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
 
-  // Set up SpeechRecognition for source & attempt (if supported)
+  const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
+
+  // Set up SpeechRecognition (source + attempt) if supported
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -173,7 +257,6 @@ export default function LearnPage() {
 
     setSttSupported(true);
 
-    // Source (your language)
     const srcRec = new SpeechRecognitionCtor();
     srcRec.continuous = false;
     srcRec.interimResults = false;
@@ -199,7 +282,6 @@ export default function LearnPage() {
       setIsRecordingSource(false);
     };
 
-    // Attempt (target language)
     const attRec = new SpeechRecognitionCtor();
     attRec.continuous = false;
     attRec.interimResults = false;
@@ -293,7 +375,7 @@ export default function LearnPage() {
 
   function handleStartAttemptRecord() {
     setError(null);
-    if (!translatedText) return;
+    if (!translatedText.trim()) return;
     if (!sttSupported || !attemptRecRef.current) {
       setError(
         "Speech practice isn’t supported on this device. You can still listen and repeat."
@@ -316,6 +398,25 @@ export default function LearnPage() {
     sttSupported === false
       ? "Speech features are not supported on this browser. You can still type, translate, and listen."
       : null;
+
+  const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
+
+  function handleUseLessonPhrase(phrase: LessonPhrase) {
+    setError(null);
+    setAttemptText("");
+    setAttemptScore(null);
+
+    const textForFromLang =
+      phrase.texts[fromLang] ??
+      phrase.texts["en-US"] ??
+      Object.values(phrase.texts)[0];
+
+    setSourceText(textForFromLang);
+    // auto-translate after setting
+    setTimeout(() => {
+      handleTranslate();
+    }, 0);
+  }
 
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-6">
@@ -344,8 +445,11 @@ export default function LearnPage() {
                 onChange={(e) => setFromLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="en-US">English (US)</option>
-                <option value="pt-BR">Português (Brasil)</option>
+                {LANGUAGES.map((lang: LanguageConfig) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="space-y-1">
@@ -357,8 +461,11 @@ export default function LearnPage() {
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="pt-BR">Português (Brasil)</option>
-                <option value="en-US">English (US)</option>
+                {LANGUAGES.map((lang: LanguageConfig) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.label}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -485,6 +592,59 @@ export default function LearnPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Lesson mode */}
+          <div className="space-y-3 border-t border-slate-600 pt-4">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-sm text-slate-100">
+                Lesson mode (guided phrases)
+              </Label>
+              <select
+                value={selectedLessonId}
+                onChange={(e) => setSelectedLessonId(e.target.value)}
+                className="rounded-md border border-slate-500 bg-slate-900 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                {LESSONS.map((lesson) => (
+                  <option key={lesson.id} value={lesson.id}>
+                    {lesson.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedLesson && (
+              <div className="space-y-2 text-xs md:text-sm">
+                <p className="text-slate-300">{selectedLesson.description}</p>
+                <div className="space-y-2">
+                  {selectedLesson.phrases.map((phrase) => {
+                    const preview =
+                      phrase.texts[fromLang] ??
+                      phrase.texts["en-US"] ??
+                      Object.values(phrase.texts)[0];
+
+                    return (
+                      <div
+                        key={phrase.id}
+                        className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2"
+                      >
+                        <div className="text-slate-50 text-sm">
+                          {preview}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleUseLessonPhrase(phrase)}
+                          className="border-emerald-400 text-emerald-200 hover:bg-emerald-500/10"
+                        >
+                          Use this phrase
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
