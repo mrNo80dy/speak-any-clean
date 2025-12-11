@@ -17,9 +17,6 @@ type TranslateResponse = {
   error?: string;
 };
 
-/**
- * Shared translator: calls /api/translate with { text, fromLang, toLang }.
- */
 async function translateText(
   fromLang: string,
   toLang: string,
@@ -63,10 +60,6 @@ async function translateText(
   }
 }
 
-/**
- * TTS helper with a simple "wait for voices to load" fix
- * so the first playback isn't chopped.
- */
 function speakText(text: string, lang: string) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -88,11 +81,6 @@ function speakText(text: string, lang: string) {
     const utterance = new SpeechSynthesisUtterance(trimmed);
     const voices = synth.getVoices();
 
-    console.log(
-      "[Learn] available voices:",
-      voices?.map((v) => `${v.lang} - ${v.name}`)
-    );
-
     if (voices && voices.length > 0) {
       let voice =
         voices.find(
@@ -104,12 +92,6 @@ function speakText(text: string, lang: string) {
 
       if (voice) {
         utterance.voice = voice;
-        console.log(
-          "[Learn] using voice:",
-          voice.lang,
-          "|",
-          voice.name
-        );
       }
     }
 
@@ -120,7 +102,6 @@ function speakText(text: string, lang: string) {
 
   const currentVoices = synth.getVoices();
   if (!currentVoices || currentVoices.length === 0) {
-    console.log("[Learn] voices not ready yet, waiting…");
     synth.onvoiceschanged = () => {
       synth.onvoiceschanged = null;
       doSpeak();
@@ -131,11 +112,6 @@ function speakText(text: string, lang: string) {
   doSpeak();
 }
 
-/**
- * Very simple similarity score between two sentences (0–100).
- * Later we can upgrade this to phoneme-level scoring; for now,
- * this is enough to give people feedback.
- */
 function scoreSimilarity(a: string, b: string): number {
   const normalize = (s: string) =>
     s
@@ -176,7 +152,6 @@ export default function LearnPage() {
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  // Set up a simple SpeechRecognition instance for attempts
   useEffect(() => {
     if (typeof window === "undefined") return;
 
@@ -200,12 +175,12 @@ export default function LearnPage() {
       const last = results[results.length - 1];
       const raw = last[0]?.transcript || "";
       const text = raw.trim();
-      console.log("[Learn] attempt result:", text);
       setAttemptText(text);
 
       if (translatedText) {
         setAttemptScore(scoreSimilarity(translatedText, text));
       }
+      setIsRecording(false);
     };
 
     rec.onerror = (event: any) => {
@@ -242,7 +217,6 @@ export default function LearnPage() {
         toLang,
         sourceText
       );
-      console.log("[Learn] translate result", { translatedText, targetLang });
       setTranslatedText(translatedText);
     } catch (err: any) {
       console.error("[Learn] translate error", err);
@@ -264,7 +238,7 @@ export default function LearnPage() {
     setError(null);
     if (!recognitionRef.current) {
       setError(
-        "This device/browser does not support speech recognition for practice."
+        "This device/browser doesn’t support speech practice yet. You can still translate and listen."
       );
       return;
     }
@@ -281,12 +255,14 @@ export default function LearnPage() {
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-slate-950 text-slate-100 p-4">
-      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-900 border-slate-700 shadow-xl">
-        <CardHeader>
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-6">
+      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-500 shadow-2xl">
+        <CardHeader className="pb-4">
           <CardTitle className="flex flex-col gap-1">
-            <span className="text-lg md:text-xl">Any-Speak Learn</span>
-            <span className="text-xs text-slate-400">
+            <span className="text-xl md:text-2xl font-semibold">
+              Any-Speak Learn
+            </span>
+            <span className="text-xs md:text-sm text-slate-200">
               Build a sentence in your language, hear it in another, then
               practice speaking it.
             </span>
@@ -297,24 +273,34 @@ export default function LearnPage() {
           {/* Language selectors */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <Label htmlFor="fromLang">From language</Label>
+              <Label
+                htmlFor="fromLang"
+                className="text-xs md:text-sm text-slate-100"
+              >
+                From language
+              </Label>
               <select
                 id="fromLang"
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="en-US">English (US)</option>
                 <option value="pt-BR">Português (Brasil)</option>
               </select>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="toLang">To language</Label>
+              <Label
+                htmlFor="toLang"
+                className="text-xs md:text-sm text-slate-100"
+              >
+                To language
+              </Label>
               <select
                 id="toLang"
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
-                className="w-full rounded-md border border-slate-600 bg-slate-900 px-3 py-2 text-sm"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 <option value="pt-BR">Português (Brasil)</option>
                 <option value="en-US">English (US)</option>
@@ -324,13 +310,19 @@ export default function LearnPage() {
 
           {/* Source text */}
           <div className="space-y-1">
-            <Label htmlFor="sourceText">Your sentence</Label>
+            <Label
+              htmlFor="sourceText"
+              className="text-xs md:text-sm text-slate-100"
+            >
+              Your sentence
+            </Label>
             <Textarea
               id="sourceText"
               rows={3}
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
               placeholder="Type what you want to say…"
+              className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
@@ -343,6 +335,7 @@ export default function LearnPage() {
               variant="outline"
               onClick={handlePlaySource}
               disabled={!sourceText}
+              className="border-slate-400 text-slate-100"
             >
               Play original
             </Button>
@@ -350,22 +343,26 @@ export default function LearnPage() {
               variant="outline"
               onClick={handlePlayTarget}
               disabled={!translatedText}
+              className="border-slate-400 text-slate-100"
             >
               Play translation
             </Button>
           </div>
 
-          {/* Error */}
           {error && (
-            <div className="text-sm text-red-400">Error: {error}</div>
+            <div className="text-sm text-red-300 bg-red-900/40 border border-red-700 rounded-md px-3 py-2">
+              {error}
+            </div>
           )}
 
           {/* Translated text */}
           <div className="space-y-1">
-            <Label>Translated sentence</Label>
-            <div className="min-h-[3rem] rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+            <Label className="text-xs md:text-sm text-slate-100">
+              Translated sentence
+            </Label>
+            <div className="min-h-[3rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
               {translatedText || (
-                <span className="text-slate-500">
+                <span className="text-slate-400">
                   Translate a sentence to see it here.
                 </span>
               )}
@@ -373,9 +370,11 @@ export default function LearnPage() {
           </div>
 
           {/* Practice section */}
-          <div className="space-y-2 border-t border-slate-800 pt-4">
+          <div className="space-y-3 border-t border-slate-600 pt-4">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-sm">Practice speaking the translation</Label>
+              <Label className="text-sm text-slate-100">
+                Practice speaking the translation
+              </Label>
               <Button
                 size="sm"
                 onClick={handleStartAttempt}
@@ -386,12 +385,12 @@ export default function LearnPage() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs text-slate-400">
+              <Label className="text-xs text-slate-300">
                 What you said (recognized)
               </Label>
-              <div className="min-h-[2.5rem] rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm">
+              <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || (
-                  <span className="text-slate-500">
+                  <span className="text-slate-400">
                     Tap &quot;Record my attempt&quot; and speak in the target
                     language.
                   </span>
@@ -400,18 +399,16 @@ export default function LearnPage() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-xs text-slate-400">
+              <Label className="text-xs text-slate-300">
                 Accuracy (rough estimate)
               </Label>
-              <div className="text-sm">
+              <div className="text-sm text-slate-50">
                 {attemptScore === null ? (
-                  <span className="text-slate-500">
+                  <span className="text-slate-400">
                     You&apos;ll see a score after an attempt.
                   </span>
                 ) : (
-                  <span>
-                    {attemptScore}% match to the ideal sentence.
-                  </span>
+                  <span>{attemptScore}% match to the ideal sentence.</span>
                 )}
               </div>
             </div>
