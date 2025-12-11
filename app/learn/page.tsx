@@ -457,29 +457,29 @@ export default function LearnPage() {
           </div>
 
           {/* Source text + source voice button */}
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs text-slate-100">
-                Your sentence
-              </Label>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleStartSourceRecord}
-                disabled={isRecordingSource}
-                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
-              >
-                {isRecordingSource ? "Listening…" : "Speak instead"}
-              </Button>
-            </div>
-            <Textarea
-              rows={3}
-              value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
-              placeholder="Type or speak what you want to say…"
-              className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
+         <div className="flex items-center justify-between">
+  <Label className="text-xs text-slate-100">Your sentence</Label>
+</div>
+
+<div className="relative">
+  <Textarea
+    rows={3}
+    value={sourceText}
+    onChange={(e) => setSourceText(e.target.value)}
+    placeholder="Type or speak what you want to say…"
+    className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-24"
+  />
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={handleStartSourceRecord}
+    disabled={isRecordingSource}
+    className="absolute top-2 right-2 border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
+  >
+    {isRecordingSource ? "Listening…" : "Speak instead"}
+  </Button>
+</div>
+
 
           {/* Translate + play buttons */}
           <div className="flex flex-wrap gap-2">
