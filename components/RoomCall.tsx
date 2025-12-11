@@ -1132,19 +1132,7 @@ export default function RoomPage() {
                       el.srcObject !== firstRemoteStream
                     ) {
                       el.srcObject = firstRemoteStream;
-                    }
-                  }}
-                />
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    if (
-                      el &&
-                      firstRemoteStream &&
-                      el.srcObject !== firstRemoteStream
-                    ) {
-                      el.srcObject = firstRemoteStream;
+                      el.muted = true;
                     }
                   }}
                 />
@@ -1202,16 +1190,7 @@ export default function RoomPage() {
                         const stream = peerStreams[pid];
                         if (el && stream && el.srcObject !== stream) {
                           el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
+                          el.muted = true;
                         }
                       }}
                     />
@@ -1252,20 +1231,11 @@ export default function RoomPage() {
                           const stream = peerStreams[spotlightId];
                           if (el && stream && el.srcObject !== stream) {
                             el.srcObject = stream;
+                            el.muted = true;
                           }
                         }}
                       />
-                      <audio
-                        data-remote
-                        autoPlay
-                        ref={(el) => {
-                          const stream = peerStreams[spotlightId];
-                          if (el && stream && el.srcObject !== stream) {
-                            el.srcObject = stream;
-                          }
-                        }}
-                      />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                     <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
                         <span>
                           {peerLabels[spotlightId] ??
@@ -1320,20 +1290,11 @@ export default function RoomPage() {
                             const stream = peerStreams[pid];
                             if (el && stream && el.srcObject !== stream) {
                               el.srcObject = stream;
+                              el.muted = true;
                             }
                           }}
-                        />
-                        <audio
-                          data-remote
-                          autoPlay
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
-                          }}
-                        />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        />                       
+                       <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
                           {handsUp[pid] && <span>✋</span>}
                           <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
                         </div>
