@@ -87,41 +87,56 @@ function speakText(text: string, lang: string) {
 
   console.log("[Practice] 🔊 speakText called:", { text: trimmed, lang });
 
-  try {
-    synth.cancel();
-  } catch {
-    // ignore
-  }
+  const doSpeak = () => {
+    try {
+      synth.cancel();
+    } catch {
+      // ignore
+    }
 
-  const utterance = new SpeechSynthesisUtterance(trimmed);
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    const voices = synth.getVoices();
+
+    console.log(
+      "[Practice] available voices:",
+      voices?.map((v) => `${v.lang} - ${v.name}`)
+    );
+
+    if (voices && voices.length > 0) {
+      let voice =
+        voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+        voices.find((v) =>
+          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+        );
+
+      if (voice) {
+        utterance.voice = voice;
+        console.log(
+          "[Practice] using voice:",
+          voice.lang,
+          "|",
+          voice.name
+        );
+      }
+    }
+
+    utterance.lang = lang || "en-US";
+    utterance.rate = 1.0;
+    synth.speak(utterance);
+  };
 
   const voices = synth.getVoices();
-  console.log(
-    "[Practice] available voices:",
-    voices?.map((v) => `${v.lang} - ${v.name}`)
-  );
-
-  if (voices && voices.length > 0) {
-    let voice =
-      voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
-      voices.find((v) =>
-        v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
-      );
-
-    if (voice) {
-      utterance.voice = voice;
-      console.log(
-        "[Practice] using voice:",
-        voice.lang,
-        "|",
-        voice.name
-      );
-    }
+  if (!voices || voices.length === 0) {
+    console.log("[Practice] voices not ready yet, waiting…");
+    const handler = () => {
+      synth.onvoiceschanged = null;
+      doSpeak();
+    };
+    synth.onvoiceschanged = handler;
+    return;
   }
 
-  utterance.lang = lang || "en-US";
-  utterance.rate = 1.0;
-  synth.speak(utterance);
+  doSpeak();
 }
 
 export default function PracticePage() {
