@@ -412,7 +412,7 @@ export default function LearnPage() {
             <h2 className="text-2xl font-bold text-white">
               Any-Speak Learn
             </h2>
-            <p className="text-xs md:text-sm text-slate-200 mt-1">
+            <p className="text-xs text-slate-200 mt-1">
             Type or speak in your language, hear it in another, then practice saying it.
             </p>
           </div>
@@ -428,7 +428,7 @@ export default function LearnPage() {
               <select
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
-                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs md:text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
@@ -444,7 +444,7 @@ export default function LearnPage() {
               <select
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
-                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs md:text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
                 {LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
@@ -601,7 +601,7 @@ export default function LearnPage() {
             </div>
 
             {selectedLesson && (
-              <div className="space-y-2 text-xs md:text-sm">
+              <div className="space-y-2 text-xs">
                 <p className="text-slate-300">{selectedLesson.description}</p>
 
                 <div className="space-y-2">
