@@ -213,7 +213,7 @@ export default function LearnPage() {
   const [toLang, setToLang] = useState("pt-BR");
 
   const [sourceText, setSourceText] = useState("");
-  const [translatedText, setTranslatedText] = useState("");
+  the [translatedText, setTranslatedText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -407,24 +407,21 @@ export default function LearnPage() {
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
       <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl flex flex-col">
-        <CardHeader className="pb-2">
-          <div className="text-center">
-            <h2 className="text-2xl font-bold text-white">
-              Any-Speak Learn
-            </h2>
-            <p className="text-sm text-slate-200 mt-1">
-            Type or speak in your language, hear it in another, then practice saying it.
-            </p>
-          </div>
+        <CardHeader className="pb-2 text-center">
+          <CardTitle className="text-2xl font-bold text-white">
+            Any-Speak Learn
+          </CardTitle>
+          <p className="text-sm text-slate-200 mt-1">
+            Type or speak in your language, hear it in another, then practice
+            saying it.
+          </p>
         </CardHeader>
 
         <CardContent className="space-y-3 px-5 pb-3">
           {/* Language selectors */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs text-slate-100">
-                From language
-              </Label>
+              <Label className="text-xs text-slate-100">From language</Label>
               <select
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
@@ -438,9 +435,7 @@ export default function LearnPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-slate-100">
-                To language
-              </Label>
+              <Label className="text-xs text-slate-100">To language</Label>
               <select
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
@@ -455,30 +450,28 @@ export default function LearnPage() {
             </div>
           </div>
 
-          {/* Source text + source voice button */}
-         <div className="flex items-center justify-between">
-  <Label className="text-xs text-slate-100">Your sentence</Label>
-</div>
-
-<div className="relative">
-  <Textarea
-    rows={3}
-    value={sourceText}
-    onChange={(e) => setSourceText(e.target.value)}
-    placeholder="Type or speak what you want to say…"
-    className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-24"
-  />
-  <Button
-    size="sm"
-    variant="outline"
-    onClick={handleStartSourceRecord}
-    disabled={isRecordingSource}
-    className="absolute top-2 right-2 border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
-  >
-    {isRecordingSource ? "Listening…" : "Speak instead"}
-  </Button>
-</div>
-
+          {/* Your sentence + Speak instead */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs text-slate-100">Your sentence</Label>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleStartSourceRecord}
+                disabled={isRecordingSource}
+                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
+              >
+                {isRecordingSource ? "Listening…" : "Speak instead"}
+              </Button>
+            </div>
+            <Textarea
+              rows={3}
+              value={sourceText}
+              onChange={(e) => setSourceText(e.target.value)}
+              placeholder="Type or speak what you want to say…"
+              className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
 
           {/* Translate + play buttons */}
           <div className="flex flex-wrap gap-2">
@@ -510,15 +503,13 @@ export default function LearnPage() {
           {error && (
             <div className="text-[11px] text-red-200">
               {error === "not-allowed"
-                ? "Mic access was blocked by the browser. Check the microphone permission if you want to use speach input."
+                ? "Mic access was blocked by the browser. Check the microphone permission if you want to use speech input."
                 : error}
             </div>
           )}
 
           {sttWarning && (
-            <div className="text-[11px] text-amber-200">
-              {sttWarning}
-            </div>
+            <div className="text-[11px] text-amber-200">{sttWarning}</div>
           )}
 
           {/* Translated text */}
@@ -545,7 +536,7 @@ export default function LearnPage() {
                 size="sm"
                 onClick={handleStartAttemptRecord}
                 disabled={!translatedText.trim() || isRecordingAttempt}
-                className="bg-blue-500 hover:bg-blue-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
+                className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
               >
                 {isRecordingAttempt ? "Listening…" : "Record my attempt"}
               </Button>
@@ -583,22 +574,20 @@ export default function LearnPage() {
 
           {/* Lesson mode */}
           <div className="space-y-2 border-t border-slate-600 pt-2 pb-1">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-sm text-slate-100">
-                Lesson mode (guided phrases)
-              </Label>
-              <select
-                value={selectedLessonId}
-                onChange={(e) => setSelectedLessonId(e.target.value)}
-                className="rounded-md border border-slate-500 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                {LESSONS.map((lesson) => (
-                  <option key={lesson.id} value={lesson.id}>
-                    {lesson.title}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Label className="text-sm text-slate-100">
+              Lesson mode (guided phrases)
+            </Label>
+            <select
+              value={selectedLessonId}
+              onChange={(e) => setSelectedLessonId(e.target.value)}
+              className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              {LESSONS.map((lesson) => (
+                <option key={lesson.id} value={lesson.id}>
+                  {lesson.title}
+                </option>
+              ))}
+            </select>
 
             {selectedLesson && (
               <div className="space-y-2 text-sm">
@@ -606,31 +595,30 @@ export default function LearnPage() {
 
                 <div className="space-y-2">
                   {selectedLesson.phrases.map((phrase) => {
-  const preview =
-    phrase.texts[fromLang] ??
-    phrase.texts["en-US"] ??
-    Object.values(phrase.texts)[0];
+                    const preview =
+                      phrase.texts[fromLang] ??
+                      phrase.texts["en-US"] ??
+                      Object.values(phrase.texts)[0];
 
-  return (
-    <div
-      key={phrase.id}
-      className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2"
-    >
-      <div className="text-slate-50 text-sm flex-1 min-w-0">
-        <span className="block truncate">{preview}</span>
-      </div>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => handleUseLessonPhrase(phrase)}
-        className="shrink-0 border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
-      >
-        Use this phrase
-      </Button>
-    </div>
-  );
-})}
-
+                    return (
+                      <div
+                        key={phrase.id}
+                        className="flex items-center gap-2 rounded-md border border-slate-600 bg-slate-900 px-3 py-2"
+                      >
+                        <div className="text-slate-50 text-sm flex-1 min-w-0">
+                          <span className="block truncate">{preview}</span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleUseLessonPhrase(phrase)}
+                          className="shrink-0 border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
+                        >
+                          Use this phrase
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
