@@ -645,6 +645,7 @@ export default function LearnPage() {
             </div>
 
             {/* NEW: AI voice toggle */}
+            {/*
             <div className="flex items-center gap-3 px-2 py-1 rounded-md border border-slate-600 bg-slate-900">
               <label className="flex items-center gap-2 text-[11px] text-slate-200">
                 <input
@@ -665,6 +666,7 @@ export default function LearnPage() {
                 <option value="male">Male</option>
               </select>
             </div>
+            */}
           </div>
 
           {error && (
