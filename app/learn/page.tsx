@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label";
 import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
 import { LESSONS } from "@/lib/lessons.generated";
 
-
 type TranslateResponse = {
   translatedText?: string;
   targetLang?: string;
@@ -54,6 +53,7 @@ async function translateText(
   }
 }
 
+// Kept for future fallback / debugging (not used when lessons.generated is complete)
 async function translateMany(
   items: { id: string; text: string; fromLang: string; toLang: string }[]
 ): Promise<Record<string, string>> {
@@ -103,9 +103,7 @@ function speakText(text: string, lang: string, rate = 1.0) {
     if (voices && voices.length > 0) {
       const voice =
         voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
-        voices.find((v) =>
-          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
-        );
+        voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
       if (voice) utterance.voice = voice;
     }
 
@@ -124,6 +122,32 @@ function speakText(text: string, lang: string, rate = 1.0) {
   }
 
   doSpeak();
+}
+
+async function playViaApiTts(text: string, voice: string, format: "mp3" | "wav" = "mp3") {
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice, format }),
+  });
+
+  if (!res.ok) {
+    const msg = await res.text().catch(() => "");
+    throw new Error(`TTS failed (${res.status}). ${msg}`);
+  }
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+
+  const audio = new Audio(url);
+  audio.onended = () => URL.revokeObjectURL(url);
+  await audio.play();
+}
+
+function mapGenderToVoice(gender: "female" | "male") {
+  // Change these anytime after you listen and pick favorites.
+  // These are safe defaults.
+  return gender === "male" ? "echo" : "alloy";
 }
 
 function scoreSimilarity(a: string, b: string): number {
@@ -161,8 +185,7 @@ function normalizeWords(s: string) {
 }
 
 export default function LearnPage() {
-  const defaultLang =
-    typeof navigator !== "undefined" ? navigator.language : "en-US";
+  const defaultLang = typeof navigator !== "undefined" ? navigator.language : "en-US";
 
   const [fromLang, setFromLang] = useState(defaultLang);
   const [toLang, setToLang] = useState("en-US");
@@ -181,17 +204,22 @@ export default function LearnPage() {
   const [isRecordingAttempt, setIsRecordingAttempt] = useState(false);
   const [sttSupported, setSttSupported] = useState<boolean | null>(null);
 
+  // Device TTS speed (speechSynthesis only)
   const [ttsRate, setTtsRate] = useState<number>(0.85);
+
+  // NEW: AI voice toggle + gender preference
+  const [useAiVoice, setUseAiVoice] = useState(false);
+  const [voiceGender, setVoiceGender] = useState<"female" | "male">("female");
 
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
-  const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>(
-    {}
-  );
+
+  // Keeping this around (it won't be needed once lessons.generated is complete for all langs)
+  const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>({});
   const lessonPreviewCacheRef = useRef<Record<string, string>>({});
-  
+
   useEffect(() => {
     lessonPreviewCacheRef.current = lessonPreviewCache;
   }, [lessonPreviewCache]);
@@ -278,75 +306,68 @@ export default function LearnPage() {
 
   const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
 
-  // Warm previews for the currently selected lesson + fromLang
+  // With lessons.generated this should rarely do anything.
   useEffect(() => {
-  let cancelled = false;
+    let cancelled = false;
 
-  async function warmLessonPreviews() {
-    if (!selectedLesson) return;
+    async function warmLessonPreviews() {
+      if (!selectedLesson) return;
 
-    const updates: Record<string, string> = {};
-    const toTranslate: { id: string; text: string; fromLang: string; toLang: string }[] = [];
+      const updates: Record<string, string> = {};
+      const toTranslate: { id: string; text: string; fromLang: string; toLang: string }[] = [];
 
-    for (const phrase of selectedLesson.phrases) {
-      const cacheKey = `${phrase.id}|${fromLang}`;
+      for (const phrase of selectedLesson.phrases) {
+        const cacheKey = `${phrase.id}|${fromLang}`;
 
-      // already cached
-      if (lessonPreviewCacheRef.current[cacheKey]) continue;
+        if (lessonPreviewCacheRef.current[cacheKey]) continue;
 
-      // direct text exists for this language
-      const direct = phrase.texts[fromLang];
-      if (direct) {
-        updates[cacheKey] = direct;
-        continue;
+        const direct = phrase.texts[fromLang];
+        if (direct) {
+          updates[cacheKey] = direct;
+          continue;
+        }
+
+        const englishSeed = phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+        if (!englishSeed) continue;
+
+        if (fromLang === "en-US") {
+          updates[cacheKey] = englishSeed;
+          continue;
+        }
+
+        // Fallback only (should not happen if generated file includes this language)
+        toTranslate.push({
+          id: cacheKey,
+          text: englishSeed,
+          fromLang: "en-US",
+          toLang: fromLang,
+        });
       }
 
-      // generate from english seed for display
-      const englishSeed = phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
-      if (!englishSeed) continue;
+      if (toTranslate.length) {
+        const translatedMap = await translateMany(toTranslate);
+        if (cancelled) return;
 
-      if (fromLang === "en-US") {
-        updates[cacheKey] = englishSeed;
-        continue;
+        for (const [cacheKey, translated] of Object.entries(translatedMap)) {
+          if (translated) updates[cacheKey] = translated;
+        }
       }
 
-      // batch these
-      toTranslate.push({
-        id: cacheKey,
-        text: englishSeed,
-        fromLang: "en-US",
-        toLang: fromLang,
-      });
-    }
-
-    // ONE request for all missing previews
-    if (toTranslate.length) {
-      const translatedMap = await translateMany(toTranslate);
       if (cancelled) return;
 
-      for (const [cacheKey, translated] of Object.entries(translatedMap)) {
-         if (translated) updates[cacheKey] = translated;
+      if (Object.keys(updates).length > 0) {
+        setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
       }
     }
 
+    void warmLessonPreviews();
 
-    if (cancelled) return;
+    return () => {
+      cancelled = true;
+    };
 
-    if (Object.keys(updates).length > 0) {
-      setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
-    }
-  }
-
-  void warmLessonPreviews();
-
-  return () => {
-    cancelled = true;
-  };
-
-  // Intentionally NOT depending on lessonPreviewCache to avoid loops
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [fromLang, selectedLessonId, selectedLesson]);
-
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromLang, selectedLessonId, selectedLesson]);
 
   async function handleTranslate() {
     setError(null);
@@ -369,8 +390,23 @@ export default function LearnPage() {
     speakText(sourceText, fromLang, 1.0);
   }
 
-  function handlePlayTarget() {
-    speakText(translatedText, toLang, ttsRate);
+  async function handlePlayTarget() {
+    const t = translatedText.trim();
+    if (!t) return;
+
+    if (!useAiVoice) {
+      speakText(t, toLang, ttsRate);
+      return;
+    }
+
+    try {
+      const voice = mapGenderToVoice(voiceGender);
+      await playViaApiTts(t, voice, "mp3");
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "AI voice failed. Falling back to device voice.");
+      speakText(t, toLang, ttsRate);
+    }
   }
 
   function handleStartSourceRecord() {
@@ -414,29 +450,29 @@ export default function LearnPage() {
       : null;
 
   async function handleUseLessonPhrase(phrase: LessonPhrase) {
-  setError(null);
-  setAttemptText("");
-  setAttemptScore(null);
+    setError(null);
+    setAttemptText("");
+    setAttemptScore(null);
 
-  const source = phrase.texts[fromLang] ?? phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
-  setSourceText(source);
+    const source =
+      phrase.texts[fromLang] ?? phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+    setSourceText(source);
 
-  const target = phrase.texts[toLang];
-  if (target) {
-    setTranslatedText(target);
-    return;
+    const target = phrase.texts[toLang];
+    if (target) {
+      setTranslatedText(target);
+      return;
+    }
+
+    // Fallback only (should rarely happen if generated file is complete)
+    setLoading(true);
+    try {
+      const res = await translateText(fromLang, toLang, source);
+      setTranslatedText(res.translatedText);
+    } finally {
+      setLoading(false);
+    }
   }
-
-  // Fallback only (should rarely happen if generated file is complete)
-  setLoading(true);
-  try {
-    const res = await translateText(fromLang, toLang, source);
-    setTranslatedText(res.translatedText);
-  } finally {
-    setLoading(false);
-  }
-}
-
 
   const highlightedTranslation = useMemo(() => {
     if (!translatedText.trim()) return null;
@@ -585,7 +621,7 @@ export default function LearnPage() {
 
             <Button
               variant="outline"
-              onClick={handlePlayTarget}
+              onClick={() => void handlePlayTarget()}
               disabled={!translatedText.trim()}
               className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-sm"
             >
@@ -601,10 +637,33 @@ export default function LearnPage() {
                 step={0.05}
                 value={ttsRate}
                 onChange={(e) => setTtsRate(Number(e.target.value))}
+                disabled={useAiVoice}
               />
               <span className="text-[11px] text-slate-200 w-10 text-right">
                 {ttsRate.toFixed(2)}x
               </span>
+            </div>
+
+            {/* NEW: AI voice toggle */}
+            <div className="flex items-center gap-3 px-2 py-1 rounded-md border border-slate-600 bg-slate-900">
+              <label className="flex items-center gap-2 text-[11px] text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={useAiVoice}
+                  onChange={(e) => setUseAiVoice(e.target.checked)}
+                />
+                Any-Speak AI voice
+              </label>
+
+              <select
+                value={voiceGender}
+                onChange={(e) => setVoiceGender(e.target.value as "female" | "male")}
+                className="rounded-md border border-slate-600 bg-slate-950 px-2 py-1 text-[11px] text-slate-100"
+                disabled={!useAiVoice}
+              >
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
             </div>
           </div>
 
