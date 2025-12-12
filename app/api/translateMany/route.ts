@@ -21,6 +21,10 @@ type TranslateManyResult = {
   targetLang: string;
 };
 
+type OpenAITranslateManyResponse = {
+  results: TranslateManyResult[];
+};
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as TranslateManyBody;
@@ -28,7 +32,7 @@ export async function POST(req: Request) {
     if (!body?.items || !Array.isArray(body.items)) {
       return NextResponse.json(
         { error: "Invalid payload. Expected { items: [...] }" },
-        { status: 400 }
+        { status: 400, headers: { "Cache-Control": "no-store" } }
       );
     }
 
@@ -36,36 +40,74 @@ export async function POST(req: Request) {
     if (!apiKey) {
       return NextResponse.json(
         { error: "OPENAI_API_KEY is not set on the server." },
-        { status: 500 }
+        { status: 500, headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    // Basic sanitation + guardrails
-    const items = body.items
+    // Sanitize + keep ids stable
+    const cleaned = body.items
       .map((it, idx) => ({
         id: (it.id ?? String(idx)).toString(),
         text: (it.text ?? "").toString().trim(),
         fromLang: (it.fromLang ?? "").toString(),
         toLang: (it.toLang ?? "").toString(),
       }))
-      .filter((it) => it.text.length > 0 && it.fromLang && it.toLang);
+      .map((it) => {
+        // If missing critical fields, treat as passthrough
+        if (!it.text) {
+          return { ...it, translatedText: "", targetLang: it.toLang || it.fromLang };
+        }
+        if (!it.fromLang || !it.toLang) {
+          return { ...it, translatedText: it.text, targetLang: it.toLang || it.fromLang };
+        }
+        if (it.fromLang === it.toLang) {
+          return { ...it, translatedText: it.text, targetLang: it.toLang };
+        }
+        return it;
+      });
 
-    if (items.length === 0) {
-      return NextResponse.json({ results: [] satisfies TranslateManyResult[] });
+    // Split into: already done vs needs translation
+    const passthrough: TranslateManyResult[] = [];
+    const needsTranslate: { id: string; text: string; fromLang: string; toLang: string }[] = [];
+
+    for (const it of cleaned) {
+      const maybe = it as any;
+      if (typeof maybe.translatedText === "string" && typeof maybe.targetLang === "string") {
+        passthrough.push({
+          id: it.id,
+          translatedText: maybe.translatedText,
+          targetLang: maybe.targetLang,
+        });
+      } else {
+        needsTranslate.push({
+          id: it.id,
+          text: it.text,
+          fromLang: it.fromLang,
+          toLang: it.toLang,
+        });
+      }
     }
 
-    // If you want, cap to keep prompts sane
+    if (needsTranslate.length === 0) {
+      // nothing to do
+      return NextResponse.json(
+        { results: passthrough },
+        { status: 200, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+
+    // Cap so prompts don’t get insane
     const MAX_ITEMS = 50;
-    const sliced = items.slice(0, MAX_ITEMS);
+    const sliced = needsTranslate.slice(0, MAX_ITEMS);
 
     const systemPrompt =
-      "You are a translation engine. Return only valid JSON matching the schema. No extra keys, no commentary.";
+      "You are a translation engine. Output must be valid JSON that matches the provided schema. No commentary.";
 
     const userPrompt = `Translate each item.text from item.fromLang to item.toLang.
 Return results preserving the same id for each item.
 
 items:
-${JSON.stringify(sliced, null, 2)}`;
+${JSON.stringify(sliced)}`;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -76,7 +118,6 @@ ${JSON.stringify(sliced, null, 2)}`;
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0,
-        // Structured Outputs (JSON schema)
         response_format: {
           type: "json_schema",
           json_schema: {
@@ -117,38 +158,53 @@ ${JSON.stringify(sliced, null, 2)}`;
       console.error("[translateMany] OpenAI error:", response.status, errText);
       return NextResponse.json(
         { error: "OpenAI API request failed." },
-        { status: 500 }
+        { status: 500, headers: { "Cache-Control": "no-store" } }
       );
     }
 
     const data = await response.json();
-
     const content = data?.choices?.[0]?.message?.content?.toString()?.trim() ?? "";
+
     if (!content) {
       return NextResponse.json(
         { error: "No content returned from OpenAI." },
-        { status: 500 }
+        { status: 500, headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    let parsed: { results: TranslateManyResult[] } | null = null;
+    let parsed: OpenAITranslateManyResponse;
     try {
-      parsed = JSON.parse(content);
+      parsed = JSON.parse(content) as OpenAITranslateManyResponse;
     } catch (e) {
       console.error("[translateMany] JSON parse failed. Content:", content);
       return NextResponse.json(
         { error: "translateMany returned invalid JSON." },
-        { status: 500 }
+        { status: 500, headers: { "Cache-Control": "no-store" } }
       );
     }
 
-    const results = Array.isArray(parsed?.results) ? parsed!.results : [];
-    return NextResponse.json({ results }, { status: 200 });
+    const translated = Array.isArray(parsed?.results) ? parsed.results : [];
+
+    // Merge passthrough + translated, preserving original request order when possible
+    const map = new Map<string, TranslateManyResult>();
+    for (const r of [...passthrough, ...translated]) map.set(r.id, r);
+
+    const ordered: TranslateManyResult[] = cleaned.map((it) => {
+      const r = map.get(it.id);
+      if (r) return r;
+      // fallback (shouldn’t happen, but don’t crash)
+      return { id: it.id, translatedText: it.text ?? "", targetLang: it.toLang || it.fromLang };
+    });
+
+    return NextResponse.json(
+      { results: ordered },
+      { status: 200, headers: { "Cache-Control": "no-store" } }
+    );
   } catch (err: any) {
     console.error("[translateMany] error", err?.message || err);
     return NextResponse.json(
       { error: "translateMany failed" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-store" } }
     );
   }
 }
