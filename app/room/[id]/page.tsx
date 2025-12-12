@@ -58,6 +58,34 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
+// 🔊 Speak translated text using the device voice (same idea as Learn)
+function speakText(text: string, lang: string, rate = 0.85) {
+  if (typeof window === "undefined") return;
+
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+
+  const clean = text.trim();
+  if (!clean) return;
+
+  try {
+    synth.cancel();
+  } catch {}
+
+  const utterance = new SpeechSynthesisUtterance(clean);
+  utterance.lang = lang || "en-US";
+  utterance.rate = rate;
+
+  const voices = synth.getVoices();
+  const match =
+    voices.find((v) => v.lang === utterance.lang) ||
+    voices.find((v) => v.lang.startsWith(utterance.lang.slice(0, 2)));
+
+  if (match) utterance.voice = match;
+
+  synth.speak(utterance);
+}
+
 /**
  * Front-end helper: call our /api/translate route.
  * Each device can ask for its own target language.
@@ -90,7 +118,6 @@ async function translateText(
 
     if (!res.ok) {
       console.warn("[translateText] /api/translate not ok", res.status);
-      // Fallback: show original text, keep requested target language
       return { translatedText: trimmed, targetLang: toLang };
     }
 
@@ -101,21 +128,14 @@ async function translateText(
 
     const maybe = (data.translatedText ?? "").trim();
 
-    // If the API gave us nothing or signaled an error, fall back to English
-    const translated =
-      maybe.length > 0 && !data.error ? maybe : trimmed;
+    const translated = maybe.length > 0 && !data.error ? maybe : trimmed;
 
-    // IMPORTANT: always trust the device’s chosen target language,
-    // not whatever the server echoes back.
     return { translatedText: translated, targetLang: toLang };
   } catch (err) {
     console.error("[translateText] error", err);
-    // Network / server failure → still show English text, arrow to chosen lang
     return { translatedText: trimmed, targetLang: toLang };
   }
 }
-
-
 
 export default function RoomPage() {
   const params = useParams<{ id: string }>();
@@ -160,6 +180,7 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showCaptions, setShowCaptions] = useState(false);
   const [captionLines, setCaptionLines] = useState<number>(3);
+  const [voiceOn, setVoiceOn] = useState(false);
   const [autoSpeak] = useState(true); // reserved for later TTS
 
   // Translation target language (what *you* want to read)
@@ -491,9 +512,12 @@ export default function RoomPage() {
         translatedText,
         isLocal: true,
       });
+      
+      if (voiceOn) {
+        speakText(translatedText, targetLang, ttsRate);
+      }
 
       // Broadcast original text + source lang + name.
-      // Each receiver translates for themselves.
       if (channelRef.current) {
         channelRef.current.send({
           type: "broadcast",
@@ -643,7 +667,9 @@ export default function RoomPage() {
               isLocal: false,
             });
 
-            // Later: if (autoSpeak) speakText(translatedText, targetLang);
+            if (voiceOn) {
+              speakText(translatedText, targetLang, ttsRate);
+            }
           }
         );
 
@@ -929,6 +955,17 @@ export default function RoomPage() {
               }`}
             >
               Text
+            </button>
+
+            <button
+              onClick={() => setVoiceOn(v => !v)}
+              className={`${pillBase} ${
+                voiceOn
+                ? "bg-violet-600 text-white border-violet-500"
+                : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+              >
+              Voice
             </button>
 
             {/* Language selector for how YOU want to read captions */}
@@ -1286,5 +1323,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
