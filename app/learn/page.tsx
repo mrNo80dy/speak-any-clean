@@ -196,8 +196,11 @@ function normalizeWords(s: string) {
 }
 
 export default function LearnPage() {
-  const [fromLang, setFromLang] = useState("en-US");
-  const [toLang, setToLang] = useState("pt-BR");
+  const defaultLang =
+    typeof navigator !== "undefined" ? navigator.language : "en-US";
+
+  const [fromLang, setFromLang] = useState(defaultLang);
+  const [toLang, setToLang] = useState("en-US");
 
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
@@ -367,20 +370,38 @@ export default function LearnPage() {
 
   const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
 
-  function handleUseLessonPhrase(phrase: LessonPhrase) {
-    setError(null);
-    setAttemptText("");
-    setAttemptScore(null);
+  async function handleUseLessonPhrase(phrase: LessonPhrase) {
+  setError(null);
+  setAttemptText("");
+  setAttemptScore(null);
 
-    const textForFromLang =
-      phrase.texts[fromLang] ?? phrase.texts["en-US"] ?? Object.values(phrase.texts)[0];
+  const englishSeed =
+    phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
 
-    setSourceText(textForFromLang);
+  // Step 1: get phrase in the selected "from" language (generate it if missing)
+  let sourceForFromLang =
+    phrase.texts[fromLang] ??
+    (fromLang === "en-US" ? englishSeed : "");
 
-    setTimeout(() => {
-      handleTranslate();
-    }, 0);
+  if (!sourceForFromLang) {
+    const gen = await translateText("en-US", fromLang, englishSeed);
+    sourceForFromLang = gen.translatedText || englishSeed;
   }
+
+  setSourceText(sourceForFromLang);
+
+  // Step 2: translate from fromLang -> toLang (now it matches the actual language)
+  setLoading(true);
+  try {
+    const res = await translateText(fromLang, toLang, sourceForFromLang);
+    setTranslatedText(res.translatedText);
+  } catch (err: any) {
+    console.error("[Learn] lesson translate error", err);
+    setError(err?.message || "Lesson translate failed.");
+  } finally {
+    setLoading(false);
+  }
+}
 
   // Word-level “wrong words” highlight (simple position-based compare)
   const highlightedTranslation = useMemo(() => {
@@ -658,7 +679,7 @@ export default function LearnPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleUseLessonPhrase(phrase)}
+                          onClick={() => void handleUseLessonPhrase(phrase)}
                           className="shrink-0 border-slate-300 text-slate-100 bg-slate-700 hover:bg-slate-600 text-[11px]"
                         >
                           Use this phrase
