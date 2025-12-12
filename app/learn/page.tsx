@@ -222,6 +222,7 @@ export default function LearnPage() {
   const attemptRecRef = useRef<any>(null);
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
+  const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -369,6 +370,59 @@ export default function LearnPage() {
       : null;
 
   const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
+  useEffect(() => {
+  let cancelled = false;
+
+  async function warmLessonPreviews() {
+    if (!selectedLesson) return;
+
+    const updates: Record<string, string> = {};
+
+    for (const phrase of selectedLesson.phrases) {
+      const cacheKey = `${phrase.id}|${fromLang}`;
+
+      // already cached
+      if (lessonPreviewCache[cacheKey]) continue;
+
+      // direct text exists for this language
+      const direct = phrase.texts[fromLang];
+      if (direct) {
+        updates[cacheKey] = direct;
+        continue;
+      }
+
+      // generate from english seed for display
+      const englishSeed =
+        phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+
+      if (!englishSeed) continue;
+
+      if (fromLang === "en-US") {
+        updates[cacheKey] = englishSeed;
+        continue;
+      }
+
+      const gen = await translateText("en-US", fromLang, englishSeed);
+      updates[cacheKey] = gen.translatedText || englishSeed;
+    }
+
+    if (cancelled) return;
+
+    if (Object.keys(updates).length > 0) {
+      setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
+    }
+  }
+
+  void warmLessonPreviews();
+
+  return () => {
+    cancelled = true;
+  };
+
+  // intentionally NOT depending on lessonPreviewCache to avoid loops
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [fromLang, selectedLessonId]);
+
 
   async function handleUseLessonPhrase(phrase: LessonPhrase) {
   setError(null);
@@ -662,11 +716,13 @@ export default function LearnPage() {
                 <p className="text-slate-300">{selectedLesson.description}</p>
 
                 <div className="space-y-2">
-                  {selectedLesson.phrases.map((phrase) => {
-                    const preview =
-                      phrase.texts[fromLang] ??
-                      phrase.texts["en-US"] ??
-                      Object.values(phrase.texts)[0];
+                  const cacheKey = `${phrase.id}|${fromLang}`;
+                  const preview =
+                    lessonPreviewCache[cacheKey] ??
+                    phrase.texts[fromLang] ??
+                    phrase.texts["en-US"] ??
+                    Object.values(phrase.texts)[0];
+
 
                     return (
                       <div
