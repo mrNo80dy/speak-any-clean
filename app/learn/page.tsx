@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
+import { LESSONS } from "@/lib/lessons.generated";
+
 
 type TranslateResponse = {
   translatedText?: string;
@@ -478,32 +480,29 @@ export default function LearnPage() {
       : null;
 
   async function handleUseLessonPhrase(phrase: LessonPhrase) {
-    setError(null);
-    setAttemptText("");
-    setAttemptScore(null);
+  setError(null);
+  setAttemptText("");
+  setAttemptScore(null);
 
-    const englishSeed = phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+  const source = phrase.texts[fromLang] ?? phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+  setSourceText(source);
 
-    let sourceForFromLang = phrase.texts[fromLang] ?? (fromLang === "en-US" ? englishSeed : "");
-
-    if (!sourceForFromLang) {
-      const gen = await translateText("en-US", fromLang, englishSeed);
-      sourceForFromLang = gen.translatedText || englishSeed;
-    }
-
-    setSourceText(sourceForFromLang);
-
-    setLoading(true);
-    try {
-      const res = await translateText(fromLang, toLang, sourceForFromLang);
-      setTranslatedText(res.translatedText);
-    } catch (err: any) {
-      console.error("[Learn] lesson translate error", err);
-      setError(err?.message || "Lesson translate failed.");
-    } finally {
-      setLoading(false);
-    }
+  const target = phrase.texts[toLang];
+  if (target) {
+    setTranslatedText(target);
+    return;
   }
+
+  // Fallback only (should rarely happen if generated file is complete)
+  setLoading(true);
+  try {
+    const res = await translateText(fromLang, toLang, source);
+    setTranslatedText(res.translatedText);
+  } finally {
+    setLoading(false);
+  }
+}
+
 
   const highlightedTranslation = useMemo(() => {
     if (!translatedText.trim()) return null;
