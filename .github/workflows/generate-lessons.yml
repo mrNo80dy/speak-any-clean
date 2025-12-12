@@ -2,34 +2,49 @@ name: Generate lessons.generated.ts
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "lib/lessons.source.ts"
+      - "lib/languages.ts"
+      - "scripts/generateLessons.ts"
 
 jobs:
-  generate:
+  gen:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      - name: Install dependencies
+      - name: Install
         run: npm ci
 
-      - name: Generate lessons
+      - name: Generate lessons.generated.ts
+        run: npm run gen:lessons
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: npm run gen:lessons
 
-      - name: Commit generated file
+      - name: Commit and push generated file
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add lib/lessons.generated.ts
-          git commit -m "chore: generate lessons.generated.ts" || echo "No changes"
+          git commit -m "chore: regenerate lessons.generated.ts"
           git push
