@@ -118,6 +118,33 @@ async function translateText(
   }
 }
 
+async function translateMany(
+  items: { id: string; text: string; fromLang: string; toLang: string }[]
+): Promise<Record<string, string>> {
+  if (!items.length) return {};
+
+  const res = await fetch("/api/translateMany", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+
+  if (!res.ok) {
+    console.error("[Learn] translateMany not ok", res.status);
+    return {};
+  }
+
+  const data = (await res.json()) as {
+    results?: { id: string; translatedText?: string }[];
+  };
+
+  const map: Record<string, string> = {};
+  for (const r of data?.results ?? []) {
+    if (r?.id) map[r.id] = r.translatedText ?? "";
+  }
+  return map;
+}
+
 function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -227,6 +254,11 @@ export default function LearnPage() {
   const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>(
     {}
   );
+  const lessonPreviewCacheRef = useRef<Record<string, string>>({});
+  
+  useEffect(() => {
+    lessonPreviewCacheRef.current = lessonPreviewCache;
+  }, [lessonPreviewCache]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -312,55 +344,73 @@ export default function LearnPage() {
 
   // Warm previews for the currently selected lesson + fromLang
   useEffect(() => {
-    let cancelled = false;
+  let cancelled = false;
 
-    async function warmLessonPreviews() {
-      if (!selectedLesson) return;
+  async function warmLessonPreviews() {
+    if (!selectedLesson) return;
 
-      const updates: Record<string, string> = {};
+    const updates: Record<string, string> = {};
+    const toTranslate: { id: string; text: string; fromLang: string; toLang: string }[] = [];
 
-      for (const phrase of selectedLesson.phrases) {
-        const cacheKey = `${phrase.id}|${fromLang}`;
+    for (const phrase of selectedLesson.phrases) {
+      const cacheKey = `${phrase.id}|${fromLang}`;
 
-        // already cached
-        if (lessonPreviewCache[cacheKey]) continue;
+      // already cached
+      if (lessonPreviewCacheRef.current[cacheKey]) continue;
 
-        // direct text exists
-        const direct = phrase.texts[fromLang];
-        if (direct) {
-          updates[cacheKey] = direct;
-          continue;
-        }
-
-        const englishSeed =
-          phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
-
-        if (!englishSeed) continue;
-
-        if (fromLang === "en-US") {
-          updates[cacheKey] = englishSeed;
-          continue;
-        }
-
-        const gen = await translateText("en-US", fromLang, englishSeed);
-        updates[cacheKey] = gen.translatedText || englishSeed;
+      // direct text exists for this language
+      const direct = phrase.texts[fromLang];
+      if (direct) {
+        updates[cacheKey] = direct;
+        continue;
       }
 
+      // generate from english seed for display
+      const englishSeed = phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+      if (!englishSeed) continue;
+
+      if (fromLang === "en-US") {
+        updates[cacheKey] = englishSeed;
+        continue;
+      }
+
+      // batch these
+      toTranslate.push({
+        id: cacheKey,
+        text: englishSeed,
+        fromLang: "en-US",
+        toLang: fromLang,
+      });
+    }
+
+    // ONE request for all missing previews
+    if (toTranslate.length) {
+      const translatedMap = await translateMany(toTranslate);
       if (cancelled) return;
 
-      if (Object.keys(updates).length > 0) {
-        setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
+      for (const [cacheKey, translated] of Object.entries(translatedMap)) {
+         if (translated) updates[cacheKey] = translated;
       }
     }
 
-    void warmLessonPreviews();
 
-    return () => {
-      cancelled = true;
-    };
+    if (cancelled) return;
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromLang, selectedLessonId]);
+    if (Object.keys(updates).length > 0) {
+      setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
+    }
+  }
+
+  void warmLessonPreviews();
+
+  return () => {
+    cancelled = true;
+  };
+
+  // Intentionally NOT depending on lessonPreviewCache to avoid loops
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [fromLang, selectedLessonId, selectedLesson]);
+
 
   async function handleTranslate() {
     setError(null);
@@ -713,6 +763,7 @@ export default function LearnPage() {
                   {selectedLesson.phrases.map((phrase) => {
                     const cacheKey = `${phrase.id}|${fromLang}`;
                     const preview =
+                      lessonPreviewCacheRef.current[cacheKey] ??
                       lessonPreviewCache[cacheKey] ??
                       phrase.texts[fromLang] ??
                       phrase.texts["en-US"] ??
