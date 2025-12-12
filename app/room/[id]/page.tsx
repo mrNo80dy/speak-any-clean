@@ -514,7 +514,7 @@ export default function RoomPage() {
       });
       
       if (voiceOn) {
-        speakText(translatedText, targetLang, ttsRate);
+        speakText(translatedText, targetLang, 0.85);
       }
 
       // Broadcast original text + source lang + name.
@@ -668,7 +668,7 @@ export default function RoomPage() {
             });
 
             if (voiceOn) {
-              speakText(translatedText, targetLang, ttsRate);
+              speakText(translatedText, targetLang, 0.85);
             }
           }
         );
@@ -1323,6 +1323,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
