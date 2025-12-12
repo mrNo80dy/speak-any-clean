@@ -1,12 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from "@/components/ui/card";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -34,8 +29,7 @@ const LESSONS: Lesson[] = [
   {
     id: "introductions",
     title: "Introductions",
-    description:
-      "Simple ways to say who you are and ask about the other person.",
+    description: "Simple ways to say who you are and ask about the other person.",
     phrases: [
       {
         id: "intro-1",
@@ -96,13 +90,8 @@ async function translateText(
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
   const trimmed = text.trim();
-  if (!trimmed) {
-    return { translatedText: "", targetLang: toLang };
-  }
-
-  if (fromLang === toLang) {
-    return { translatedText: trimmed, targetLang: toLang };
-  }
+  if (!trimmed) return { translatedText: "", targetLang: toLang };
+  if (fromLang === toLang) return { translatedText: trimmed, targetLang: toLang };
 
   try {
     const res = await fetch("/api/translate", {
@@ -117,23 +106,19 @@ async function translateText(
     }
 
     const data: TranslateResponse = await res.json();
-
     if (!data || !data.translatedText) {
       console.warn("[Learn] translate API missing translatedText", data);
       return { translatedText: trimmed, targetLang: toLang };
     }
 
-    return {
-      translatedText: data.translatedText,
-      targetLang: data.targetLang || toLang,
-    };
+    return { translatedText: data.translatedText, targetLang: data.targetLang || toLang };
   } catch (err) {
     console.error("[Learn] translate API failed", err);
     return { translatedText: trimmed, targetLang: toLang };
   }
 }
 
-function speakText(text: string, lang: string) {
+function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
   if (!synth) {
@@ -148,25 +133,19 @@ function speakText(text: string, lang: string) {
     try {
       synth.cancel();
     } catch {}
+
     const utterance = new SpeechSynthesisUtterance(trimmed);
     const voices = synth.getVoices();
 
     if (voices && voices.length > 0) {
-      let voice =
-        voices.find(
-          (v) => v.lang.toLowerCase() === lang.toLowerCase()
-        ) ??
-        voices.find((v) =>
-          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
-        );
-
-      if (voice) {
-        utterance.voice = voice;
-      }
+      const voice =
+        voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+        voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+      if (voice) utterance.voice = voice;
     }
 
     utterance.lang = lang || "en-US";
-    utterance.rate = 1.0;
+    utterance.rate = rate;
     synth.speak(utterance);
   };
 
@@ -200,17 +179,27 @@ function scoreSimilarity(a: string, b: string): number {
   let matches = 0;
   const maxLen = Math.max(aWords.length, bWords.length);
   for (let i = 0; i < maxLen; i++) {
-    if (aWords[i] && bWords[i] && aWords[i] === bWords[i]) {
-      matches++;
-    }
+    if (aWords[i] && bWords[i] && aWords[i] === bWords[i]) matches++;
   }
 
   return Math.round((matches / maxLen) * 100);
 }
 
+function normalizeWords(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/[.,!?;:]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+}
+
 export default function LearnPage() {
   const [fromLang, setFromLang] = useState("en-US");
   const [toLang, setToLang] = useState("pt-BR");
+
+  const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
@@ -224,18 +213,18 @@ export default function LearnPage() {
   const [isRecordingAttempt, setIsRecordingAttempt] = useState(false);
   const [sttSupported, setSttSupported] = useState<boolean | null>(null);
 
+  const [ttsRate, setTtsRate] = useState<number>(0.85); // slower by default for learning
+
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
 
-  const [selectedLessonId, setSelectedLessonId] =
-    useState<string>("introductions");
+  const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const w = window as any;
-    const SpeechRecognitionCtor =
-      w.SpeechRecognition || w.webkitSpeechRecognition;
+    const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
       console.warn("[Learn] SpeechRecognition not supported on this device");
@@ -255,15 +244,16 @@ export default function LearnPage() {
       if (!results || results.length === 0) return;
       const last = results[results.length - 1];
       const raw = last[0]?.transcript || "";
-      const text = raw.trim();
-      setSourceText(text);
+      setSourceText(raw.trim());
       setIsRecordingSource(false);
+      setInputMode("type"); // after capturing, flip back to type so edits are easy
     };
 
     srcRec.onerror = (event: any) => {
       console.error("[Learn] source STT error", event.error);
       setError(event.error || "Speech recognition error.");
       setIsRecordingSource(false);
+      setInputMode("type");
     };
 
     srcRec.onend = () => {
@@ -283,9 +273,7 @@ export default function LearnPage() {
       const text = raw.trim();
       setAttemptText(text);
 
-      if (translatedText) {
-        setAttemptScore(scoreSimilarity(translatedText, text));
-      }
+      if (translatedText) setAttemptScore(scoreSimilarity(translatedText, text));
       setIsRecordingAttempt(false);
     };
 
@@ -319,11 +307,7 @@ export default function LearnPage() {
     setAttemptScore(null);
 
     try {
-      const { translatedText } = await translateText(
-        fromLang,
-        toLang,
-        sourceText
-      );
+      const { translatedText } = await translateText(fromLang, toLang, sourceText);
       setTranslatedText(translatedText);
     } catch (err: any) {
       console.error("[Learn] translate error", err);
@@ -334,19 +318,17 @@ export default function LearnPage() {
   }
 
   function handlePlaySource() {
-    speakText(sourceText, fromLang);
+    speakText(sourceText, fromLang, 1.0);
   }
 
   function handlePlayTarget() {
-    speakText(translatedText, toLang);
+    speakText(translatedText, toLang, ttsRate);
   }
 
   function handleStartSourceRecord() {
     setError(null);
     if (!sttSupported || !sourceRecRef.current) {
-      setError(
-        "Speech input isn’t supported on this device. You can still type and translate."
-      );
+      setError("Speech input isn’t supported on this device. You can still type and translate.");
       return;
     }
     try {
@@ -363,9 +345,7 @@ export default function LearnPage() {
     setError(null);
     if (!translatedText.trim()) return;
     if (!sttSupported || !attemptRecRef.current) {
-      setError(
-        "Speech practice isn’t supported on this device. You can still listen and repeat."
-      );
+      setError("Speech practice isn’t supported on this device. You can still listen and repeat.");
       return;
     }
     try {
@@ -393,9 +373,7 @@ export default function LearnPage() {
     setAttemptScore(null);
 
     const textForFromLang =
-      phrase.texts[fromLang] ??
-      phrase.texts["en-US"] ??
-      Object.values(phrase.texts)[0];
+      phrase.texts[fromLang] ?? phrase.texts["en-US"] ?? Object.values(phrase.texts)[0];
 
     setSourceText(textForFromLang);
 
@@ -404,21 +382,72 @@ export default function LearnPage() {
     }, 0);
   }
 
+  // Word-level “wrong words” highlight (simple position-based compare)
+  const highlightedTranslation = useMemo(() => {
+    if (!translatedText.trim()) return null;
+
+    const originalWords = translatedText.split(/\s+/).filter(Boolean);
+    const idealNorm = normalizeWords(translatedText);
+    const attemptNorm = normalizeWords(attemptText || "");
+
+    const hasAttempt = attemptText.trim().length > 0;
+
+    return (
+      <div className="leading-relaxed">
+        {originalWords.map((w, i) => {
+          if (!hasAttempt) {
+            return (
+              <span key={`${w}-${i}`} className="text-slate-50">
+                {w}
+                {i < originalWords.length - 1 ? " " : ""}
+              </span>
+            );
+          }
+
+          const ok = idealNorm[i] && attemptNorm[i] && idealNorm[i] === attemptNorm[i];
+          return (
+            <span
+              key={`${w}-${i}`}
+              className={`px-0.5 rounded ${
+                ok ? "bg-emerald-500/15 text-emerald-100" : "bg-red-500/15 text-red-100"
+              }`}
+            >
+              {w}
+              {i < originalWords.length - 1 ? " " : ""}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }, [translatedText, attemptText]);
+
+  function toggleInputMode() {
+    if (inputMode === "type") {
+      setInputMode("speak");
+      // immediately start recording when switching to speak
+      setTimeout(() => handleStartSourceRecord(), 0);
+    } else {
+      setInputMode("type");
+      // stop if currently recording
+      try {
+        sourceRecRef.current?.stop?.();
+      } catch {}
+      setIsRecordingSource(false);
+    }
+  }
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
       <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl flex flex-col">
         <CardHeader className="pb-2 text-center">
-          <CardTitle className="text-2xl font-bold text-white">
-            Any-Speak Learn
-          </CardTitle>
+          <CardTitle className="text-2xl font-bold text-white">Any-Speak Learn</CardTitle>
           <p className="text-sm text-slate-200 mt-1">
-            Type or speak in your language, hear it in another, then practice
-            saying it.
+            Type or speak in your language, hear it in another, then practice saying it.
           </p>
         </CardHeader>
 
         <CardContent className="space-y-3 px-5 pb-3">
-          {/* Language selectors */}
+          {/* Language selectors (always side-by-side) */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs text-slate-100">From language</Label>
@@ -450,31 +479,50 @@ export default function LearnPage() {
             </div>
           </div>
 
-          {/* Your sentence + Speak instead */}
+          {/* Your sentence + mode toggle + play original */}
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-xs text-slate-100">Your sentence</Label>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleStartSourceRecord}
-                disabled={isRecordingSource}
-                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
-              >
-                {isRecordingSource ? "Listening…" : "Speak instead"}
-              </Button>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handlePlaySource}
+                  disabled={!sourceText.trim()}
+                  className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
+                >
+                  Play original
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={toggleInputMode}
+                  disabled={sttSupported === false}
+                  className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
+                >
+                  {inputMode === "speak"
+                    ? isRecordingSource
+                      ? "Listening…"
+                      : "Speak mode"
+                    : "Type mode"}
+                </Button>
+              </div>
             </div>
+
             <Textarea
               rows={3}
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
-              placeholder="Type or speak what you want to say…"
-              className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder={inputMode === "speak" ? "Listening… speak now" : "Type what you want to say…"}
+              disabled={inputMode === "speak"}
+              className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-70"
             />
           </div>
 
-          {/* Translate + play buttons */}
-          <div className="flex flex-wrap gap-2">
+          {/* Translate + translation playback + speed */}
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={handleTranslate}
               disabled={loading || !sourceText.trim()}
@@ -482,14 +530,7 @@ export default function LearnPage() {
             >
               {loading ? "Translating…" : "Translate"}
             </Button>
-            <Button
-              variant="outline"
-              onClick={handlePlaySource}
-              disabled={!sourceText.trim()}
-              className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-sm"
-            >
-              Play original
-            </Button>
+
             <Button
               variant="outline"
               onClick={handlePlayTarget}
@@ -498,6 +539,21 @@ export default function LearnPage() {
             >
               Play translation
             </Button>
+
+            <div className="flex items-center gap-2 px-2 py-1 rounded-md border border-slate-600 bg-slate-900">
+              <span className="text-[11px] text-slate-200">Speed</span>
+              <input
+                type="range"
+                min={0.6}
+                max={1.2}
+                step={0.05}
+                value={ttsRate}
+                onChange={(e) => setTtsRate(Number(e.target.value))}
+              />
+              <span className="text-[11px] text-slate-200 w-10 text-right">
+                {ttsRate.toFixed(2)}x
+              </span>
+            </div>
           </div>
 
           {error && (
@@ -508,30 +564,29 @@ export default function LearnPage() {
             </div>
           )}
 
-          {sttWarning && (
-            <div className="text-[11px] text-amber-200">{sttWarning}</div>
-          )}
+          {sttWarning && <div className="text-[11px] text-amber-200">{sttWarning}</div>}
 
-          {/* Translated text */}
+          {/* Translated text (with optional highlighting after attempt) */}
           <div className="space-y-1">
-            <Label className="text-xs text-slate-100">
-              Translated sentence
-            </Label>
+            <Label className="text-xs text-slate-100">Translated sentence</Label>
             <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
-              {translatedText || (
-                <span className="text-slate-400">
-                  Translate a sentence to see it here.
-                </span>
+              {translatedText ? (
+                highlightedTranslation
+              ) : (
+                <span className="text-slate-400">Translate a sentence to see it here.</span>
               )}
             </div>
+            {attemptText.trim() && (
+              <div className="text-[11px] text-slate-300">
+                Green = matched word, Red = needs work (rough, position-based).
+              </div>
+            )}
           </div>
 
           {/* Practice section */}
           <div className="space-y-2 border-t border-slate-600 pt-2">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-sm text-slate-100">
-                Practice speaking the translation
-              </Label>
+              <Label className="text-sm text-slate-100">Practice speaking the translation</Label>
               <Button
                 size="sm"
                 onClick={handleStartAttemptRecord}
@@ -543,28 +598,21 @@ export default function LearnPage() {
             </div>
 
             <div className="space-y-1">
-              <Label className="text-[11px] text-slate-300">
-                What you said (recognized)
-              </Label>
+              <Label className="text-[11px] text-slate-300">What you said (recognized)</Label>
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || (
                   <span className="text-slate-400">
-                    After recording, your attempt will appear here in the target
-                    language.
+                    After recording, your attempt will appear here in the target language.
                   </span>
                 )}
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label className="text-[11px] text-slate-300">
-                Accuracy (rough estimate)
-              </Label>
+              <Label className="text-[11px] text-slate-300">Accuracy (rough estimate)</Label>
               <div className="text-sm text-slate-50">
                 {attemptScore === null ? (
-                  <span className="text-slate-400">
-                    You&apos;ll see a score after an attempt.
-                  </span>
+                  <span className="text-slate-400">You&apos;ll see a score after an attempt.</span>
                 ) : (
                   <span>{attemptScore}% match to the ideal sentence.</span>
                 )}
@@ -574,9 +622,8 @@ export default function LearnPage() {
 
           {/* Lesson mode */}
           <div className="space-y-2 border-t border-slate-600 pt-2 pb-1">
-            <Label className="text-sm text-slate-100">
-              Lesson mode (guided phrases)
-            </Label>
+            <Label className="text-sm text-slate-100">Lesson mode (guided phrases)</Label>
+
             <select
               value={selectedLessonId}
               onChange={(e) => setSelectedLessonId(e.target.value)}
