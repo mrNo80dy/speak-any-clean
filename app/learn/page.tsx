@@ -140,7 +140,9 @@ function speakText(text: string, lang: string, rate = 1.0) {
     if (voices && voices.length > 0) {
       const voice =
         voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
-        voices.find((v) => v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+        voices.find((v) =>
+          v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+        );
       if (voice) utterance.voice = voice;
     }
 
@@ -216,13 +218,15 @@ export default function LearnPage() {
   const [isRecordingAttempt, setIsRecordingAttempt] = useState(false);
   const [sttSupported, setSttSupported] = useState<boolean | null>(null);
 
-  const [ttsRate, setTtsRate] = useState<number>(0.85); // slower by default for learning
+  const [ttsRate, setTtsRate] = useState<number>(0.85);
 
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
 
   const [selectedLessonId, setSelectedLessonId] = useState<string>("introductions");
-  const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>({});
+  const [lessonPreviewCache, setLessonPreviewCache] = useState<Record<string, string>>(
+    {}
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -250,7 +254,7 @@ export default function LearnPage() {
       const raw = last[0]?.transcript || "";
       setSourceText(raw.trim());
       setIsRecordingSource(false);
-      setInputMode("type"); // after capturing, flip back to type so edits are easy
+      setInputMode("type");
     };
 
     srcRec.onerror = (event: any) => {
@@ -303,6 +307,60 @@ export default function LearnPage() {
       attemptRecRef.current = null;
     };
   }, [fromLang, toLang, translatedText]);
+
+  const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
+
+  // Warm previews for the currently selected lesson + fromLang
+  useEffect(() => {
+    let cancelled = false;
+
+    async function warmLessonPreviews() {
+      if (!selectedLesson) return;
+
+      const updates: Record<string, string> = {};
+
+      for (const phrase of selectedLesson.phrases) {
+        const cacheKey = `${phrase.id}|${fromLang}`;
+
+        // already cached
+        if (lessonPreviewCache[cacheKey]) continue;
+
+        // direct text exists
+        const direct = phrase.texts[fromLang];
+        if (direct) {
+          updates[cacheKey] = direct;
+          continue;
+        }
+
+        const englishSeed =
+          phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+
+        if (!englishSeed) continue;
+
+        if (fromLang === "en-US") {
+          updates[cacheKey] = englishSeed;
+          continue;
+        }
+
+        const gen = await translateText("en-US", fromLang, englishSeed);
+        updates[cacheKey] = gen.translatedText || englishSeed;
+      }
+
+      if (cancelled) return;
+
+      if (Object.keys(updates).length > 0) {
+        setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
+      }
+    }
+
+    void warmLessonPreviews();
+
+    return () => {
+      cancelled = true;
+    };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromLang, selectedLessonId]);
 
   async function handleTranslate() {
     setError(null);
@@ -369,95 +427,34 @@ export default function LearnPage() {
       ? "Speech features are not supported on this browser. You can still type, translate, and listen."
       : null;
 
-  const selectedLesson = LESSONS.find((l) => l.id === selectedLessonId);
-  useEffect(() => {
-  let cancelled = false;
-
-  async function warmLessonPreviews() {
-    if (!selectedLesson) return;
-
-    const updates: Record<string, string> = {};
-
-    for (const phrase of selectedLesson.phrases) {
-      const cacheKey = `${phrase.id}|${fromLang}`;
-
-      // already cached
-      if (lessonPreviewCache[cacheKey]) continue;
-
-      // direct text exists for this language
-      const direct = phrase.texts[fromLang];
-      if (direct) {
-        updates[cacheKey] = direct;
-        continue;
-      }
-
-      // generate from english seed for display
-      const englishSeed =
-        phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
-
-      if (!englishSeed) continue;
-
-      if (fromLang === "en-US") {
-        updates[cacheKey] = englishSeed;
-        continue;
-      }
-
-      const gen = await translateText("en-US", fromLang, englishSeed);
-      updates[cacheKey] = gen.translatedText || englishSeed;
-    }
-
-    if (cancelled) return;
-
-    if (Object.keys(updates).length > 0) {
-      setLessonPreviewCache((prev) => ({ ...prev, ...updates }));
-    }
-  }
-
-  void warmLessonPreviews();
-
-  return () => {
-    cancelled = true;
-  };
-
-  // intentionally NOT depending on lessonPreviewCache to avoid loops
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [fromLang, selectedLessonId]);
-
-
   async function handleUseLessonPhrase(phrase: LessonPhrase) {
-  setError(null);
-  setAttemptText("");
-  setAttemptScore(null);
+    setError(null);
+    setAttemptText("");
+    setAttemptScore(null);
 
-  const englishSeed =
-    phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
+    const englishSeed = phrase.texts["en-US"] ?? Object.values(phrase.texts)[0] ?? "";
 
-  // Step 1: get phrase in the selected "from" language (generate it if missing)
-  let sourceForFromLang =
-    phrase.texts[fromLang] ??
-    (fromLang === "en-US" ? englishSeed : "");
+    let sourceForFromLang = phrase.texts[fromLang] ?? (fromLang === "en-US" ? englishSeed : "");
 
-  if (!sourceForFromLang) {
-    const gen = await translateText("en-US", fromLang, englishSeed);
-    sourceForFromLang = gen.translatedText || englishSeed;
+    if (!sourceForFromLang) {
+      const gen = await translateText("en-US", fromLang, englishSeed);
+      sourceForFromLang = gen.translatedText || englishSeed;
+    }
+
+    setSourceText(sourceForFromLang);
+
+    setLoading(true);
+    try {
+      const res = await translateText(fromLang, toLang, sourceForFromLang);
+      setTranslatedText(res.translatedText);
+    } catch (err: any) {
+      console.error("[Learn] lesson translate error", err);
+      setError(err?.message || "Lesson translate failed.");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  setSourceText(sourceForFromLang);
-
-  // Step 2: translate from fromLang -> toLang (now it matches the actual language)
-  setLoading(true);
-  try {
-    const res = await translateText(fromLang, toLang, sourceForFromLang);
-    setTranslatedText(res.translatedText);
-  } catch (err: any) {
-    console.error("[Learn] lesson translate error", err);
-    setError(err?.message || "Lesson translate failed.");
-  } finally {
-    setLoading(false);
-  }
-}
-
-  // Word-level “wrong words” highlight (simple position-based compare)
   const highlightedTranslation = useMemo(() => {
     if (!translatedText.trim()) return null;
 
@@ -499,11 +496,9 @@ export default function LearnPage() {
   function toggleInputMode() {
     if (inputMode === "type") {
       setInputMode("speak");
-      // immediately start recording when switching to speak
       setTimeout(() => handleStartSourceRecord(), 0);
     } else {
       setInputMode("type");
-      // stop if currently recording
       try {
         sourceRecRef.current?.stop?.();
       } catch {}
@@ -522,7 +517,7 @@ export default function LearnPage() {
         </CardHeader>
 
         <CardContent className="space-y-3 px-5 pb-3">
-          {/* Language selectors (always side-by-side) */}
+          {/* Language selectors */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label className="text-xs text-slate-100">From language</Label>
@@ -554,11 +549,10 @@ export default function LearnPage() {
             </div>
           </div>
 
-          {/* Your sentence + mode toggle + play original */}
+          {/* Your sentence */}
           <div className="space-y-1">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-xs text-slate-100">Your sentence</Label>
-
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -596,7 +590,7 @@ export default function LearnPage() {
             />
           </div>
 
-          {/* Translate + translation playback + speed */}
+          {/* Translate row */}
           <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={handleTranslate}
@@ -641,7 +635,7 @@ export default function LearnPage() {
 
           {sttWarning && <div className="text-[11px] text-amber-200">{sttWarning}</div>}
 
-          {/* Translated text (with optional highlighting after attempt) */}
+          {/* Translated sentence */}
           <div className="space-y-1">
             <Label className="text-xs text-slate-100">Translated sentence</Label>
             <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
@@ -658,7 +652,7 @@ export default function LearnPage() {
             )}
           </div>
 
-          {/* Practice section */}
+          {/* Practice */}
           <div className="space-y-2 border-t border-slate-600 pt-2">
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">Practice speaking the translation</Label>
@@ -716,13 +710,13 @@ export default function LearnPage() {
                 <p className="text-slate-300">{selectedLesson.description}</p>
 
                 <div className="space-y-2">
-                  const cacheKey = `${phrase.id}|${fromLang}`;
-                  const preview =
-                    lessonPreviewCache[cacheKey] ??
-                    phrase.texts[fromLang] ??
-                    phrase.texts["en-US"] ??
-                    Object.values(phrase.texts)[0];
-
+                  {selectedLesson.phrases.map((phrase) => {
+                    const cacheKey = `${phrase.id}|${fromLang}`;
+                    const preview =
+                      lessonPreviewCache[cacheKey] ??
+                      phrase.texts[fromLang] ??
+                      phrase.texts["en-US"] ??
+                      Object.values(phrase.texts)[0];
 
                     return (
                       <div
