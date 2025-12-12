@@ -1,4 +1,8 @@
+// app/api/translateMany/route.ts
 import { NextResponse } from "next/server";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type TranslateManyItem = {
   id?: string;
@@ -32,25 +36,17 @@ export async function POST(req: Request) {
         const fromLang = item.fromLang;
         const toLang = item.toLang;
 
-        if (!text) {
-          return { id, translatedText: "", targetLang: toLang };
-        }
-
-        if (!fromLang || !toLang) {
-          return { id, translatedText: text, targetLang: toLang || fromLang };
-        }
-
-        if (fromLang === toLang) {
-          return { id, translatedText: text, targetLang: toLang };
-        }
+        if (!text) return { id, translatedText: "", targetLang: toLang };
+        if (!fromLang || !toLang) return { id, translatedText: text, targetLang: toLang || fromLang };
+        if (fromLang === toLang) return { id, translatedText: text, targetLang: toLang };
 
         try {
           const r = await fetch(translateUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text, fromLang, toLang }),
-            // Important in Next/server env: do not cache these
             cache: "no-store",
+            next: { revalidate: 0 },
           });
 
           if (!r.ok) {
@@ -73,12 +69,9 @@ export async function POST(req: Request) {
       })
     );
 
-    return NextResponse.json({ results });
+    return NextResponse.json({ results }, { headers: { "Cache-Control": "no-store" } });
   } catch (err) {
     console.error("[translateMany] error", err);
-    return NextResponse.json(
-      { error: "translateMany failed" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "translateMany failed" }, { status: 500 });
   }
 }
