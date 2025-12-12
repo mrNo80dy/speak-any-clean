@@ -1,0 +1,35 @@
+name: Generate lessons.generated.ts
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate lessons
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: npm run gen:lessons
+
+      - name: Commit generated file
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add lib/lessons.generated.ts
+          git commit -m "chore: generate lessons.generated.ts" || echo "No changes"
+          git push
