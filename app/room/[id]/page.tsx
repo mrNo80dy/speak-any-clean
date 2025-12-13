@@ -164,11 +164,11 @@ export default function RoomPage() {
   const voicesReadyRef = useRef(false);
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
-  
+
   const sttStatusRef = useRef<SttStatus>("unknown");
 
-
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
+  const [rtNonce, setRtNonce] = useState(0); // ✅ used to force a full rebuild if realtime dies
 
   const micOnRef = useRef(false);
 
@@ -235,7 +235,7 @@ export default function RoomPage() {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
     }`;
-    setLogs((l) => [line, ...l].slice(0, 200));
+    setLogs((l) => [line, ...l].slice(0, 250));
   };
 
   // helper: whenever a local <video> mounts, attach the current stream
@@ -293,11 +293,9 @@ export default function RoomPage() {
     Object.values(peerStreams).forEach((stream) => {
       stream.getAudioTracks().forEach((track) => {
         track.enabled = allowRaw;
+      });
     });
-  });
-}, [peerStreams, shouldMuteRawAudio]);
-
-
+  }, [peerStreams, shouldMuteRawAudio]);
 
   // Voices ready tracking
   useEffect(() => {
@@ -354,46 +352,68 @@ export default function RoomPage() {
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
-  // ✅ force a new object each time so effects re-run when tracks are added
-  setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
-}
+    // ✅ force a new object each time so effects re-run when tracks are added
+    setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
+  }
 
+  function teardownPeers(reason: string) {
+    log("teardownPeers", { reason });
+
+    peersRef.current.forEach(({ pc }) => {
+      try {
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onicegatheringstatechange = null;
+        pc.close();
+      } catch {}
+    });
+    peersRef.current.clear();
+
+    setPeerIds([]);
+    setPeerStreams({});
+    setPeerLabels({});
+    peerLabelsRef.current = {};
+    setConnected(false);
+  }
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     let existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({
-  iceServers: [
-    { urls: ["stun:stun.l.google.com:19302"] },
+      iceServers: [
+        { urls: ["stun:stun.l.google.com:19302"] },
 
-    // ✅ TURN is required for many mobile/NAT networks
-    // Put your real TURN creds here (Twilio/Nimble/Cloudflare/etc)
-    {
-      urls: [
-        "turn:YOUR_TURN_HOST:3478?transport=udp",
-        "turn:YOUR_TURN_HOST:3478?transport=tcp",
-        "turns:YOUR_TURN_HOST:5349?transport=tcp",
+        // ✅ TURN is required for many mobile/NAT networks
+        // Put your real TURN creds here (Twilio/Nimble/Cloudflare/etc)
+        {
+          urls: [
+            "turn:YOUR_TURN_HOST:3478?transport=udp",
+            "turn:YOUR_TURN_HOST:3478?transport=tcp",
+            "turns:YOUR_TURN_HOST:5349?transport=tcp",
+          ],
+          username: "YOUR_TURN_USERNAME",
+          credential: "YOUR_TURN_PASSWORD",
+        },
       ],
-      username: "YOUR_TURN_USERNAME",
-      credential: "YOUR_TURN_PASSWORD",
-    },
-  ],
-});
-
+    });
 
     const remoteStream = new MediaStream();
 
+    // ✅ set these ONCE (not inside another handler)
+    pc.oniceconnectionstatechange = () => {
+      log(`ice(${remoteId}) state: ${pc.iceConnectionState}`);
+    };
+
+    pc.onicegatheringstatechange = () => {
+      log(`iceGather(${remoteId}) state: ${pc.iceGatheringState}`);
+    };
+
     pc.onconnectionstatechange = () => {
-      pc.oniceconnectionstatechange = () => {
-        log(`ice(${remoteId}) state: ${pc.iceConnectionState}`);
-      };
+      log(`pc(${remoteId}) state: ${pc.connectionState}`);
 
-      pc.onicegatheringstatechange = () => {
-        log(`iceGather(${remoteId}) state: ${pc.iceGatheringState}`);
-      };
-
-        log(`pc(${remoteId}) state: ${pc.connectionState}`);
       if (pc.connectionState === "connected") setConnected(true);
 
       if (
@@ -424,32 +444,29 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-  // ✅ HARD STOP: never let raw remote audio play unless explicitly allowed
-  if (e.track?.kind === "audio") {
-    e.track.enabled = !shouldMuteRawAudioRef.current;
-  }
-
-  if (e.streams && e.streams[0]) {
-    e.streams[0].getTracks().forEach((t) => {
-      if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
-        remoteStream.addTrack(t);
+      // ✅ HARD STOP: never let raw remote audio play unless explicitly allowed
+      if (e.track?.kind === "audio") {
+        e.track.enabled = !shouldMuteRawAudioRef.current;
       }
-    });
-  } else if (e.track) {
-    if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
-      remoteStream.addTrack(e.track);
-    }
-  }
 
-  upsertPeerStream(remoteId, remoteStream);
-  log("ontrack", { from: remoteId, kind: e.track?.kind });
-};
+      if (e.streams && e.streams[0]) {
+        e.streams[0].getTracks().forEach((t) => {
+          if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
+            remoteStream.addTrack(t);
+          }
+        });
+      } else if (e.track) {
+        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
+          remoteStream.addTrack(e.track);
+        }
+      }
 
+      upsertPeerStream(remoteId, remoteStream);
+      log("ontrack", { from: remoteId, kind: e.track?.kind });
+    };
 
     if (localStreamRef.current) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
@@ -462,6 +479,7 @@ export default function RoomPage() {
 
   async function makeOffer(toId: string, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(toId, channel);
+
     log("makeOffer senders (before)", {
       to: toId,
       senders: pc.getSenders().map((s) => ({
@@ -470,7 +488,6 @@ export default function RoomPage() {
         readyState: s.track?.readyState,
       })),
     });
-
 
     if (localStreamRef.current) {
       const haveKinds = new Set(
@@ -484,12 +501,12 @@ export default function RoomPage() {
       });
     }
 
-
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
       offerToReceiveVideo: true,
     });
     await pc.setLocalDescription(offer);
+
     log("makeOffer senders (after)", {
       to: toId,
       senders: pc.getSenders().map((s) => ({
@@ -498,7 +515,6 @@ export default function RoomPage() {
         readyState: s.track?.readyState,
       })),
     });
-
 
     channel.send({
       type: "broadcast",
@@ -519,16 +535,16 @@ export default function RoomPage() {
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
     if (localStreamRef.current) {
-  const haveKinds = new Set(
-    pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
-  );
+      const haveKinds = new Set(
+        pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
+      );
 
-  localStreamRef.current.getTracks().forEach((t) => {
-    if (!haveKinds.has(t.kind)) {
-      pc.addTrack(t, localStreamRef.current!);
+      localStreamRef.current.getTracks().forEach((t) => {
+        if (!haveKinds.has(t.kind)) {
+          pc.addTrack(t, localStreamRef.current!);
+        }
+      });
     }
-  });
-}
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -570,12 +586,12 @@ export default function RoomPage() {
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
+
     log("local media acquired", {
       audioTracks: stream.getAudioTracks().length,
       videoTracks: stream.getVideoTracks().length,
       videoEnabled: stream.getVideoTracks()[0]?.enabled,
     });
-
 
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
@@ -649,55 +665,58 @@ export default function RoomPage() {
     };
 
     rec.onresult = async (event: any) => {
-  const results = event.results;
-  if (!results || results.length === 0) return;
+      const results = event.results;
+      if (!results || results.length === 0) return;
 
-  // Process any final results from this event (Android often finalizes a non-last index)
-  for (let i = event.resultIndex ?? 0; i < results.length; i++) {
-    const r = results[i];
-    if (!r?.isFinal) continue;
+      // Process any final results from this event (Android often finalizes a non-last index)
+      for (let i = event.resultIndex ?? 0; i < results.length; i++) {
+        const r = results[i];
+        if (!r?.isFinal) continue;
 
-    const raw = r[0]?.transcript || "";
-    const text = raw.trim();
-    if (!text) continue;
+        const raw = r[0]?.transcript || "";
+        const text = raw.trim();
+        if (!text) continue;
 
-    // Always use latest language choice
-    rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
-    const lang = rec.lang || "en-US";
-    const fromName = displayName || "You";
+        // Always use latest language choice
+        rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
+        const lang = rec.lang || "en-US";
+        const fromName = displayName || "You";
 
-    log("stt final", { text, lang });
+        log("stt final", { text, lang });
 
-    const target = targetLangRef.current || "en-US";
-    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+        const target = targetLangRef.current || "en-US";
+        const { translatedText, targetLang: outLang } = await translateText(
+          lang,
+          target,
+          text
+        );
 
-    pushMessage({
-      fromId: clientId,
-      fromName,
-      originalLang: lang,
-      translatedLang: outLang,
-      originalText: text,
-      translatedText,
-      isLocal: true,
-    });
+        pushMessage({
+          fromId: clientId,
+          fromName,
+          originalLang: lang,
+          translatedLang: outLang,
+          originalText: text,
+          translatedText,
+          isLocal: true,
+        });
 
-    if (shouldSpeakTranslatedRef.current) {
-      speakText(translatedText, outLang, 0.9);
-    }
+        if (shouldSpeakTranslatedRef.current) {
+          speakText(translatedText, outLang, 0.9);
+        }
 
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "transcript",
-        payload: { from: clientId, text, lang, name: fromName },
-      });
-      log("stt broadcast sent", { text, lang });
-    } else {
-      log("stt broadcast skipped (no channelRef)", {});
-    }
-  }
-};
-
+        if (channelRef.current) {
+          channelRef.current.send({
+            type: "broadcast",
+            event: "transcript",
+            payload: { from: clientId, text, lang, name: fromName },
+          });
+          log("stt broadcast sent", { text, lang });
+        } else {
+          log("stt broadcast skipped (no channelRef)", {});
+        }
+      }
+    };
 
     rec.onerror = (event: any) => {
       log("stt error", { error: event.error });
@@ -814,7 +833,6 @@ export default function RoomPage() {
               isLocal: false,
             });
 
-            // ✅ MUST use .current
             if (shouldSpeakTranslatedRef.current) {
               speakText(translatedText, outLang, 0.9);
             }
@@ -873,6 +891,24 @@ export default function RoomPage() {
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
             channel.track({ clientId, name: displayName });
+            return;
+          }
+
+          // ✅ If realtime dies, rebuild everything (peers + channel)
+          if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
+            log("realtime died; rebuilding", { status });
+
+            teardownPeers(`realtime:${status}`);
+
+            try {
+              channel.untrack();
+              channel.unsubscribe();
+            } catch {}
+
+            // trigger full effect rerun
+            setTimeout(() => {
+              setRtNonce((n) => n + 1);
+            }, 250);
           }
         });
 
@@ -897,12 +933,7 @@ export default function RoomPage() {
     return () => {
       isMounted = false;
 
-      peersRef.current.forEach(({ pc }) => {
-        try {
-          pc.close();
-        } catch {}
-      });
-      peersRef.current.clear();
+      teardownPeers("effect cleanup");
 
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -918,7 +949,7 @@ export default function RoomPage() {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, displayName, debugKey]);
+  }, [roomId, clientId, displayName, debugKey, rtNonce]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
@@ -981,7 +1012,6 @@ export default function RoomPage() {
       isLocal: true,
     });
 
-    // ✅ use the ref inside callbacks
     if (shouldSpeakTranslatedRef.current) {
       speakText(translatedText, outLang, 0.9);
     }
@@ -1166,7 +1196,9 @@ export default function RoomPage() {
                 · Speak translated:{" "}
                 <span className="font-mono">
                   {shouldSpeakTranslated ? "true" : "false"}
-                </span>
+                </span>{" "}
+                · Connected:{" "}
+                <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
 
               {/* Debug logs (last 20) */}
@@ -1472,8 +1504,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
-
-
-
-
