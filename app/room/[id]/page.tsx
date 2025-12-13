@@ -589,49 +589,55 @@ export default function RoomPage() {
     };
 
     rec.onresult = async (event: any) => {
-      const results = event.results;
-      if (!results || results.length === 0) return;
+  const results = event.results;
+  if (!results || results.length === 0) return;
 
-      const last = results[results.length - 1];
-      if (!last.isFinal) return;
+  // Process any final results from this event (Android often finalizes a non-last index)
+  for (let i = event.resultIndex ?? 0; i < results.length; i++) {
+    const r = results[i];
+    if (!r?.isFinal) continue;
 
-      const raw = last[0]?.transcript || "";
-      const text = raw.trim();
-      if (!text) return;
+    const raw = r[0]?.transcript || "";
+    const text = raw.trim();
+    if (!text) continue;
 
-      const lang = rec.lang || "en-US";
-      const fromName = displayName || "You";
+    // Always use latest language choice
+    rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
+    const lang = rec.lang || "en-US";
+    const fromName = displayName || "You";
 
-      const target = targetLangRef.current || "en-US";
-      const { translatedText, targetLang: outLang } = await translateText(
-        lang,
-        target,
-        text
-      );
+    log("stt final", { text, lang });
 
-      pushMessage({
-        fromId: clientId,
-        fromName,
-        originalLang: lang,
-        translatedLang: outLang,
-        originalText: text,
-        translatedText,
-        isLocal: true,
+    const target = targetLangRef.current || "en-US";
+    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: outLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
+    });
+
+    if (shouldSpeakTranslatedRef.current) {
+      speakText(translatedText, outLang, 0.9);
+    }
+
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
       });
+      log("stt broadcast sent", { text, lang });
+    } else {
+      log("stt broadcast skipped (no channelRef)", {});
+    }
+  }
+};
 
-      // ✅ use the ref inside callbacks
-      if (shouldSpeakTranslatedRef.current) {
-        speakText(translatedText, outLang, 0.9);
-      }
-
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "transcript",
-          payload: { from: clientId, text, lang, name: fromName },
-        });
-      }
-    };
 
     rec.onerror = (event: any) => {
       log("stt error", { error: event.error });
@@ -665,7 +671,7 @@ export default function RoomPage() {
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayName, speakLang, isMobile]);
+  }, [displayName, speakLang]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -1396,5 +1402,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
