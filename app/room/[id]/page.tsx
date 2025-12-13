@@ -62,23 +62,37 @@ function speakText(text: string, lang: string, rate = 0.9) {
   const clean = text.trim();
   if (!clean) return;
 
-  try {
-    synth.cancel();
-  } catch {}
+  const doSpeak = () => {
+    try { synth.cancel(); } catch {}
 
-  const utterance = new SpeechSynthesisUtterance(clean);
-  utterance.lang = lang || "en-US";
-  utterance.rate = rate;
+    const utterance = new SpeechSynthesisUtterance(clean);
+    utterance.lang = lang || "en-US";
+    utterance.rate = rate;
 
+    const voices = synth.getVoices?.() || [];
+    const match =
+      voices.find((v) => v.lang === utterance.lang) ||
+      voices.find((v) => v.lang.startsWith(utterance.lang.slice(0, 2)));
+
+    if (match) utterance.voice = match;
+
+    // Optional: tiny debug hooks
+    utterance.onstart = () => console.log("[TTS] start", { lang: utterance.lang, text: clean });
+    utterance.onerror = (e) => console.warn("[TTS] error", e);
+
+    synth.speak(utterance);
+  };
+
+  // If voices haven't loaded yet, wait a tick and try again
   const voices = synth.getVoices?.() || [];
-  const match =
-    voices.find((v) => v.lang === utterance.lang) ||
-    voices.find((v) => v.lang.startsWith(utterance.lang.slice(0, 2)));
+  if (voices.length === 0) {
+    setTimeout(doSpeak, 150);
+    return;
+  }
 
-  if (match) utterance.voice = match;
-
-  synth.speak(utterance);
+  doSpeak();
 }
+
 
 /**
  * Front-end helper: call /api/translate
@@ -148,6 +162,7 @@ export default function RoomPage() {
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
+  const voicesReadyRef = useRef(false);
   
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
@@ -257,6 +272,31 @@ export default function RoomPage() {
   useEffect(() => {
     speakLangRef.current = speakLang;
   }, [speakLang]);
+
+  useEffect(() => {
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+
+  const markReady = () => {
+    const v = synth.getVoices?.() || [];
+    if (v.length > 0) voicesReadyRef.current = true;
+  };
+
+  // kick once
+  markReady();
+
+  // update when voices load
+  synth.onvoiceschanged = () => markReady();
+
+  return () => {
+    // cleanup
+    try {
+      synth.onvoiceschanged = null;
+    } catch {}
+  };
+}, []);
+
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -448,7 +488,7 @@ export default function RoomPage() {
    const constraints = {
      audio: true,
      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-   } satisfies MediaStreamConstraints;
+   };
 
   
 
@@ -566,8 +606,21 @@ useEffect(() => {
       });
 
       if (shouldSpeakTranslated) {
+        console.log("[TTS/remote] speaking", {
+          shouldSpeakTranslated,
+          debugEnabled,
+          debugSpeakTranslated,
+          outLang,
+          translatedText,
+        });
         speakText(translatedText, outLang, 0.9);
-      }
+      } else {
+        console.log("[TTS/remote], NOT speaking", {
+          shouldSpeakTranslated,
+          debugEnabled,
+          debugSpeakTranslated,
+        });
+      }  
 
       if (channelRef.current) {
         channelRef.current.send({
@@ -878,7 +931,19 @@ useEffect(() => {
     });
 
     if (shouldSpeakTranslated) {
+      console.log("[TTS/local] speaking", {
+        shouldSpeakTranslated,
+        debugSpeakTranslated,
+        outLang,
+        translatedText,
+      });
       speakText(translatedText, outLang, 0.9);
+    } else {
+      console.log("[TTS/local] NOT speaking", {
+        shouldSpeakTranslated,
+        debugEnabled,
+        debugSpeakTranslated,
+      });
     }
 
     if (channelRef.current) {
@@ -996,6 +1061,15 @@ useEffect(() => {
                 Debug Mode (URL has <span className="font-mono">?debug=1</span>)
                 {isMobile ? " · Mobile" : " · Desktop"}
               </div>
+
+              <button
+                type="button"
+                onClick={() => speakText("Teste de voz", "pt-BR", 0.95)}
+                className="px-3 py-2 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+              >
+                Test Voice
+              </button>
+
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                 <label className="text-xs">
@@ -1364,6 +1438,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
