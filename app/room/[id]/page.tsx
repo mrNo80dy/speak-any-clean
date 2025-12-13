@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type MediaStreamConstraints } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
+
 
 // Types
 type RealtimeSubscribeStatus =
@@ -119,12 +120,11 @@ export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
-  // ---- Debug Mode -------------------------------------------------
-  const debugEnabled = useMemo(() => {
-    if (typeof window === "undefined") return false;
-    const url = new URL(window.location.href);
-    return url.searchParams.get("debug") === "1";
-  }, []);
+ // ---- Debug Mode -------------------------------------------------
+  const searchParams = useSearchParams();
+  const debugEnabled = searchParams?.get("debug") === "1";
+  const debugKey = debugEnabled ? "debug" : "normal"; // forces re-init when query changes
+
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -148,6 +148,9 @@ export default function RoomPage() {
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
+  
+
+  const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
 
   const micOnRef = useRef(false);
 
@@ -172,6 +175,12 @@ export default function RoomPage() {
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
+
+  // Hand raise state (remote participants)
+  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
+
+  // Your own hand
+  const [myHandUp, setMyHandUp] = useState(false);
 
   // STT status
   const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
@@ -301,11 +310,16 @@ export default function RoomPage() {
     pc.onconnectionstatechange = () => {
       log(`pc(${remoteId}) state: ${pc.connectionState}`);
       if (pc.connectionState === "connected") setConnected(true);
+      
       if (
         pc.connectionState === "disconnected" ||
         pc.connectionState === "failed" ||
         pc.connectionState === "closed"
       ) {
+        // remove peer so size reflects reality
+        peersRef.current.delete(remoteId);
+
+        // if nobody left, flip false
         setTimeout(() => {
           if (peersRef.current.size === 0) setConnected(false);
         }, 0);
@@ -431,10 +445,12 @@ export default function RoomPage() {
   async function acquireLocalMedia() {
     if (localStreamRef.current) return localStreamRef.current;
 
-    const constraints: MediaStreamConstraints = {
-      audio: true,
-      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-    };
+   const constraints = {
+     audio: true,
+     video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+   } satisfies MediaStreamConstraints;
+
+  
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
@@ -727,6 +743,8 @@ useEffect(() => {
             });
           });
 
+          log("presence sync", { othersCount: others.length, others });
+          
           setPeerIds(others);
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
@@ -742,11 +760,15 @@ useEffect(() => {
 
         // Subscribe then track presence
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
+          setRtStatus(status);
+          log("realtime status", { status, debugEnabled });
+          
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
             channel.track({ clientId, name: displayName });
           }
         });
+
 
         channelRef.current = channel;
 
@@ -790,7 +812,7 @@ useEffect(() => {
       } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, displayName]);
+  }, [roomId, clientId, displayName, debugKey]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
@@ -812,12 +834,7 @@ useEffect(() => {
     setMicOn(next);
   };
 
-  // Hand raise state (remote participants)
-  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
-
-  // Your own hand
-  const [myHandUp, setMyHandUp] = useState(false);
-  
+ 
   const toggleHand = () => {
     const next = !myHandUp;
     setMyHandUp(next);
@@ -882,7 +899,8 @@ useEffect(() => {
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
-  const connectedClass = connected
+  const online = rtStatus === "SUBSCRIBED";
+  const connectedClass = online
     ? "bg-emerald-600/90 text-white border-emerald-500"
     : "bg-red-900/70 text-red-200 border-red-700";
 
@@ -918,7 +936,7 @@ useEffect(() => {
 
           <div className="flex items-center gap-2">
             <span className={`${pillBase} ${connectedClass}`}>
-              {connected ? "Connected" : "Offline"}
+              {online ? "Online" : "Offline"}
             </span>
 
             <button onClick={toggleMic} className={`${pillBase} ${micClass}`}>
@@ -1346,5 +1364,6 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
