@@ -244,6 +244,14 @@ export default function RoomPage() {
   });
 }, [voiceOn]);
 
+  useEffect(() => {
+  // 🔇 Disable audio tracks at the MediaStream level (mobile-safe)
+  Object.values(peerStreams).forEach((stream) => {
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = !voiceOn;
+    });
+  });
+}, [voiceOn, peerStreams]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -1197,4 +1205,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
