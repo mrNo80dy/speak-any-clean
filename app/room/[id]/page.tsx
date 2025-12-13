@@ -454,16 +454,26 @@ export default function RoomPage() {
     return stream;
   }
 
-  // ---- RAW AUDIO KILL SWITCH (mobile-safe) -------------------
-  useEffect(() => {
-    // Disable/enable ALL remote audio tracks at the MediaStream level.
-    Object.values(peerStreams).forEach((stream) => {
-      stream.getAudioTracks().forEach((track) => {
-        // If we are muting raw audio, disable the track.
-        track.enabled = !shouldMuteRawAudio;
-      });
-    });
-  }, [peerStreams, shouldMuteRawAudio]);
+ // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
+useEffect(() => {
+  const allowRaw = !shouldMuteRawAudio;
+
+  // 1) Mute explicit remote <audio>
+  document.querySelectorAll<HTMLAudioElement>("audio[data-remote]").forEach((a) => {
+    a.muted = !allowRaw;
+    a.volume = allowRaw ? 1 : 0;
+    if (allowRaw) a.play().catch(() => {});
+  });
+
+  // 2) ALSO mute remote <video> (mobile sometimes routes audio here)
+  document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
+    if (v === localVideoRef.current) return;
+    v.muted = !allowRaw;
+    v.volume = allowRaw ? 1 : 0;
+    if (allowRaw) v.play().catch(() => {});
+  });
+}, [shouldMuteRawAudio, peerStreams]); // ✅ IMPORTANT: re-apply when streams/elements change
+
 
   // ---- STT setup: Web Speech API -----------------------------
   // Rebuild STT engine when:
@@ -1336,4 +1346,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
