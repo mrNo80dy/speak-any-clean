@@ -162,9 +162,9 @@ export default function RoomPage() {
   const recognitionRef = useRef<any>(null);
 
   const voicesReadyRef = useRef(false);
-
-  // ✅ this MUST be updated via a top-level effect
   const shouldSpeakTranslatedRef = useRef(false);
+  const shouldMuteRawAudioRef = useRef(true);
+
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
 
@@ -264,6 +264,10 @@ export default function RoomPage() {
   }, [micOn]);
 
   useEffect(() => {
+    shouldMuteRawAudioRef.current = shouldMuteRawAudio;
+  }, [shouldMuteRawAudio]);
+
+  useEffect(() => {
     targetLangRef.current = targetLang;
   }, [targetLang]);
 
@@ -275,6 +279,7 @@ export default function RoomPage() {
   useEffect(() => {
     shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
   }, [debugEnabled, debugSpeakTranslated]);
+
 
   // Voices ready tracking
   useEffect(() => {
@@ -331,11 +336,10 @@ export default function RoomPage() {
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
-    setPeerStreams((prev) => {
-      if (prev[remoteId] === stream) return prev;
-      return { ...prev, [remoteId]: stream };
-    });
-  }
+  // ✅ force a new object each time so effects re-run when tracks are added
+  setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
+}
+
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     let existing = peersRef.current.get(remoteId);
@@ -379,21 +383,27 @@ export default function RoomPage() {
     };
 
     pc.ontrack = (e) => {
-      if (e.streams && e.streams[0]) {
-        e.streams[0].getTracks().forEach((t) => {
-          if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
-            remoteStream.addTrack(t);
-          }
-        });
-      } else if (e.track) {
-        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
-          remoteStream.addTrack(e.track);
-        }
-      }
+  // ✅ HARD STOP: never let raw remote audio play unless explicitly allowed
+  if (e.track?.kind === "audio") {
+    e.track.enabled = !shouldMuteRawAudioRef.current;
+  }
 
-      upsertPeerStream(remoteId, remoteStream);
-      log("ontrack", { from: remoteId, kind: e.track?.kind });
-    };
+  if (e.streams && e.streams[0]) {
+    e.streams[0].getTracks().forEach((t) => {
+      if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
+        remoteStream.addTrack(t);
+      }
+    });
+  } else if (e.track) {
+    if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
+      remoteStream.addTrack(e.track);
+    }
+  }
+
+  upsertPeerStream(remoteId, remoteStream);
+  log("ontrack", { from: remoteId, kind: e.track?.kind });
+};
+
 
     if (localStreamRef.current) {
       localStreamRef.current
@@ -521,7 +531,7 @@ export default function RoomPage() {
       v.volume = allowRaw ? 1 : 0;
       if (allowRaw) v.play().catch(() => {});
     });
-  }, [shouldMuteRawAudio, peerStreams]);
+  }, [shouldMuteRawAudio, peerStreams, peerIds]);
 
   // ---- STT setup: Web Speech API -----------------------------
   useEffect(() => {
@@ -1367,3 +1377,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
