@@ -230,6 +230,21 @@ export default function RoomPage() {
     voiceOnRef.current = voiceOn;
   }, [voiceOn]);
 
+  useEffect(() => {
+  // Mute / unmute ALL remote video audio
+  const videos = document.querySelectorAll<HTMLVideoElement>("video");
+
+  videos.forEach((v) => {
+    // never unmute your own local video
+    if (v === localVideoRef.current) return;
+
+    // mute remote video audio when Voice is ON
+    v.muted = voiceOn;
+    v.volume = voiceOn ? 0 : 1;
+  });
+}, [voiceOn]);
+
+
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1182,3 +1197,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
