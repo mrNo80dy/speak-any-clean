@@ -5,7 +5,6 @@ import { useParams, useSearchParams } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 
-
 // Types
 type RealtimeSubscribeStatus =
   | "SUBSCRIBED"
@@ -53,7 +52,7 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
-// 🔊 Speak translated text using the device voice (DEBUG ONLY)
+// 🔊 Speak text using the device voice (DEBUG ONLY)
 function speakText(text: string, lang: string, rate = 0.9) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -63,7 +62,9 @@ function speakText(text: string, lang: string, rate = 0.9) {
   if (!clean) return;
 
   const doSpeak = () => {
-    try { synth.cancel(); } catch {}
+    try {
+      synth.cancel();
+    } catch {}
 
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = lang || "en-US";
@@ -76,14 +77,13 @@ function speakText(text: string, lang: string, rate = 0.9) {
 
     if (match) utterance.voice = match;
 
-    // Optional: tiny debug hooks
-    utterance.onstart = () => console.log("[TTS] start", { lang: utterance.lang, text: clean });
+    utterance.onstart = () =>
+      console.log("[TTS] start", { lang: utterance.lang, text: clean });
     utterance.onerror = (e) => console.warn("[TTS] error", e);
 
     synth.speak(utterance);
   };
 
-  // If voices haven't loaded yet, wait a tick and try again
   const voices = synth.getVoices?.() || [];
   if (voices.length === 0) {
     setTimeout(doSpeak, 150);
@@ -92,7 +92,6 @@ function speakText(text: string, lang: string, rate = 0.9) {
 
   doSpeak();
 }
-
 
 /**
  * Front-end helper: call /api/translate
@@ -134,11 +133,10 @@ export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
- // ---- Debug Mode -------------------------------------------------
+  // ---- Debug Mode -------------------------------------------------
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
   const debugKey = debugEnabled ? "debug" : "normal"; // forces re-init when query changes
-
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -162,8 +160,11 @@ export default function RoomPage() {
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
+
   const voicesReadyRef = useRef(false);
-  
+
+  // ✅ this MUST be updated via a top-level effect
+  const shouldSpeakTranslatedRef = useRef(false);
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
 
@@ -193,8 +194,6 @@ export default function RoomPage() {
 
   // Hand raise state (remote participants)
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
-
-  // Your own hand
   const [myHandUp, setMyHandUp] = useState(false);
 
   // STT status
@@ -202,9 +201,6 @@ export default function RoomPage() {
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
   // ---------- FINAL vs DEBUG behavior ----------
-  // Final product intent (your stated goal):
-  // - ALWAYS mute raw WebRTC audio (so no English comes through).
-  // - Captions/text are the product.
   const FINAL_MUTE_RAW_AUDIO = true;
 
   // Debug toggles (only visible in ?debug=1)
@@ -229,6 +225,8 @@ export default function RoomPage() {
 
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
+
+  // state value is fine for UI display, but CALLBACKS should read the ref:
   const shouldSpeakTranslated = debugEnabled && debugSpeakTranslated;
 
   const log = (msg: string, ...rest: any[]) => {
@@ -260,7 +258,7 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
-  // keep refs updated
+  // ---- keep refs updated (NO nested hooks) -------------------
   useEffect(() => {
     micOnRef.current = micOn;
   }, [micOn]);
@@ -273,30 +271,31 @@ export default function RoomPage() {
     speakLangRef.current = speakLang;
   }, [speakLang]);
 
+  // ✅ THIS is the missing piece that makes speaking work again
   useEffect(() => {
-  if (typeof window === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
+    shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
+  }, [debugEnabled, debugSpeakTranslated]);
 
-  const markReady = () => {
-    const v = synth.getVoices?.() || [];
-    if (v.length > 0) voicesReadyRef.current = true;
-  };
+  // Voices ready tracking
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (!synth) return;
 
-  // kick once
-  markReady();
+    const markReady = () => {
+      const v = synth.getVoices?.() || [];
+      if (v.length > 0) voicesReadyRef.current = true;
+    };
 
-  // update when voices load
-  synth.onvoiceschanged = () => markReady();
+    markReady();
+    synth.onvoiceschanged = () => markReady();
 
-  return () => {
-    // cleanup
-    try {
-      synth.onvoiceschanged = null;
-    } catch {}
-  };
-}, []);
-
+    return () => {
+      try {
+        synth.onvoiceschanged = null;
+      } catch {}
+    };
+  }, []);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -327,6 +326,7 @@ export default function RoomPage() {
         log("room load error", { err: (err as Error).message });
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
@@ -350,16 +350,13 @@ export default function RoomPage() {
     pc.onconnectionstatechange = () => {
       log(`pc(${remoteId}) state: ${pc.connectionState}`);
       if (pc.connectionState === "connected") setConnected(true);
-      
+
       if (
         pc.connectionState === "disconnected" ||
         pc.connectionState === "failed" ||
         pc.connectionState === "closed"
       ) {
-        // remove peer so size reflects reality
         peersRef.current.delete(remoteId);
-
-        // if nobody left, flip false
         setTimeout(() => {
           if (peersRef.current.size === 0) setConnected(false);
         }, 0);
@@ -398,7 +395,6 @@ export default function RoomPage() {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
-    // Add local tracks if we already have them
     if (localStreamRef.current) {
       localStreamRef.current
         .getTracks()
@@ -485,17 +481,14 @@ export default function RoomPage() {
   async function acquireLocalMedia() {
     if (localStreamRef.current) return localStreamRef.current;
 
-   const constraints = {
-     audio: true,
-     video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-   };
-
-  
+    const constraints = {
+      audio: true,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+    };
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    // default: mic muted, camera on
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
       audioTrack.enabled = false;
@@ -510,37 +503,32 @@ export default function RoomPage() {
     return stream;
   }
 
- // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
-useEffect(() => {
-  const allowRaw = !shouldMuteRawAudio;
+  // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
+  useEffect(() => {
+    const allowRaw = !shouldMuteRawAudio;
 
-  // 1) Mute explicit remote <audio>
-  document.querySelectorAll<HTMLAudioElement>("audio[data-remote]").forEach((a) => {
-    a.muted = !allowRaw;
-    a.volume = allowRaw ? 1 : 0;
-    if (allowRaw) a.play().catch(() => {});
-  });
+    document
+      .querySelectorAll<HTMLAudioElement>("audio[data-remote]")
+      .forEach((a) => {
+        a.muted = !allowRaw;
+        a.volume = allowRaw ? 1 : 0;
+        if (allowRaw) a.play().catch(() => {});
+      });
 
-  // 2) ALSO mute remote <video> (mobile sometimes routes audio here)
-  document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
-    if (v === localVideoRef.current) return;
-    v.muted = !allowRaw;
-    v.volume = allowRaw ? 1 : 0;
-    if (allowRaw) v.play().catch(() => {});
-  });
-}, [shouldMuteRawAudio, peerStreams]); // ✅ IMPORTANT: re-apply when streams/elements change
-
+    document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
+      if (v === localVideoRef.current) return;
+      v.muted = !allowRaw;
+      v.volume = allowRaw ? 1 : 0;
+      if (allowRaw) v.play().catch(() => {});
+    });
+  }, [shouldMuteRawAudio, peerStreams]);
 
   // ---- STT setup: Web Speech API -----------------------------
-  // Rebuild STT engine when:
-  // - displayName changes (labels)
-  // - speakLang changes (DEBUG)
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const w = window as any;
-    const SpeechRecognitionCtor =
-      w.SpeechRecognition || w.webkitSpeechRecognition;
+    const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
       log("speech recognition not supported");
@@ -549,7 +537,6 @@ useEffect(() => {
       return;
     }
 
-    // Tear down any previous recognition cleanly
     const prev = recognitionRef.current;
     if (prev) {
       try {
@@ -566,7 +553,6 @@ useEffect(() => {
     rec.continuous = true;
     rec.interimResults = true;
 
-    // IMPORTANT: recognition language is the language YOU speak into the mic
     rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
     rec.onstart = () => {
@@ -605,22 +591,10 @@ useEffect(() => {
         isLocal: true,
       });
 
-      if (shouldSpeakTranslated) {
-        console.log("[TTS/remote] speaking", {
-          shouldSpeakTranslated,
-          debugEnabled,
-          debugSpeakTranslated,
-          outLang,
-          translatedText,
-        });
+      // ✅ use the ref inside callbacks
+      if (shouldSpeakTranslatedRef.current) {
         speakText(translatedText, outLang, 0.9);
-      } else {
-        console.log("[TTS/remote], NOT speaking", {
-          shouldSpeakTranslated,
-          debugEnabled,
-          debugSpeakTranslated,
-        });
-      }  
+      }
 
       if (channelRef.current) {
         channelRef.current.send({
@@ -636,11 +610,7 @@ useEffect(() => {
       setSttStatus("error");
       setSttErrorMessage(event.error || "Speech recognition error.");
 
-      // If permission is denied, stop hard.
-      if (
-        event.error === "not-allowed" ||
-        event.error === "service-not-allowed"
-      ) {
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         try {
           rec.stop();
         } catch {}
@@ -648,10 +618,8 @@ useEffect(() => {
     };
 
     rec.onend = () => {
-      // 🚫 Mobile rule: DO NOT auto-restart (causes ding ding on Android)
       if (isMobile) return;
 
-      // Desktop only: can auto-restart if mic still on and supported
       if (micOnRef.current && sttStatus !== "unsupported") {
         try {
           rec.start();
@@ -678,9 +646,7 @@ useEffect(() => {
     if (micOn && sttStatus !== "unsupported") {
       try {
         rec.start();
-      } catch {
-        // start can throw if already started
-      }
+      } catch {}
     } else {
       try {
         rec.stop();
@@ -704,7 +670,6 @@ useEffect(() => {
           },
         });
 
-        // Broadcast signaling
         channel.on(
           "broadcast",
           { event: "webrtc" },
@@ -724,7 +689,6 @@ useEffect(() => {
           }
         );
 
-        // Broadcast: transcripts
         channel.on(
           "broadcast",
           { event: "transcript" },
@@ -736,10 +700,7 @@ useEffect(() => {
             if (!text || !from || from === clientId) return;
 
             const fromName =
-              name ??
-              peerLabelsRef.current[from] ??
-              from.slice(0, 8) ??
-              "Guest";
+              name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
 
             const target = targetLangRef.current || "en-US";
             const { translatedText, targetLang: outLang } = await translateText(
@@ -758,13 +719,13 @@ useEffect(() => {
               isLocal: false,
             });
 
-            if (shouldSpeakTranslated) {
+            // ✅ MUST use .current
+            if (shouldSpeakTranslatedRef.current) {
               speakText(translatedText, outLang, 0.9);
             }
           }
         );
 
-        // Hand raise
         channel.on(
           "broadcast",
           { event: "hand" },
@@ -778,7 +739,6 @@ useEffect(() => {
           }
         );
 
-        // Presence sync
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
           const others: string[] = [];
@@ -797,7 +757,7 @@ useEffect(() => {
           });
 
           log("presence sync", { othersCount: others.length, others });
-          
+
           setPeerIds(others);
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
@@ -811,17 +771,15 @@ useEffect(() => {
           });
         });
 
-        // Subscribe then track presence
         await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
           setRtStatus(status);
           log("realtime status", { status, debugEnabled });
-          
+
           if (status === "SUBSCRIBED") {
             log("subscribed to channel", { roomId, clientId });
             channel.track({ clientId, name: displayName });
           }
         });
-
 
         channelRef.current = channel;
 
@@ -887,7 +845,6 @@ useEffect(() => {
     setMicOn(next);
   };
 
- 
   const toggleHand = () => {
     const next = !myHandUp;
     setMyHandUp(next);
@@ -906,7 +863,6 @@ useEffect(() => {
     const text = textInput.trim();
     if (!text) return;
 
-    // Manual text is assumed to be your speakLang in debug; otherwise device language.
     const lang =
       (debugEnabled ? speakLangRef.current : (navigator.language as string)) ||
       "en-US";
@@ -930,20 +886,9 @@ useEffect(() => {
       isLocal: true,
     });
 
-    if (shouldSpeakTranslated) {
-      console.log("[TTS/local] speaking", {
-        shouldSpeakTranslated,
-        debugSpeakTranslated,
-        outLang,
-        translatedText,
-      });
+    // ✅ use the ref inside callbacks
+    if (shouldSpeakTranslatedRef.current) {
       speakText(translatedText, outLang, 0.9);
-    } else {
-      console.log("[TTS/local] NOT speaking", {
-        shouldSpeakTranslated,
-        debugEnabled,
-        debugSpeakTranslated,
-      });
     }
 
     if (channelRef.current) {
@@ -1026,9 +971,7 @@ useEffect(() => {
               {showCaptions && (
                 <select
                   value={captionLines}
-                  onChange={(e) =>
-                    setCaptionLines(Number(e.target.value) || 3)
-                  }
+                  onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
                   className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
                 >
                   <option value={1}>1</option>
@@ -1070,8 +1013,7 @@ useEffect(() => {
                 Test Voice
               </button>
 
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
                 <label className="text-xs">
                   <div className="text-neutral-300 mb-1">I speak (STT)</div>
                   <select
@@ -1168,17 +1110,11 @@ useEffect(() => {
                   playsInline
                   className="h-full w-full object-cover"
                   ref={(el) => {
-                    if (
-                      el &&
-                      firstRemoteStream &&
-                      el.srcObject !== firstRemoteStream
-                    ) {
+                    if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
                       el.srcObject = firstRemoteStream;
                     }
                   }}
                 />
-                {/* Keep an <audio> element to encourage autoplay plumbing,
-                    but actual audio output is controlled by track.enabled above. */}
                 <audio
                   data-remote
                   autoPlay
@@ -1192,9 +1128,7 @@ useEffect(() => {
 
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                   {handsUp[firstRemoteId] && <span>✋</span>}
-                  <span>
-                    {peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}
-                  </span>
+                  <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
                 </div>
 
                 <div className="absolute bottom-4 right-4 w-32 h-20 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg">
@@ -1301,10 +1235,7 @@ useEffect(() => {
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
-                        <span>
-                          {peerLabels[spotlightId] ??
-                            spotlightId.slice(0, 8)}
-                        </span>
+                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
                       </div>
                     </>
                   )}
@@ -1338,9 +1269,7 @@ useEffect(() => {
                         type="button"
                         onClick={() => setSpotlightId(pid)}
                         className={`relative h-20 md:h-24 aspect-video rounded-xl overflow-hidden flex-shrink-0 border ${
-                          isSpot
-                            ? "border-emerald-500"
-                            : "border-neutral-700/80"
+                          isSpot ? "border-emerald-500" : "border-neutral-700/80"
                         } bg-neutral-900`}
                       >
                         <video
@@ -1438,8 +1367,3 @@ useEffect(() => {
     </div>
   );
 }
-
-
-
-
-
