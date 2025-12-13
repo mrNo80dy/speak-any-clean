@@ -439,18 +439,43 @@ export default function RoomPage() {
 
   async function makeOffer(toId: string, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(toId, channel);
+    log("makeOffer senders (before)", {
+      to: toId,
+      senders: pc.getSenders().map((s) => ({
+        kind: s.track?.kind,
+        enabled: s.track?.enabled,
+        readyState: s.track?.readyState,
+      })),
+    });
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+
+    if (localStreamRef.current) {
+      const haveKinds = new Set(
+        pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
+      );
+
+      localStreamRef.current.getTracks().forEach((t) => {
+        if (!haveKinds.has(t.kind)) {
+          pc.addTrack(t, localStreamRef.current!);
+        }
+      });
     }
+
 
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
       offerToReceiveVideo: true,
     });
     await pc.setLocalDescription(offer);
+    log("makeOffer senders (after)", {
+      to: toId,
+      senders: pc.getSenders().map((s) => ({
+        kind: s.track?.kind,
+        enabled: s.track?.enabled,
+        readyState: s.track?.readyState,
+      })),
+    });
+
 
     channel.send({
       type: "broadcast",
@@ -470,11 +495,17 @@ export default function RoomPage() {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+    if (localStreamRef.current) {
+  const haveKinds = new Set(
+    pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
+  );
+
+  localStreamRef.current.getTracks().forEach((t) => {
+    if (!haveKinds.has(t.kind)) {
+      pc.addTrack(t, localStreamRef.current!);
     }
+  });
+}
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -516,6 +547,12 @@ export default function RoomPage() {
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
+    log("local media acquired", {
+      audioTracks: stream.getAudioTracks().length,
+      videoTracks: stream.getVideoTracks().length,
+      videoEnabled: stream.getVideoTracks()[0]?.enabled,
+    });
+
 
     const audioTrack = stream.getAudioTracks()[0];
     if (audioTrack) {
@@ -1108,6 +1145,14 @@ export default function RoomPage() {
                   {shouldSpeakTranslated ? "true" : "false"}
                 </span>
               </div>
+
+              {/* Debug logs (last 20) */}
+              <div className="mt-3 max-h-40 overflow-auto rounded-lg bg-black/50 border border-neutral-700 p-2">
+                <div className="text-[10px] text-neutral-400 mb-1">Logs</div>
+                <pre className="text-[10px] leading-snug whitespace-pre-wrap text-neutral-200">
+                  {logs.slice(0, 20).join("\n")}
+                </pre>
+              </div>
             </div>
           )}
 
@@ -1402,6 +1447,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
