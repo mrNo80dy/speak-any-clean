@@ -802,7 +802,12 @@ export default function RoomPage() {
     setMicOn(next);
   };
 
+  // Hand raise state (remote participants)
+  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
+
+  // Your own hand
   const [myHandUp, setMyHandUp] = useState(false);
+  
   const toggleHand = () => {
     const next = !myHandUp;
     setMyHandUp(next);
@@ -1331,3 +1336,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
