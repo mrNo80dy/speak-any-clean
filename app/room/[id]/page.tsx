@@ -364,13 +364,36 @@ export default function RoomPage() {
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
-    });
+  iceServers: [
+    { urls: ["stun:stun.l.google.com:19302"] },
+
+    // ✅ TURN is required for many mobile/NAT networks
+    // Put your real TURN creds here (Twilio/Nimble/Cloudflare/etc)
+    {
+      urls: [
+        "turn:YOUR_TURN_HOST:3478?transport=udp",
+        "turn:YOUR_TURN_HOST:3478?transport=tcp",
+        "turns:YOUR_TURN_HOST:5349?transport=tcp",
+      ],
+      username: "YOUR_TURN_USERNAME",
+      credential: "YOUR_TURN_PASSWORD",
+    },
+  ],
+});
+
 
     const remoteStream = new MediaStream();
 
     pc.onconnectionstatechange = () => {
-      log(`pc(${remoteId}) state: ${pc.connectionState}`);
+      pc.oniceconnectionstatechange = () => {
+        log(`ice(${remoteId}) state: ${pc.iceConnectionState}`);
+      };
+
+      pc.onicegatheringstatechange = () => {
+        log(`iceGather(${remoteId}) state: ${pc.iceGatheringState}`);
+      };
+
+        log(`pc(${remoteId}) state: ${pc.connectionState}`);
       if (pc.connectionState === "connected") setConnected(true);
 
       if (
@@ -1192,6 +1215,8 @@ export default function RoomPage() {
                   ref={(el) => {
                     if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
                       el.srcObject = firstRemoteStream;
+                      el.playsInline = true as any;
+                      el.play().catch(() => {});
                     }
                   }}
                 />
@@ -1447,6 +1472,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
