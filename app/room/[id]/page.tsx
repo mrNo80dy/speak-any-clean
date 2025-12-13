@@ -164,6 +164,8 @@ export default function RoomPage() {
   const voicesReadyRef = useRef(false);
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
+  
+  const sttStatusRef = useRef<SttStatus>("unknown");
 
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
@@ -272,6 +274,10 @@ export default function RoomPage() {
   }, [targetLang]);
 
   useEffect(() => {
+    sttStatusRef.current = sttStatus;
+  }, [sttStatus]);
+
+  useEffect(() => {
     speakLangRef.current = speakLang;
   }, [speakLang]);
 
@@ -279,6 +285,18 @@ export default function RoomPage() {
   useEffect(() => {
     shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
   }, [debugEnabled, debugSpeakTranslated]);
+
+  // Keep remote audio tracks in sync with the mute policy (prevents "stuck muted" tracks)
+  useEffect(() => {
+    const allowRaw = !shouldMuteRawAudioRef.current;
+
+    Object.values(peerStreams).forEach((stream) => {
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = allowRaw;
+    });
+  });
+}, [peerStreams, shouldMuteRawAudio]);
+
 
 
   // Voices ready tracking
@@ -628,12 +646,13 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
-      if (isMobile) return;
-
-      if (micOnRef.current && sttStatus !== "unsupported") {
-        try {
-          rec.start();
-        } catch {}
+      // Android often ends recognition after each phrase; we must restart if mic is still on
+      if (micOnRef.current && sttStatusRef.current !== "unsupported") {
+        setTimeout(() => {
+          try {
+            rec.start();
+          } catch {}
+        }, 200);
       }
     };
 
@@ -1377,4 +1396,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
