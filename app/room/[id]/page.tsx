@@ -159,6 +159,7 @@ export default function RoomPage() {
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
   const micOnRef = useRef(false);
+  const voiceOnRef = useRef(false);
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -241,6 +242,10 @@ export default function RoomPage() {
   useEffect(() => {
     targetLangRef.current = targetLang;
   }, [targetLang]);
+
+    useEffect(() => {
+    voiceOnRef.current = voiceOn;
+  }, [voiceOn]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -513,7 +518,7 @@ export default function RoomPage() {
         isLocal: true,
       });
       
-      if (voiceOn) {
+      if (voiceOnRef.current) {
         speakText(translatedText, targetLang, 0.85);
       }
 
@@ -667,7 +672,7 @@ export default function RoomPage() {
               isLocal: false,
             });
 
-            if (voiceOn) {
+            if (voiceOnRef.current) {
               speakText(translatedText, targetLang, 0.85);
             }
           }
@@ -1323,6 +1328,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
