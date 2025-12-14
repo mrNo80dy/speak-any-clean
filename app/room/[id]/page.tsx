@@ -160,9 +160,69 @@ export default function RoomPage() {
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
-  // STT control refs (IMPORTANT: only declared ONCE)
-  const sttRunningRef = useRef(false);
-  const sttStopRequestedRef = useRef(false);
+   const log = (msg: string, ...rest: any[]) => {
+    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
+      rest.length ? JSON.stringify(rest) : ""
+    }`;
+    setLogs((l) => [line, ...l].slice(0, 250));
+  };
+
+ // STT control refs (IMPORTANT: only declared ONCE)
+const sttRunningRef = useRef(false);
+const sttStopRequestedRef = useRef(false);
+
+// ✅ add these right here
+const sttRestartTimerRef = useRef<number | null>(null);
+
+const clearSttRestartTimer = () => {
+  if (sttRestartTimerRef.current) {
+    window.clearTimeout(sttRestartTimerRef.current);
+    sttRestartTimerRef.current = null;
+  }
+};
+
+const startSttNow = () => {
+  const rec = recognitionRef.current;
+  if (!rec) return;
+
+  clearSttRestartTimer();
+
+  if (sttRunningRef.current) {
+    log("stt start skipped (already running)", { lang: rec.lang });
+    return;
+  }
+
+  sttStopRequestedRef.current = false;
+
+  try {
+    rec.start();
+    log("stt start() called (gesture)", { lang: rec.lang });
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    if (msg.includes("already started")) {
+      sttRunningRef.current = true;
+      log("stt start() already running (ignored)", { lang: rec.lang });
+    } else {
+      log("stt start() FAILED", { message: msg, lang: rec.lang });
+    }
+  }
+};
+
+const stopSttNow = () => {
+  const rec = recognitionRef.current;
+  if (!rec) return;
+
+  clearSttRestartTimer();
+  sttStopRequestedRef.current = true;
+
+  try {
+    rec.stop();
+    log("stt stop() called (gesture)");
+  } catch (e: any) {
+    log("stt stop() FAILED", { message: e?.message || String(e) });
+  }
+};
+
 
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
@@ -240,12 +300,7 @@ export default function RoomPage() {
   const shouldSpeakTranslated =
     FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
 
-  const log = (msg: string, ...rest: any[]) => {
-    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
-      rest.length ? JSON.stringify(rest) : ""
-    }`;
-    setLogs((l) => [line, ...l].slice(0, 250));
-  };
+ 
 
   // helper: whenever a local <video> mounts, attach the current stream
   const attachLocalVideoRef = (el: HTMLVideoElement | null) => {
@@ -745,27 +800,28 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
-      sttRunningRef.current = false;
-      log("stt onend", { stopRequested: sttStopRequestedRef.current });
+  sttRunningRef.current = false;
+  log("stt onend", { stopRequested: sttStopRequestedRef.current });
 
-      // auto-restart only if mic still ON and we didn't request stop
-      if (
-        micOnRef.current &&
-        !sttStopRequestedRef.current &&
-        sttStatusRef.current !== "unsupported"
-      ) {
-        setTimeout(() => {
-          try {
-            if (!sttRunningRef.current) {
-              rec.start();
-              log("stt auto-restart start() called", { lang: rec.lang });
-            }
-          } catch (e: any) {
-            log("stt auto-restart FAILED", { message: e?.message || String(e) });
-          }
-        }, 250);
+  // If user did not ask to stop AND mic is still ON,
+  // schedule a restart. (Some mobiles randomly end STT.)
+  if (micOnRef.current && !sttStopRequestedRef.current) {
+    clearSttRestartTimer();
+    sttRestartTimerRef.current = window.setTimeout(() => {
+      // This restart is NOT a user gesture, but it often works on Android
+      // once the first start happened from a tap.
+      try {
+        if (!sttRunningRef.current) {
+          rec.start();
+          log("stt auto-restart start() called", { lang: rec.lang });
+        }
+      } catch (e: any) {
+        log("stt auto-restart FAILED", { message: e?.message || String(e) });
       }
-    };
+    }, 400);
+  }
+};
+
 
     recognitionRef.current = rec;
 
@@ -781,50 +837,7 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speakLang]);
 
-  // Start/stop STT when mic toggles
-  useEffect(() => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-
-    if (micOn && sttStatus !== "unsupported") {
-      if (sttRunningRef.current) {
-        log("stt start skipped (already running)", { lang: rec.lang });
-        return;
-      }
-
-      sttStopRequestedRef.current = false;
-
-      try {
-        rec.start();
-        log("stt start() called", { lang: rec.lang });
-      } catch (e: any) {
-        const msg = e?.message || String(e);
-        if (msg.includes("already started")) {
-          sttRunningRef.current = true;
-          log("stt start() already running (ignored)", { lang: rec.lang });
-        } else {
-          log("stt start() FAILED", { message: msg, lang: rec.lang });
-        }
-      }
-    } else {
-      if (!sttRunningRef.current) {
-        log("stt stop skipped (not running)");
-        sttStopRequestedRef.current = true;
-        return;
-      }
-
-      sttStopRequestedRef.current = true;
-
-      try {
-        rec.stop();
-        log("stt stop() called");
-      } catch (e: any) {
-        log("stt stop() FAILED", { message: e?.message || String(e) });
-      }
-    }
-  }, [micOn, sttStatus]);
-
-  // ---- Lifecycle: join room, wire realtime -------------------
+    // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
     if (!roomId || !clientId) return;
 
@@ -997,14 +1010,23 @@ export default function RoomPage() {
   };
 
   const toggleMic = async () => {
-    if (!localStreamRef.current) return;
-    const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (!audioTrack) return;
+  if (!localStreamRef.current) return;
+  const audioTrack = localStreamRef.current.getAudioTracks()[0];
+  if (!audioTrack) return;
 
-    const next = !audioTrack.enabled;
-    audioTrack.enabled = next;
-    setMicOn(next);
-  };
+  const next = !audioTrack.enabled;
+  audioTrack.enabled = next;
+
+  setMicOn(next);
+  micOnRef.current = next; // keep ref fresh immediately
+
+  if (next && sttStatusRef.current !== "unsupported") {
+    startSttNow();   // ✅ user gesture
+  } else {
+    stopSttNow();    // ✅ user gesture
+  }
+};
+
 
   const toggleHand = () => {
     const next = !myHandUp;
@@ -1526,3 +1548,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
