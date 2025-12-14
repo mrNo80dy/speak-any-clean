@@ -668,10 +668,6 @@ export default function RoomPage() {
           isLocal: true,
         });
 
-        if (shouldSpeakTranslatedRef.current) {
-          speakText(translatedText, outLang, 0.9);
-        }
-
         if (channelRef.current) {
           channelRef.current.send({
             type: "broadcast",
@@ -955,10 +951,7 @@ if (type === "offer" && payload.sdp) {
       isLocal: true,
     });
 
-    if (shouldSpeakTranslatedRef.current) {
-      speakText(translatedText, outLang, 0.9);
-    }
-
+   
     if (channelRef.current) {
       channelRef.current.send({
         type: "broadcast",
@@ -1444,5 +1437,6 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
+
 
 
