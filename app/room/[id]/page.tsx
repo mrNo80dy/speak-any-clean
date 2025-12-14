@@ -205,6 +205,8 @@ export default function RoomPage() {
 
   // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
+  const FINAL_AUTOSPEAK_TRANSLATED = true; // ✅ production autospeak (no ?debug needed)
+
 
   // Debug toggles (only visible in ?debug=1)
   const [debugHearRawAudio, setDebugHearRawAudio] = useState(false);
@@ -228,7 +230,9 @@ export default function RoomPage() {
 
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
-  const shouldSpeakTranslated = debugEnabled && debugSpeakTranslated;
+  const shouldSpeakTranslated =
+  FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
+
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -281,7 +285,8 @@ export default function RoomPage() {
   }, [speakLang]);
 
   useEffect(() => {
-    shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
+    shouldSpeakTranslatedRef.current =
+      FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
   }, [debugEnabled, debugSpeakTranslated]);
 
   useEffect(() => {
@@ -1439,4 +1444,5 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
+
 
