@@ -156,88 +156,30 @@ export default function RoomPage() {
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
 
-  const voicesReadyRef = useRef(false);
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
-   const log = (msg: string, ...rest: any[]) => {
-    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
-      rest.length ? JSON.stringify(rest) : ""
-    }`;
-    setLogs((l) => [line, ...l].slice(0, 250));
-  };
+  // STT control refs (IMPORTANT: only declared ONCE)
+  const sttRunningRef = useRef(false);
+  const sttStopRequestedRef = useRef(false);
 
- // STT control refs (IMPORTANT: only declared ONCE)
-const sttRunningRef = useRef(false);
-const sttStopRequestedRef = useRef(false);
-
-// ✅ add these right here
-const sttRestartTimerRef = useRef<number | null>(null);
+  const sttRestartTimerRef = useRef<number | null>(null);
   const sttRestartHistoryRef = useRef<number[]>([]); // timestamps (ms)
 
-const clearSttRestartTimer = () => {
-  if (sttRestartTimerRef.current) {
-    window.clearTimeout(sttRestartTimerRef.current);
-    sttRestartTimerRef.current = null;
-  }
-};
-
-const recordRestart = () => {
-  const now = Date.now();
-  // keep only last 6 seconds
-  sttRestartHistoryRef.current = sttRestartHistoryRef.current
-    .filter((t) => now - t < 6000);
-  sttRestartHistoryRef.current.push(now);
-};
-
-const tooManyRestarts = () => {
-  // if we restarted 4+ times in 6 seconds, stop the loop
-  return sttRestartHistoryRef.current.length >= 4;
-};
-
-
-const startSttNow = () => {
-  const rec = recognitionRef.current;
-  if (!rec) return;
-
-  clearSttRestartTimer();
-
-  if (sttRunningRef.current) {
-    log("stt start skipped (already running)", { lang: rec.lang });
-    return;
-  }
-
-  sttStopRequestedRef.current = false;
-
-  try {
-    rec.start();
-    log("stt start() called (gesture)", { lang: rec.lang });
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    if (msg.includes("already started")) {
-      sttRunningRef.current = true;
-      log("stt start() already running (ignored)", { lang: rec.lang });
-    } else {
-      log("stt start() FAILED", { message: msg, lang: rec.lang });
+  const clearSttRestartTimer = () => {
+    if (sttRestartTimerRef.current) {
+      window.clearTimeout(sttRestartTimerRef.current);
+      sttRestartTimerRef.current = null;
     }
-  }
-};
+  };
 
-const stopSttNow = () => {
-  const rec = recognitionRef.current;
-  if (!rec) return;
+  const recordRestart = () => {
+    const now = Date.now();
+    sttRestartHistoryRef.current = sttRestartHistoryRef.current.filter((t) => now - t < 6000);
+    sttRestartHistoryRef.current.push(now);
+  };
 
-  clearSttRestartTimer();
-  sttStopRequestedRef.current = true;
-
-  try {
-    rec.stop();
-    log("stt stop() called (gesture)");
-  } catch (e: any) {
-    log("stt stop() FAILED", { message: e?.message || String(e) });
-  }
-};
-
+  const tooManyRestarts = () => sttRestartHistoryRef.current.length >= 4;
 
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
@@ -286,6 +228,55 @@ const stopSttNow = () => {
   const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
+  const log = (msg: string, ...rest: any[]) => {
+    const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
+      rest.length ? JSON.stringify(rest) : ""
+    }`;
+    setLogs((l) => [line, ...l].slice(0, 250));
+  };
+
+  const startSttNow = () => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+
+    clearSttRestartTimer();
+
+    if (sttRunningRef.current) {
+      log("stt start skipped (already running)", { lang: rec.lang });
+      return;
+    }
+
+    sttStopRequestedRef.current = false;
+
+    try {
+      rec.start();
+      log("stt start() called (gesture)", { lang: rec.lang });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      if (msg.includes("already started")) {
+        sttRunningRef.current = true;
+        log("stt start() already running (ignored)", { lang: rec.lang });
+      } else {
+        log("stt start() FAILED", { message: msg, lang: rec.lang });
+      }
+    }
+  };
+
+  const stopSttNow = () => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+
+    clearSttRestartTimer();
+    sttStopRequestedRef.current = true;
+
+    try {
+      rec.stop();
+      log("stt stop() called (gesture)");
+    } catch (e: any) {
+      log("stt stop() FAILED", { message: e?.message || String(e) });
+    }
+  };
+
   // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
   const FINAL_AUTOSPEAK_TRANSLATED = true; // production autospeak
@@ -314,8 +305,6 @@ const stopSttNow = () => {
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
   const shouldSpeakTranslated =
     FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
-
- 
 
   // helper: whenever a local <video> mounts, attach the current stream
   const attachLocalVideoRef = (el: HTMLVideoElement | null) => {
@@ -379,27 +368,6 @@ const stopSttNow = () => {
     });
   }, [peerStreams, shouldMuteRawAudio]);
 
-  // Voices ready tracking
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-
-    const markReady = () => {
-      const v = synth.getVoices?.() || [];
-      if (v.length > 0) voicesReadyRef.current = true;
-    };
-
-    markReady();
-    synth.onvoiceschanged = () => markReady();
-
-    return () => {
-      try {
-        synth.onvoiceschanged = null;
-      } catch {}
-    };
-  }, []);
-
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -444,7 +412,6 @@ const stopSttNow = () => {
     const text = finalText.trim();
     if (!text) return;
 
-    // basic dedupe
     if (text === sttLastSentRef.current) return;
     sttLastSentRef.current = text;
 
@@ -452,11 +419,7 @@ const stopSttNow = () => {
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
 
-    const { translatedText, targetLang: outLang } = await translateText(
-      lang,
-      target,
-      text
-    );
+    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
 
     pushMessage({
       fromId: clientId,
@@ -752,7 +715,6 @@ const stopSttNow = () => {
     const rec = new SpeechRecognitionCtor();
     rec.continuous = true;
     rec.interimResults = true;
-
     rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
     rec.onstart = () => {
@@ -767,7 +729,6 @@ const stopSttNow = () => {
       const results = event.results;
       if (!results || results.length === 0) return;
 
-      // keep language fresh
       rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
       let sawFinal = false;
@@ -784,7 +745,6 @@ const stopSttNow = () => {
           sawFinal = true;
           sttPendingTextRef.current = "";
           clearFinalizeTimer();
-
           void sendFinalTranscript(t, rec.lang);
         }
       }
@@ -815,53 +775,52 @@ const stopSttNow = () => {
     };
 
     rec.onend = () => {
-  sttRunningRef.current = false;
-  log("stt onend", { stopRequested: sttStopRequestedRef.current });
+      sttRunningRef.current = false;
+      log("stt onend", { stopRequested: sttStopRequestedRef.current });
 
-  // If user asked to stop, do nothing.
-  if (sttStopRequestedRef.current) return;
+      if (sttStopRequestedRef.current) return;
+      if (!micOnRef.current) return;
 
-  // If mic is off, do nothing.
-  if (!micOnRef.current) return;
-
-  // Prevent infinite restart thrash on mobile Chrome
-  recordRestart();
-  if (tooManyRestarts()) {
-    sttStopRequestedRef.current = true;     // block further auto restarts
-    clearSttRestartTimer();
-    setSttStatus("error");
-    setSttErrorMessage("Live captions keeps stopping on this device. Tap Mic Off → On to restart.");
-    log("stt auto-restart disabled (too many restarts)");
-    return;
-  }
-
-  clearSttRestartTimer();
-  sttRestartTimerRef.current = window.setTimeout(() => {
-    try {
-      if (!sttRunningRef.current) {
-        rec.start();
-        log("stt auto-restart start() called", { lang: rec.lang });
+      recordRestart();
+      if (tooManyRestarts()) {
+        sttStopRequestedRef.current = true;
+        clearSttRestartTimer();
+        setSttStatus("error");
+        setSttErrorMessage(
+          "Live captions keeps stopping on this device. Tap Mic Off → On to restart."
+        );
+        log("stt auto-restart disabled (too many restarts)");
+        return;
       }
-    } catch (e: any) {
-      log("stt auto-restart FAILED", { message: e?.message || String(e) });
-    }
-  }, 500);
-};
 
-
+      clearSttRestartTimer();
+      sttRestartTimerRef.current = window.setTimeout(() => {
+        try {
+          if (!sttRunningRef.current) {
+            rec.start();
+            log("stt auto-restart start() called", { lang: rec.lang });
+          }
+        } catch (e: any) {
+          log("stt auto-restart FAILED", { message: e?.message || String(e) });
+        }
+      }, 500);
+    };
 
     recognitionRef.current = rec;
 
     return () => {
-  clearFinalizeTimer();
-  clearSttRestartTimer();
-  sttPendingTextRef.current = "";
-  try { rec.stop(); } catch {}
-  recognitionRef.current = null;
-};
+      clearFinalizeTimer();
+      clearSttRestartTimer();
+      sttPendingTextRef.current = "";
+      try {
+        rec.stop();
+      } catch {}
+      recognitionRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debugKey]);
 
-
-    // ---- Lifecycle: join room, wire realtime -------------------
+  // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
     if (!roomId || !clientId) return;
 
@@ -1034,23 +993,22 @@ const stopSttNow = () => {
   };
 
   const toggleMic = async () => {
-  if (!localStreamRef.current) return;
-  const audioTrack = localStreamRef.current.getAudioTracks()[0];
-  if (!audioTrack) return;
+    if (!localStreamRef.current) return;
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (!audioTrack) return;
 
-  const next = !audioTrack.enabled;
-  audioTrack.enabled = next;
+    const next = !audioTrack.enabled;
+    audioTrack.enabled = next;
 
-  setMicOn(next);
-  micOnRef.current = next; // keep ref fresh immediately
+    setMicOn(next);
+    micOnRef.current = next;
 
-  if (next && sttStatusRef.current !== "unsupported") {
-    startSttNow();   // ✅ user gesture
-  } else {
-    stopSttNow();    // ✅ user gesture
-  }
-};
-
+    if (next && sttStatusRef.current !== "unsupported") {
+      startSttNow(); // ✅ user gesture
+    } else {
+      stopSttNow(); // ✅ user gesture
+    }
+  };
 
   const toggleHand = () => {
     const next = !myHandUp;
@@ -1263,7 +1221,9 @@ const stopSttNow = () => {
                 Raw audio muted:{" "}
                 <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
                 · Speak translated:{" "}
-                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
+                <span className="font-mono">
+                  {shouldSpeakTranslated ? "true" : "false"}
+                </span>{" "}
                 · Connected:{" "}
                 <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
@@ -1440,7 +1400,9 @@ const stopSttNow = () => {
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
-                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
+                        <span>
+                          {peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}
+                        </span>
                       </div>
                     </>
                   )}
@@ -1572,5 +1534,3 @@ const stopSttNow = () => {
     </div>
   );
 }
-
-
