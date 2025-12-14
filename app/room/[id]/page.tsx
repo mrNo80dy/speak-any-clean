@@ -162,6 +162,10 @@ export default function RoomPage() {
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
 
+  // new
+  const sttPendingTextRef = useRef<string>("");
+  const sttFinalizeTimerRef = useRef<number | null>(null);
+  const sttLastSentRef = useRef<string>("");
 
   const micOnRef = useRef(false);
   const sttStatusRef = useRef<SttStatus>("unknown");
@@ -358,6 +362,50 @@ export default function RoomPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+
+  // ✅ STT “finalize on silence” helpers (Android fix)
+const clearFinalizeTimer = () => {
+  if (sttFinalizeTimerRef.current) {
+    window.clearTimeout(sttFinalizeTimerRef.current);
+    sttFinalizeTimerRef.current = null;
+  }
+};
+
+const sendFinalTranscript = async (finalText: string, recLang: string) => {
+  const text = finalText.trim();
+  if (!text) return;
+
+  if (text === sttLastSentRef.current) return;
+  sttLastSentRef.current = text;
+
+  const lang = recLang || "en-US";
+  const fromName = displayNameRef.current || "You";
+  const target = targetLangRef.current || "en-US";
+
+  const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+  pushMessage({
+    fromId: clientId,
+    fromName,
+    originalLang: lang,
+    translatedLang: outLang,
+    originalText: text,
+    translatedText,
+    isLocal: true,
+  });
+
+  // no local speak here (you don't want device to read back)
+
+  if (channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "transcript",
+      payload: { from: clientId, text, lang, name: fromName },
+    });
+  }
+
+  log("stt sent transcript", { lang, textLen: text.length });
+};
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -641,28 +689,49 @@ export default function RoomPage() {
       setSttErrorMessage(null);
     };
 
-    rec.onresult = async (event: any) => {
-      const results = event.results;
-      if (!results || results.length === 0) return;
+    rec.onresult = (event: any) => {
+  const results = event.results;
+  if (!results || results.length === 0) return;
 
-      for (let i = event.resultIndex ?? 0; i < results.length; i++) {
-        const r = results[i];
-        if (!r?.isFinal) continue;
+  // keep language fresh
+  rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
-        const raw = r[0]?.transcript || "";
-        const text = raw.trim();
-        if (!text) continue;
+  let sawFinal = false;
+  let newestText = "";
 
-        rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
-        const lang = rec.lang || "en-US";
-        const fromName = displayNameRef.current || "You";
+  // Read the latest chunk(s)
+  for (let i = event.resultIndex ?? 0; i < results.length; i++) {
+    const r = results[i];
+    const t = (r?.[0]?.transcript || "").trim();
+    if (!t) continue;
 
-        const target = targetLangRef.current || "en-US";
-        const { translatedText, targetLang: outLang } = await translateText(
-          lang,
-          target,
-          text
-        );
+    newestText = t;
+
+    if (r.isFinal) {
+      sawFinal = true;
+      sttPendingTextRef.current = ""; // clear pending
+      clearFinalizeTimer();
+
+      // fire and forget (don’t block recognition thread)
+      void sendFinalTranscript(t, rec.lang);
+    }
+  }
+
+  // Android Chrome: often never gives isFinal.
+  // If we got any transcript text but no final, treat it as "pending"
+  if (!sawFinal && newestText) {
+    sttPendingTextRef.current = newestText;
+    clearFinalizeTimer();
+
+    // finalize after short silence
+    sttFinalizeTimerRef.current = window.setTimeout(() => {
+      const pending = sttPendingTextRef.current.trim();
+      sttPendingTextRef.current = "";
+      if (pending) void sendFinalTranscript(pending, rec.lang);
+    }, 850);
+  }
+};
+
 
         pushMessage({
           fromId: clientId,
@@ -725,6 +794,9 @@ export default function RoomPage() {
     recognitionRef.current = rec;
 
     return () => {
+      clearFinalizeTimer();
+      sttPendingTextRef.current = "";
+      
       try {
         rec.stop();
       } catch {}
@@ -1491,6 +1563,7 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
+
 
 
 
