@@ -52,13 +52,13 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
-// 🔊 Speak text using the device voice (DEBUG ONLY)
+// -------------------- TTS (device voice) --------------------
 function speakText(text: string, lang: string, rate = 0.9) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
   if (!synth) return;
 
-  const clean = text.trim();
+  const clean = (text || "").trim();
   if (!clean) return;
 
   const doSpeak = () => {
@@ -78,10 +78,10 @@ function speakText(text: string, lang: string, rate = 0.9) {
     if (match) utterance.voice = match;
 
     utterance.onerror = (e) => console.warn("[TTS] error", e);
-
     synth.speak(utterance);
   };
 
+  // Some browsers load voices async
   const voices = synth.getVoices?.() || [];
   if (voices.length === 0) {
     setTimeout(doSpeak, 150);
@@ -89,6 +89,20 @@ function speakText(text: string, lang: string, rate = 0.9) {
   }
 
   doSpeak();
+}
+
+// Attempt to "unlock" speech on mobile after a user gesture
+function unlockTts() {
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  try {
+    // A tiny utterance after a click helps on some Android builds
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    synth.speak(u);
+    synth.cancel();
+  } catch {}
 }
 
 /**
@@ -99,7 +113,7 @@ async function translateText(
   toLang: string,
   text: string
 ): Promise<{ translatedText: string; targetLang: string }> {
-  const trimmed = text.trim();
+  const trimmed = (text || "").trim();
   if (!trimmed) return { translatedText: "", targetLang: toLang };
 
   if (fromLang === toLang) return { translatedText: trimmed, targetLang: toLang };
@@ -134,7 +148,7 @@ export default function RoomPage() {
   // ---- Debug Mode -------------------------------------------------
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
-  const debugKey = debugEnabled ? "debug" : "normal"; // forces re-init when query changes
+  const debugKey = debugEnabled ? "debug" : "normal"; // re-init when query changes
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -153,21 +167,17 @@ export default function RoomPage() {
 
   // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
+
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
 
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
-  const recognitionRef = useRef<any>(null);
 
-  const shouldSpeakTranslatedRef = useRef(false);
-  const shouldMuteRawAudioRef = useRef(true);
+  const recognitionRef = useRef<any>(null);
 
   const sttStatusRef = useRef<SttStatus>("unknown");
   const micOnRef = useRef(false);
-
-  const rebuildTimerRef = useRef<number | null>(null);
-  const rebuildingRef = useRef(false);
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
   const [rtNonce, setRtNonce] = useState(0);
@@ -176,12 +186,14 @@ export default function RoomPage() {
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
+
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
 
   const [micOn, setMicOn] = useState(false); // default muted
   const [camOn, setCamOn] = useState(true);
+
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
   // Captions / text stream
@@ -202,11 +214,11 @@ export default function RoomPage() {
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
   // ---------- FINAL vs DEBUG behavior ----------
+  // Hard requirement: raw remote audio should never play (prevents English bleed).
   const FINAL_MUTE_RAW_AUDIO = true;
 
   // Debug toggles (only visible in ?debug=1)
   const [debugHearRawAudio, setDebugHearRawAudio] = useState(false);
-  const [debugSpeakTranslated, setDebugSpeakTranslated] = useState(false);
 
   // Debug: choose what YOU speak (STT input language)
   const [speakLang, setSpeakLang] = useState<string>(
@@ -216,7 +228,7 @@ export default function RoomPage() {
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
 
-  // Debug: choose what YOU want captions shown in
+  // Choose what YOU want captions shown in (and what you want to HEAR for remote speech)
   const [targetLang, setTargetLang] = useState<string>(
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
@@ -224,18 +236,17 @@ export default function RoomPage() {
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
 
-  // effective behavior flags
-  const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
-  const shouldSpeakTranslated = debugEnabled && debugSpeakTranslated;
+  // Effective behavior flags
+  const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !(debugEnabled && debugHearRawAudio);
+
+  // ✅ AUTOSPEAK: always speak translated for REMOTE messages
+  const AUTO_SPEAK_TRANSLATED = true;
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 250));
-    // also to console for quick visibility
-    // eslint-disable-next-line no-console
-    console.log(line);
   };
 
   // helper: whenever a local <video> mounts, attach the current stream
@@ -252,11 +263,7 @@ export default function RoomPage() {
   };
 
   function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
-    const full: ChatMessage = {
-      ...msg,
-      id: crypto.randomUUID(),
-      at: Date.now(),
-    };
+    const full: ChatMessage = { ...msg, id: crypto.randomUUID(), at: Date.now() };
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
@@ -266,8 +273,8 @@ export default function RoomPage() {
   }, [micOn]);
 
   useEffect(() => {
-    shouldMuteRawAudioRef.current = shouldMuteRawAudio;
-  }, [shouldMuteRawAudio]);
+    speakLangRef.current = speakLang;
+  }, [speakLang]);
 
   useEffect(() => {
     targetLangRef.current = targetLang;
@@ -276,24 +283,6 @@ export default function RoomPage() {
   useEffect(() => {
     sttStatusRef.current = sttStatus;
   }, [sttStatus]);
-
-  useEffect(() => {
-    speakLangRef.current = speakLang;
-  }, [speakLang]);
-
-  useEffect(() => {
-    shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
-  }, [debugEnabled, debugSpeakTranslated]);
-
-  // Keep remote audio tracks in sync with the mute policy
-  useEffect(() => {
-    const allowRaw = !shouldMuteRawAudioRef.current;
-    Object.values(peerStreams).forEach((stream) => {
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = allowRaw;
-      });
-    });
-  }, [peerStreams, shouldMuteRawAudio]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -305,7 +294,6 @@ export default function RoomPage() {
   // ---- Load room code from Supabase --------------------------
   useEffect(() => {
     if (!roomId) return;
-
     (async () => {
       try {
         const { data, error } = await supabase
@@ -327,58 +315,57 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ---- Media: acquire ONCE, don’t stop on rtNonce rebuild (prevents camera flashing) ----
-  async function acquireLocalMediaOnce() {
-    if (localStreamRef.current) return localStreamRef.current;
-
-    const constraints = {
-      audio: true,
-      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-    };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    localStreamRef.current = stream;
-
-    // default mic off
-    const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = false;
-      setMicOn(false);
-    }
-
-    const videoTrack = stream.getVideoTracks()[0];
-    if (videoTrack) setCamOn(videoTrack.enabled);
-
-    if (localVideoRef.current) attachLocalVideoRef(localVideoRef.current);
-
-    log("local media acquired", {
-      audioTracks: stream.getAudioTracks().length,
-      videoTracks: stream.getVideoTracks().length,
-    });
-
-    return stream;
-  }
-
-  // Stop media ONLY on full unmount
+  // ---- Acquire local media ONCE (prevents Edge flashing on reconnect) ----
   useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        if (typeof navigator === "undefined") return;
+        if (!navigator.mediaDevices?.getUserMedia) return;
+
+        if (localStreamRef.current) return;
+
+        const constraints = {
+          audio: true,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        localStreamRef.current = stream;
+
+        // default mic off
+        const audioTrack = stream.getAudioTracks()[0];
+        if (audioTrack) audioTrack.enabled = false;
+        setMicOn(false);
+
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) setCamOn(videoTrack.enabled);
+
+        // attach if video element exists
+        if (localVideoRef.current) attachLocalVideoRef(localVideoRef.current);
+
+        log("local media acquired", {
+          audioTracks: stream.getAudioTracks().length,
+          videoTracks: stream.getVideoTracks().length,
+        });
+      } catch (err) {
+        log("local media error", { err: (err as Error).message });
+      }
+    })();
+
     return () => {
-      try {
-        if (rebuildTimerRef.current) window.clearTimeout(rebuildTimerRef.current);
-      } catch {}
-
-      try {
-        if (channelRef.current) {
-          supabase.removeChannel(channelRef.current);
-          channelRef.current = null;
-        }
-      } catch {}
-
-      try {
-        if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach((t) => t.stop());
-          localStreamRef.current = null;
-        }
-      } catch {}
+      cancelled = true;
+      // Stop tracks only on real unmount
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => t.stop());
+        localStreamRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -414,9 +401,9 @@ export default function RoomPage() {
     const existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
-    // NOTE: STUN-only for now. TURN can be added later safely once you have real creds.
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+      // If you later add TURN, add a SECOND entry here (don’t paste placeholders elsewhere).
     });
 
     const remoteStream = new MediaStream();
@@ -447,38 +434,43 @@ export default function RoomPage() {
     };
 
     pc.onicecandidate = (e) => {
-      if (!e.candidate) return;
-      channel.send({
-        type: "broadcast",
-        event: "webrtc",
-        payload: {
-          type: "ice",
-          from: clientId,
-          to: remoteId,
-          candidate: e.candidate.toJSON(),
-        },
-      });
+      if (e.candidate) {
+        channel.send({
+          type: "broadcast",
+          event: "webrtc",
+          payload: {
+            type: "ice",
+            from: clientId,
+            to: remoteId,
+            candidate: e.candidate.toJSON(),
+          },
+        });
+      }
     };
 
     pc.ontrack = (e) => {
       if (e.track?.kind === "audio") {
-        // HARD STOP raw audio unless explicitly allowed
-        e.track.enabled = !shouldMuteRawAudioRef.current;
+        // ✅ HARD STOP: never let raw remote audio play unless allowed
+        e.track.enabled = !shouldMuteRawAudio;
       }
 
       if (e.streams && e.streams[0]) {
         e.streams[0].getTracks().forEach((t) => {
-          if (!remoteStream.getTracks().find((x) => x.id === t.id)) remoteStream.addTrack(t);
+          if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
+            remoteStream.addTrack(t);
+          }
         });
       } else if (e.track) {
-        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) remoteStream.addTrack(e.track);
+        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
+          remoteStream.addTrack(e.track);
+        }
       }
 
       upsertPeerStream(remoteId, remoteStream);
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
-    // attach local tracks if we already have them
+    // Add local tracks if we have them
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
     } else {
@@ -494,7 +486,7 @@ export default function RoomPage() {
   async function makeOffer(toId: string, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(toId, channel);
 
-    // ensure tracks exist
+    // Ensure tracks are added if stream exists
     if (localStreamRef.current) {
       const haveKinds = new Set(
         pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
@@ -520,19 +512,16 @@ export default function RoomPage() {
     log("sent offer", { to: toId });
   }
 
-  async function handleOffer(
-    fromId: string,
-    sdp: RTCSessionDescriptionInit,
-    channel: RealtimeChannel
-  ) {
+  async function handleOffer(fromId: string, sdp: RTCSessionDescriptionInit, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(fromId, channel);
+
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    // ensure local tracks exist
     if (localStreamRef.current) {
       const haveKinds = new Set(
         pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
       );
+
       localStreamRef.current.getTracks().forEach((t) => {
         if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
       });
@@ -568,7 +557,7 @@ export default function RoomPage() {
     }
   }
 
-  // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
+  // ---- RAW AUDIO KILL SWITCH (element-level) ------------
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudio;
 
@@ -600,6 +589,7 @@ export default function RoomPage() {
       return;
     }
 
+    // Clean previous
     const prev = recognitionRef.current;
     if (prev) {
       try {
@@ -634,13 +624,17 @@ export default function RoomPage() {
         const text = raw.trim();
         if (!text) continue;
 
+        // Always use latest language choice
         rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
         const lang = rec.lang || "en-US";
         const fromName = displayName || "You";
 
+        log("stt final", { text, lang });
+
         const target = targetLangRef.current || "en-US";
         const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
 
+        // Show captions locally
         pushMessage({
           fromId: clientId,
           fromName,
@@ -651,16 +645,19 @@ export default function RoomPage() {
           isLocal: true,
         });
 
-        if (shouldSpeakTranslatedRef.current) {
-          speakText(translatedText, outLang, 0.9);
-        }
+        // ✅ DO NOT speak your own STT result (prevents self-echo).
+        // Only the OTHER device should speak what it receives.
 
+        // Broadcast raw text + lang
         if (channelRef.current) {
           channelRef.current.send({
             type: "broadcast",
             event: "transcript",
             payload: { from: clientId, text, lang, name: fromName },
           });
+          log("stt broadcast sent", { text, lang });
+        } else {
+          log("stt broadcast skipped (no channelRef)", {});
         }
       }
     };
@@ -669,6 +666,7 @@ export default function RoomPage() {
       log("stt error", { error: event.error });
       setSttStatus("error");
       setSttErrorMessage(event.error || "Speech recognition error.");
+
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         try {
           rec.stop();
@@ -677,6 +675,7 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
+      // Android often ends after each phrase; restart if mic still on
       if (micOnRef.current && sttStatusRef.current !== "unsupported") {
         setTimeout(() => {
           try {
@@ -716,40 +715,10 @@ export default function RoomPage() {
   // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
     if (!roomId || !clientId) return;
-
-    let cancelled = false;
-
-    const scheduleRebuild = (why: string) => {
-      if (rebuildingRef.current) return;
-      rebuildingRef.current = true;
-
-      log("rebuild scheduled", { why });
-
-      try {
-        if (rebuildTimerRef.current) window.clearTimeout(rebuildTimerRef.current);
-      } catch {}
-
-      rebuildTimerRef.current = window.setTimeout(() => {
-        rebuildingRef.current = false;
-        setRtNonce((n) => n + 1);
-      }, 400);
-    };
+    let isMounted = true;
 
     (async () => {
       try {
-        await acquireLocalMediaOnce();
-        if (cancelled) return;
-
-        // IMPORTANT: kill the previous channel safely (prevents call-stack recursion)
-        try {
-          if (channelRef.current) {
-            supabase.removeChannel(channelRef.current);
-            channelRef.current = null;
-          }
-        } catch {}
-
-        teardownPeers("before new channel");
-
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
             broadcast: { self: false },
@@ -757,24 +726,20 @@ export default function RoomPage() {
           },
         });
 
-        channel.on(
-          "broadcast",
-          { event: "webrtc" },
-          async (message: { payload: WebRTCPayload }) => {
-            const { payload } = message;
-            const { type, from, to } = payload || {};
-            if (!type || from === clientId) return;
-            if (to && to !== clientId) return;
+        channel.on("broadcast", { event: "webrtc" }, async (message: { payload: WebRTCPayload }) => {
+          const { payload } = message;
+          const { type, from, to } = payload || {};
+          if (!type || from === clientId) return;
+          if (to && to !== clientId) return;
 
-            if (type === "offer" && payload.sdp) {
-              await handleOffer(from, payload.sdp, channel);
-            } else if (type === "answer" && payload.sdp) {
-              await handleAnswer(from, payload.sdp);
-            } else if (type === "ice" && payload.candidate) {
-              await handleIce(from, payload.candidate);
-            }
+          if (type === "offer" && payload.sdp) {
+            await handleOffer(from, payload.sdp, channel);
+          } else if (type === "answer" && payload.sdp) {
+            await handleAnswer(from, payload.sdp);
+          } else if (type === "ice" && payload.candidate) {
+            await handleIce(from, payload.candidate);
           }
-        );
+        });
 
         channel.on(
           "broadcast",
@@ -791,6 +756,7 @@ export default function RoomPage() {
             const target = targetLangRef.current || "en-US";
             const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
 
+            // Show captions
             pushMessage({
               fromId: from,
               fromName,
@@ -801,23 +767,24 @@ export default function RoomPage() {
               isLocal: false,
             });
 
-            if (shouldSpeakTranslatedRef.current) {
-              speakText(translatedText, outLang, 0.9);
+            // ✅ AUTOSPEAK: remote messages only
+            if (AUTO_SPEAK_TRANSLATED) {
+              // Speak only if translation target differs OR you want always for remote
+              const shouldSpeak = (outLang || "en-US") !== (lang || "en-US") || true;
+              if (shouldSpeak) {
+                speakText(translatedText, outLang, 0.9);
+              }
             }
           }
         );
 
-        channel.on(
-          "broadcast",
-          { event: "hand" },
-          (message: { payload: { from: string; up: boolean } }) => {
-            const { payload } = message;
-            if (!payload) return;
-            const { from, up } = payload;
-            if (!from || from === clientId) return;
-            setHandsUp((prev) => ({ ...prev, [from]: up }));
-          }
-        );
+        channel.on("broadcast", { event: "hand" }, (message: { payload: { from: string; up: boolean } }) => {
+          const { payload } = message;
+          if (!payload) return;
+          const { from, up } = payload;
+          if (!from || from === clientId) return;
+          setHandsUp((prev) => ({ ...prev, [from]: up }));
+        });
 
         channel.on("presence", { event: "sync" }, () => {
           const state = channel.presenceState() as Record<string, any[]>;
@@ -833,6 +800,8 @@ export default function RoomPage() {
             });
           });
 
+          log("presence sync", { othersCount: others.length, others });
+
           setPeerIds(others);
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
@@ -846,34 +815,49 @@ export default function RoomPage() {
 
         channel.subscribe((status: RealtimeSubscribeStatus) => {
           setRtStatus(status);
-          log("realtime status", { status, debugEnabled });
+          log("realtime status", { status });
 
           if (status === "SUBSCRIBED") {
+            log("subscribed to channel", { roomId, clientId });
             channel.track({ clientId, name: displayName });
             return;
           }
 
+          // DO NOT untrack/unsubscribe inside this callback.
           if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-            scheduleRebuild(status);
+            log("realtime died; scheduling rebuild", { status });
+            setTimeout(() => setRtNonce((n) => n + 1), 250);
           }
         });
 
         channelRef.current = channel;
+
+        const cleanup = () => {
+          try {
+            if (channelRef.current) {
+              channelRef.current.untrack();
+              channelRef.current.unsubscribe();
+              channelRef.current = null;
+            }
+          } catch {}
+        };
+
+        if (!isMounted) cleanup();
       } catch (err) {
         log("init error", { err: (err as Error).message });
       }
     })();
 
     return () => {
-      cancelled = true;
+      isMounted = false;
+
       teardownPeers("effect cleanup");
 
-      // DO NOT stop media tracks here (prevents Edge camera flashing)
-      // DO NOT call untrack/unsubscribe here (prevents stack overflow)
-      // removeChannel is safe, but we already remove on next init; keep cleanup minimal
+      // IMPORTANT: do NOT stop local media here (prevents camera flashing on reconnect)
       try {
         if (channelRef.current) {
-          supabase.removeChannel(channelRef.current);
+          channelRef.current.untrack();
+          channelRef.current.unsubscribe();
           channelRef.current = null;
         }
       } catch {}
@@ -883,6 +867,7 @@ export default function RoomPage() {
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
+    unlockTts();
     if (!localStreamRef.current) return;
     const videoTrack = localStreamRef.current.getVideoTracks()[0];
     if (!videoTrack) return;
@@ -892,6 +877,7 @@ export default function RoomPage() {
   };
 
   const toggleMic = async () => {
+    unlockTts();
     if (!localStreamRef.current) return;
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
     if (!audioTrack) return;
@@ -916,6 +902,8 @@ export default function RoomPage() {
   // Manual text caption submit
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    unlockTts();
+
     const text = textInput.trim();
     if (!text) return;
 
@@ -935,9 +923,7 @@ export default function RoomPage() {
       isLocal: true,
     });
 
-    if (shouldSpeakTranslatedRef.current) {
-      speakText(translatedText, outLang, 0.9);
-    }
+    // Do not speak your own message; the receiver will speak it.
 
     if (channelRef.current) {
       channelRef.current.send({
@@ -1055,7 +1041,10 @@ export default function RoomPage() {
 
               <button
                 type="button"
-                onClick={() => speakText("Teste de voz", "pt-BR", 0.95)}
+                onClick={() => {
+                  unlockTts();
+                  speakText("Teste de voz", "pt-BR", 0.95);
+                }}
                 className="px-3 py-2 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
               >
                 Test Voice
@@ -1093,16 +1082,7 @@ export default function RoomPage() {
                       checked={debugHearRawAudio}
                       onChange={(e) => setDebugHearRawAudio(e.target.checked)}
                     />
-                    <span className="text-neutral-200">Hear raw audio</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={debugSpeakTranslated}
-                      onChange={(e) => setDebugSpeakTranslated(e.target.checked)}
-                    />
-                    <span className="text-neutral-200">Speak translated</span>
+                    <span className="text-neutral-200">Hear raw audio (debug only)</span>
                   </label>
 
                   <div className="text-[10px] text-neutral-400">
@@ -1114,8 +1094,8 @@ export default function RoomPage() {
               <div className="mt-2 text-[10px] text-neutral-400">
                 Raw audio muted:{" "}
                 <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
-                · Speak translated:{" "}
-                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
+                · Auto-speak remote translations:{" "}
+                <span className="font-mono">{AUTO_SPEAK_TRANSLATED ? "true" : "false"}</span>{" "}
                 · Connected: <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
 
@@ -1174,6 +1154,7 @@ export default function RoomPage() {
                     if (el.srcObject !== stream) el.srcObject = stream;
                   }}
                 />
+
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                   {handsUp[firstRemoteId] && <span>✋</span>}
                   <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
@@ -1251,9 +1232,7 @@ export default function RoomPage() {
                         className="h-full w-full object-cover"
                         ref={(el) => {
                           const stream = peerStreams[spotlightId];
-                          if (el && stream && el.srcObject !== stream) {
-                            el.srcObject = stream;
-                          }
+                          if (el && stream && el.srcObject !== stream) el.srcObject = stream;
                         }}
                       />
                       <audio
@@ -1305,9 +1284,7 @@ export default function RoomPage() {
                           className="h-full w-full object-cover"
                           ref={(el) => {
                             const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
+                            if (el && stream && el.srcObject !== stream) el.srcObject = stream;
                           }}
                         />
                         <audio
