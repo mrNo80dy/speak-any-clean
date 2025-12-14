@@ -268,6 +268,7 @@ export default function RoomPage() {
 
     clearSttRestartTimer();
     sttStopRequestedRef.current = true;
+    sttRunningRef.current = false;
 
     try {
       rec.stop();
@@ -740,6 +741,7 @@ export default function RoomPage() {
         if (!t) continue;
 
         newestText = t;
+        log("stt partial", { t });
 
         if (r.isFinal) {
           sawFinal = true;
@@ -778,7 +780,11 @@ export default function RoomPage() {
       sttRunningRef.current = false;
       log("stt onend", { stopRequested: sttStopRequestedRef.current });
 
-      if (sttStopRequestedRef.current) return;
+      if (sttStopRequestedRef.current) {
+  log("stt onend: stop requested, not restarting");
+  return;
+}
+
       if (!micOnRef.current) return;
 
       recordRestart();
@@ -855,6 +861,7 @@ export default function RoomPage() {
           if (!payload) return;
 
           const { type, from, to } = payload;
+          log("rx transcript", { from, lang, textLen: (text || "").length });
           if (!type) return;
           if (!from) return;
           if (from === clientId) return;
@@ -1534,3 +1541,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
