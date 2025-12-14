@@ -861,7 +861,7 @@ export default function RoomPage() {
           if (!payload) return;
 
           const { type, from, to } = payload;
-          log("rx transcript", { from, lang, textLen: (text || "").length });
+          log("rx transcript", { type, from, to });
           if (!type) return;
           if (!from) return;
           if (from === clientId) return;
@@ -881,6 +881,8 @@ export default function RoomPage() {
           if (!payload) return;
 
           const { from, text, lang, name } = payload;
+          log("rx transcript", { from, lang, textLen: (text || "").length });
+
           if (!text || !from || from === clientId) return;
 
           const fromName =
@@ -1541,4 +1543,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
