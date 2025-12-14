@@ -383,8 +383,8 @@ export default function RoomPage() {
     if (existing) return existing;
 
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: ["stun:stun.l.google.com:19302"] },
+      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    });
 
         // ✅ TURN is required for many mobile/NAT networks
         // Put your real TURN creds here (Twilio/Nimble/Cloudflare/etc)
@@ -884,33 +884,24 @@ export default function RoomPage() {
           });
         });
 
-        await channel.subscribe(async (status: RealtimeSubscribeStatus) => {
+        channel.subscribe((status: RealtimeSubscribeStatus) => {
           setRtStatus(status);
           log("realtime status", { status, debugEnabled });
 
-          if (status === "SUBSCRIBED") {
-            log("subscribed to channel", { roomId, clientId });
-            channel.track({ clientId, name: displayName });
-            return;
-          }
+  if (status === "SUBSCRIBED") {
+    log("subscribed to channel", { roomId, clientId });
+    channel.track({ clientId, name: displayName });
+    return;
+  }
 
-          // ✅ If realtime dies, rebuild everything (peers + channel)
-          if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-            log("realtime died; rebuilding", { status });
+  // IMPORTANT: do NOT untrack/unsubscribe inside this callback.
+  // It can recursively trigger and blow the stack.
+  if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
+    log("realtime died; scheduling rebuild", { status });
+    setTimeout(() => setRtNonce((n) => n + 1), 250);
+  }
+});
 
-            teardownPeers(`realtime:${status}`);
-
-            try {
-              channel.untrack();
-              channel.unsubscribe();
-            } catch {}
-
-            // trigger full effect rerun
-            setTimeout(() => {
-              setRtNonce((n) => n + 1);
-            }, 250);
-          }
-        });
 
         channelRef.current = channel;
 
@@ -1311,6 +1302,8 @@ export default function RoomPage() {
                         const stream = peerStreams[pid];
                         if (el && stream && el.srcObject !== stream) {
                           el.srcObject = stream;
+                          el.playsInline = true as any;
+                          el.play().catch(() => {});
                         }
                       }}
                     />
@@ -1504,3 +1497,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
