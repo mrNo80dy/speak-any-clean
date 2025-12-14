@@ -58,11 +58,11 @@ export const LESSONS: Lesson[] = [
         "texts": {
           "en-US": "Excuse me, where is the bathroom?",
           "pt-BR": "Com licença, onde fica o banheiro?",
-          "es-ES": "Disculpe, ¿dónde está el baño?",
-          "es-MX": "Disculpe, ¿dónde está el baño?",
+          "es-ES": "Disculpa, ¿dónde está el baño?",
+          "es-MX": "Disculpa, ¿dónde está el baño?",
           "fr-FR": "Excusez-moi, où sont les toilettes?",
           "de-DE": "Entschuldigung, wo ist die Toilette?",
-          "it-IT": "Scusi, dove si trova il bagno?"
+          "it-IT": "Scusa, dove si trova il bagno?"
         }
       },
       {
