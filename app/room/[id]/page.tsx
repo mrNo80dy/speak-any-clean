@@ -173,6 +173,7 @@ const sttStopRequestedRef = useRef(false);
 
 // ✅ add these right here
 const sttRestartTimerRef = useRef<number | null>(null);
+  const sttRestartHistoryRef = useRef<number[]>([]); // timestamps (ms)
 
 const clearSttRestartTimer = () => {
   if (sttRestartTimerRef.current) {
@@ -180,6 +181,20 @@ const clearSttRestartTimer = () => {
     sttRestartTimerRef.current = null;
   }
 };
+
+const recordRestart = () => {
+  const now = Date.now();
+  // keep only last 6 seconds
+  sttRestartHistoryRef.current = sttRestartHistoryRef.current
+    .filter((t) => now - t < 6000);
+  sttRestartHistoryRef.current.push(now);
+};
+
+const tooManyRestarts = () => {
+  // if we restarted 4+ times in 6 seconds, stop the loop
+  return sttRestartHistoryRef.current.length >= 4;
+};
+
 
 const startSttNow = () => {
   const rec = recognitionRef.current;
@@ -803,39 +818,48 @@ const stopSttNow = () => {
   sttRunningRef.current = false;
   log("stt onend", { stopRequested: sttStopRequestedRef.current });
 
-  // If user did not ask to stop AND mic is still ON,
-  // schedule a restart. (Some mobiles randomly end STT.)
-  if (micOnRef.current && !sttStopRequestedRef.current) {
+  // If user asked to stop, do nothing.
+  if (sttStopRequestedRef.current) return;
+
+  // If mic is off, do nothing.
+  if (!micOnRef.current) return;
+
+  // Prevent infinite restart thrash on mobile Chrome
+  recordRestart();
+  if (tooManyRestarts()) {
+    sttStopRequestedRef.current = true;     // block further auto restarts
     clearSttRestartTimer();
-    sttRestartTimerRef.current = window.setTimeout(() => {
-      // This restart is NOT a user gesture, but it often works on Android
-      // once the first start happened from a tap.
-      try {
-        if (!sttRunningRef.current) {
-          rec.start();
-          log("stt auto-restart start() called", { lang: rec.lang });
-        }
-      } catch (e: any) {
-        log("stt auto-restart FAILED", { message: e?.message || String(e) });
-      }
-    }, 400);
+    setSttStatus("error");
+    setSttErrorMessage("Live captions keeps stopping on this device. Tap Mic Off → On to restart.");
+    log("stt auto-restart disabled (too many restarts)");
+    return;
   }
+
+  clearSttRestartTimer();
+  sttRestartTimerRef.current = window.setTimeout(() => {
+    try {
+      if (!sttRunningRef.current) {
+        rec.start();
+        log("stt auto-restart start() called", { lang: rec.lang });
+      }
+    } catch (e: any) {
+      log("stt auto-restart FAILED", { message: e?.message || String(e) });
+    }
+  }, 500);
 };
+
 
 
     recognitionRef.current = rec;
 
     return () => {
-      clearFinalizeTimer();
-      sttPendingTextRef.current = "";
+  clearFinalizeTimer();
+  clearSttRestartTimer();
+  sttPendingTextRef.current = "";
+  try { rec.stop(); } catch {}
+  recognitionRef.current = null;
+};
 
-      try {
-        rec.stop();
-      } catch {}
-      recognitionRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speakLang]);
 
     // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
@@ -1548,4 +1572,5 @@ const stopSttNow = () => {
     </div>
   );
 }
+
 
