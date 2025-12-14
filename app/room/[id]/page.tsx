@@ -631,9 +631,10 @@ export default function RoomPage() {
     rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
     rec.onstart = () => {
-      setSttStatus("ok");
-      setSttErrorMessage(null);
-    };
+  log("stt onstart", { lang: rec.lang });
+  setSttStatus("ok");
+  setSttErrorMessage(null);
+};
 
     rec.onresult = async (event: any) => {
       const results = event.results;
@@ -716,16 +717,28 @@ export default function RoomPage() {
     const rec = recognitionRef.current;
     if (!rec) return;
 
-    if (micOn && sttStatus !== "unsupported") {
-      try {
-        rec.start();
-      } catch {}
-    } else {
-      try {
-        rec.stop();
-      } catch {}
-    }
-  }, [micOn, sttStatus]);
+   if (micOn && sttStatus !== "unsupported") {
+  try {
+    rec.start();
+    log("stt start() called", { lang: rec.lang });
+  } catch (e: any) {
+    log("stt start() FAILED", {
+      message: e?.message || String(e),
+      lang: rec.lang,
+    });
+  }
+} else {
+  try {
+    rec.stop();
+    log("stt stop() called");
+  } catch (e: any) {
+    log("stt stop() FAILED", {
+      message: e?.message || String(e),
+    });
+  }
+}
+}, [micOn, sttStatus]);
+
 
   // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
@@ -1437,6 +1450,7 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
+
 
 
 
