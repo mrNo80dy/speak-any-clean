@@ -168,7 +168,7 @@ export default function RoomPage() {
   const sttStatusRef = useRef<SttStatus>("unknown");
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
-  const [rtNonce, setRtNonce] = useState(0); // ✅ used to force a full rebuild if realtime dies
+  const [rtNonce, setRtNonce] = useState(0); // forces a full rebuild if realtime dies
 
   const micOnRef = useRef(false);
 
@@ -227,8 +227,6 @@ export default function RoomPage() {
 
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
-
-  // state value is fine for UI display, but CALLBACKS should read the ref:
   const shouldSpeakTranslated = debugEnabled && debugSpeakTranslated;
 
   const log = (msg: string, ...rest: any[]) => {
@@ -260,7 +258,7 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
-  // ---- keep refs updated (NO nested hooks) -------------------
+  // ---- keep refs updated -------------------
   useEffect(() => {
     micOnRef.current = micOn;
   }, [micOn]);
@@ -281,7 +279,7 @@ export default function RoomPage() {
     speakLangRef.current = speakLang;
   }, [speakLang]);
 
-  // ✅ THIS is the missing piece that makes speaking work again
+  // ✅ critical: callbacks must read .current
   useEffect(() => {
     shouldSpeakTranslatedRef.current = debugEnabled && debugSpeakTranslated;
   }, [debugEnabled, debugSpeakTranslated]);
@@ -289,7 +287,6 @@ export default function RoomPage() {
   // Keep remote audio tracks in sync with the mute policy (prevents "stuck muted" tracks)
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudioRef.current;
-
     Object.values(peerStreams).forEach((stream) => {
       stream.getAudioTracks().forEach((track) => {
         track.enabled = allowRaw;
@@ -352,7 +349,7 @@ export default function RoomPage() {
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
-    // ✅ force a new object each time so effects re-run when tracks are added
+    // force new object so effects re-run when tracks are added
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
   }
 
@@ -379,30 +376,17 @@ export default function RoomPage() {
   }
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
-    let existing = peersRef.current.get(remoteId);
+    const existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
+    // ✅ Keep this simple + valid. TURN can be added later safely.
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
 
-        // ✅ TURN is required for many mobile/NAT networks
-        // Put your real TURN creds here (Twilio/Nimble/Cloudflare/etc)
-        {
-          urls: [
-            "turn:YOUR_TURN_HOST:3478?transport=udp",
-            "turn:YOUR_TURN_HOST:3478?transport=tcp",
-            "turns:YOUR_TURN_HOST:5349?transport=tcp",
-          ],
-          username: "YOUR_TURN_USERNAME",
-          credential: "YOUR_TURN_PASSWORD",
-        },
-      ],
-    });
-
     const remoteStream = new MediaStream();
 
-    // ✅ set these ONCE (not inside another handler)
+    // set these ONCE
     pc.oniceconnectionstatechange = () => {
       log(`ice(${remoteId}) state: ${pc.iceConnectionState}`);
     };
@@ -429,22 +413,21 @@ export default function RoomPage() {
     };
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        channel.send({
-          type: "broadcast",
-          event: "webrtc",
-          payload: {
-            type: "ice",
-            from: clientId,
-            to: remoteId,
-            candidate: e.candidate.toJSON(),
-          },
-        });
-      }
+      if (!e.candidate) return;
+      channel.send({
+        type: "broadcast",
+        event: "webrtc",
+        payload: {
+          type: "ice",
+          from: clientId,
+          to: remoteId,
+          candidate: e.candidate.toJSON(),
+        },
+      });
     };
 
     pc.ontrack = (e) => {
-      // ✅ HARD STOP: never let raw remote audio play unless explicitly allowed
+      // HARD STOP: never let raw remote audio play unless explicitly allowed
       if (e.track?.kind === "audio") {
         e.track.enabled = !shouldMuteRawAudioRef.current;
       }
@@ -466,7 +449,9 @@ export default function RoomPage() {
     };
 
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      localStreamRef.current.getTracks().forEach((t) =>
+        pc.addTrack(t, localStreamRef.current!)
+      );
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
@@ -668,7 +653,6 @@ export default function RoomPage() {
       const results = event.results;
       if (!results || results.length === 0) return;
 
-      // Process any final results from this event (Android often finalizes a non-last index)
       for (let i = event.resultIndex ?? 0; i < results.length; i++) {
         const r = results[i];
         if (!r?.isFinal) continue;
@@ -677,7 +661,6 @@ export default function RoomPage() {
         const text = raw.trim();
         if (!text) continue;
 
-        // Always use latest language choice
         rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
         const lang = rec.lang || "en-US";
         const fromName = displayName || "You";
@@ -731,7 +714,7 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
-      // Android often ends recognition after each phrase; we must restart if mic is still on
+      // Android often ends recognition after each phrase; restart if mic still on
       if (micOnRef.current && sttStatusRef.current !== "unsupported") {
         setTimeout(() => {
           try {
@@ -884,38 +867,35 @@ export default function RoomPage() {
           });
         });
 
-        channel.subscribe((status: RealtimeSubscribeStatus) => {
+        await channel.subscribe((status: RealtimeSubscribeStatus) => {
           setRtStatus(status);
           log("realtime status", { status, debugEnabled });
 
-  if (status === "SUBSCRIBED") {
-    log("subscribed to channel", { roomId, clientId });
-    channel.track({ clientId, name: displayName });
-    return;
-  }
+          if (status === "SUBSCRIBED") {
+            log("subscribed to channel", { roomId, clientId });
+            channel.track({ clientId, name: displayName });
+            return;
+          }
 
-  // IMPORTANT: do NOT untrack/unsubscribe inside this callback.
-  // It can recursively trigger and blow the stack.
-  if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-    log("realtime died; scheduling rebuild", { status });
-    setTimeout(() => setRtNonce((n) => n + 1), 250);
-  }
-});
-
+          // IMPORTANT: do NOT untrack/unsubscribe inside this callback.
+          if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
+            log("realtime died; scheduling rebuild", { status });
+            setTimeout(() => setRtNonce((n) => n + 1), 250);
+          }
+        });
 
         channelRef.current = channel;
 
-        const cleanup = () => {
+        // if we got unmounted while initializing, cleanup immediately
+        if (!isMounted) {
           try {
-            if (channelRef.current) {
-              channelRef.current.untrack();
-              channelRef.current.unsubscribe();
-              channelRef.current = null;
-            }
+            channel.untrack();
           } catch {}
-        };
-
-        if (!isMounted) cleanup();
+          try {
+            channel.unsubscribe();
+          } catch {}
+          channelRef.current = null;
+        }
       } catch (err) {
         log("init error", { err: (err as Error).message });
       }
@@ -1497,4 +1477,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
