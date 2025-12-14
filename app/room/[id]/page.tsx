@@ -159,17 +159,18 @@ export default function RoomPage() {
   const voicesReadyRef = useRef(false);
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
+
+  // STT control refs (IMPORTANT: only declared ONCE)
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
 
-  // new
+  // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
   const sttLastSentRef = useRef<string>("");
 
   const micOnRef = useRef(false);
   const sttStatusRef = useRef<SttStatus>("unknown");
-
   const displayNameRef = useRef<string>("You");
 
   const rebuildTimerRef = useRef<number | null>(null);
@@ -212,8 +213,7 @@ export default function RoomPage() {
 
   // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
-  const FINAL_AUTOSPEAK_TRANSLATED = true; // ✅ production autospeak (no ?debug needed)
-
+  const FINAL_AUTOSPEAK_TRANSLATED = true; // production autospeak
 
   // Debug toggles (only visible in ?debug=1)
   const [debugHearRawAudio, setDebugHearRawAudio] = useState(false);
@@ -238,8 +238,7 @@ export default function RoomPage() {
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
   const shouldSpeakTranslated =
-  FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
-
+    FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -364,48 +363,53 @@ export default function RoomPage() {
   }, [roomId]);
 
   // ✅ STT “finalize on silence” helpers (Android fix)
-const clearFinalizeTimer = () => {
-  if (sttFinalizeTimerRef.current) {
-    window.clearTimeout(sttFinalizeTimerRef.current);
-    sttFinalizeTimerRef.current = null;
-  }
-};
+  const clearFinalizeTimer = () => {
+    if (sttFinalizeTimerRef.current) {
+      window.clearTimeout(sttFinalizeTimerRef.current);
+      sttFinalizeTimerRef.current = null;
+    }
+  };
 
-const sendFinalTranscript = async (finalText: string, recLang: string) => {
-  const text = finalText.trim();
-  if (!text) return;
+  const sendFinalTranscript = async (finalText: string, recLang: string) => {
+    const text = finalText.trim();
+    if (!text) return;
 
-  if (text === sttLastSentRef.current) return;
-  sttLastSentRef.current = text;
+    // basic dedupe
+    if (text === sttLastSentRef.current) return;
+    sttLastSentRef.current = text;
 
-  const lang = recLang || "en-US";
-  const fromName = displayNameRef.current || "You";
-  const target = targetLangRef.current || "en-US";
+    const lang = recLang || "en-US";
+    const fromName = displayNameRef.current || "You";
+    const target = targetLangRef.current || "en-US";
 
-  const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+    const { translatedText, targetLang: outLang } = await translateText(
+      lang,
+      target,
+      text
+    );
 
-  pushMessage({
-    fromId: clientId,
-    fromName,
-    originalLang: lang,
-    translatedLang: outLang,
-    originalText: text,
-    translatedText,
-    isLocal: true,
-  });
-
-  // no local speak here (you don't want device to read back)
-
-  if (channelRef.current) {
-    channelRef.current.send({
-      type: "broadcast",
-      event: "transcript",
-      payload: { from: clientId, text, lang, name: fromName },
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: outLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
     });
-  }
 
-  log("stt sent transcript", { lang, textLen: text.length });
-};
+    // IMPORTANT: no local speak (you never wanted device read-back)
+
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
+      });
+    }
+
+    log("stt sent transcript", { lang, textLen: text.length });
+  };
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -690,66 +694,41 @@ const sendFinalTranscript = async (finalText: string, recLang: string) => {
     };
 
     rec.onresult = (event: any) => {
-  const results = event.results;
-  if (!results || results.length === 0) return;
+      const results = event.results;
+      if (!results || results.length === 0) return;
 
-  // keep language fresh
-  rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
+      // keep language fresh
+      rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
-  let sawFinal = false;
-  let newestText = "";
+      let sawFinal = false;
+      let newestText = "";
 
-  // Read the latest chunk(s)
-  for (let i = event.resultIndex ?? 0; i < results.length; i++) {
-    const r = results[i];
-    const t = (r?.[0]?.transcript || "").trim();
-    if (!t) continue;
+      for (let i = event.resultIndex ?? 0; i < results.length; i++) {
+        const r = results[i];
+        const t = (r?.[0]?.transcript || "").trim();
+        if (!t) continue;
 
-    newestText = t;
+        newestText = t;
 
-    if (r.isFinal) {
-      sawFinal = true;
-      sttPendingTextRef.current = ""; // clear pending
-      clearFinalizeTimer();
+        if (r.isFinal) {
+          sawFinal = true;
+          sttPendingTextRef.current = "";
+          clearFinalizeTimer();
 
-      // fire and forget (don’t block recognition thread)
-      void sendFinalTranscript(t, rec.lang);
-    }
-  }
-
-  // Android Chrome: often never gives isFinal.
-  // If we got any transcript text but no final, treat it as "pending"
-  if (!sawFinal && newestText) {
-    sttPendingTextRef.current = newestText;
-    clearFinalizeTimer();
-
-    // finalize after short silence
-    sttFinalizeTimerRef.current = window.setTimeout(() => {
-      const pending = sttPendingTextRef.current.trim();
-      sttPendingTextRef.current = "";
-      if (pending) void sendFinalTranscript(pending, rec.lang);
-    }, 850);
-  }
-};
-
-
-        pushMessage({
-          fromId: clientId,
-          fromName,
-          originalLang: lang,
-          translatedLang: outLang,
-          originalText: text,
-          translatedText,
-          isLocal: true,
-        });
-
-        if (channelRef.current) {
-          channelRef.current.send({
-            type: "broadcast",
-            event: "transcript",
-            payload: { from: clientId, text, lang, name: fromName },
-          });
+          void sendFinalTranscript(t, rec.lang);
         }
+      }
+
+      // Android Chrome: often never gives isFinal
+      if (!sawFinal && newestText) {
+        sttPendingTextRef.current = newestText;
+        clearFinalizeTimer();
+
+        sttFinalizeTimerRef.current = window.setTimeout(() => {
+          const pending = sttPendingTextRef.current.trim();
+          sttPendingTextRef.current = "";
+          if (pending) void sendFinalTranscript(pending, rec.lang);
+        }, 850);
       }
     };
 
@@ -766,92 +745,84 @@ const sendFinalTranscript = async (finalText: string, recLang: string) => {
     };
 
     rec.onend = () => {
-  sttRunningRef.current = false;
-  log("stt onend", { stopRequested: sttStopRequestedRef.current });
+      sttRunningRef.current = false;
+      log("stt onend", { stopRequested: sttStopRequestedRef.current });
 
-  // Only auto-restart if:
-  // - mic is still ON
-  // - we did NOT intentionally request stop()
-  // - and STT is supported
-  if (
-    micOnRef.current &&
-    !sttStopRequestedRef.current &&
-    sttStatusRef.current !== "unsupported"
-  ) {
-    setTimeout(() => {
-      try {
-        if (!sttRunningRef.current) {
-          rec.start();
-          log("stt auto-restart start() called", { lang: rec.lang });
-        }
-      } catch (e: any) {
-        log("stt auto-restart FAILED", { message: e?.message || String(e) });
+      // auto-restart only if mic still ON and we didn't request stop
+      if (
+        micOnRef.current &&
+        !sttStopRequestedRef.current &&
+        sttStatusRef.current !== "unsupported"
+      ) {
+        setTimeout(() => {
+          try {
+            if (!sttRunningRef.current) {
+              rec.start();
+              log("stt auto-restart start() called", { lang: rec.lang });
+            }
+          } catch (e: any) {
+            log("stt auto-restart FAILED", { message: e?.message || String(e) });
+          }
+        }, 250);
       }
-    }, 250);
-  }
-};
+    };
 
     recognitionRef.current = rec;
 
     return () => {
       clearFinalizeTimer();
       sttPendingTextRef.current = "";
-      
+
       try {
         rec.stop();
       } catch {}
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speakLang]); // <- do NOT depend on displayName
+  }, [speakLang]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
-  const rec = recognitionRef.current;
-  if (!rec) return;
+    const rec = recognitionRef.current;
+    if (!rec) return;
 
-  if (micOn && sttStatus !== "unsupported") {
-    // Don’t double-start
-    if (sttRunningRef.current) {
-      log("stt start skipped (already running)", { lang: rec.lang });
-      return;
-    }
+    if (micOn && sttStatus !== "unsupported") {
+      if (sttRunningRef.current) {
+        log("stt start skipped (already running)", { lang: rec.lang });
+        return;
+      }
 
-    sttStopRequestedRef.current = false;
+      sttStopRequestedRef.current = false;
 
-    try {
-      rec.start();
-      log("stt start() called", { lang: rec.lang });
-    } catch (e: any) {
-      // If it says “already started”, treat it as running and move on.
-      const msg = e?.message || String(e);
-      if (msg.includes("already started")) {
-        sttRunningRef.current = true;
-        log("stt start() already running (ignored)", { lang: rec.lang });
-      } else {
-        log("stt start() FAILED", { message: msg, lang: rec.lang });
+      try {
+        rec.start();
+        log("stt start() called", { lang: rec.lang });
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        if (msg.includes("already started")) {
+          sttRunningRef.current = true;
+          log("stt start() already running (ignored)", { lang: rec.lang });
+        } else {
+          log("stt start() FAILED", { message: msg, lang: rec.lang });
+        }
+      }
+    } else {
+      if (!sttRunningRef.current) {
+        log("stt stop skipped (not running)");
+        sttStopRequestedRef.current = true;
+        return;
+      }
+
+      sttStopRequestedRef.current = true;
+
+      try {
+        rec.stop();
+        log("stt stop() called");
+      } catch (e: any) {
+        log("stt stop() FAILED", { message: e?.message || String(e) });
       }
     }
-  } else {
-    // Don’t double-stop
-    if (!sttRunningRef.current) {
-      log("stt stop skipped (not running)");
-      sttStopRequestedRef.current = true;
-      return;
-    }
-
-    sttStopRequestedRef.current = true;
-
-    try {
-      rec.stop();
-      log("stt stop() called");
-    } catch (e: any) {
-      log("stt stop() FAILED", { message: e?.message || String(e) });
-    }
-  }
-}, [micOn, sttStatus]);
-
-
+  }, [micOn, sttStatus]);
 
   // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
@@ -885,22 +856,21 @@ const sendFinalTranscript = async (finalText: string, recLang: string) => {
 
         channel.on("broadcast", { event: "webrtc" }, async (message: any) => {
           const payload = message?.payload as WebRTCPayload | undefined;
-if (!payload) return;
+          if (!payload) return;
 
-const { type, from, to } = payload;
-if (!type) return;
-if (!from) return; // ✅ fixes TS + runtime safety
-if (from === clientId) return;
-if (to && to !== clientId) return;
+          const { type, from, to } = payload;
+          if (!type) return;
+          if (!from) return;
+          if (from === clientId) return;
+          if (to && to !== clientId) return;
 
-if (type === "offer" && payload.sdp) {
-  await handleOffer(from, payload.sdp, channel);
-} else if (type === "answer" && payload.sdp) {
-  await handleAnswer(from, payload.sdp);
-} else if (type === "ice" && payload.candidate) {
-  await handleIce(from, payload.candidate);
-}
-
+          if (type === "offer" && payload.sdp) {
+            await handleOffer(from, payload.sdp, channel);
+          } else if (type === "answer" && payload.sdp) {
+            await handleAnswer(from, payload.sdp);
+          } else if (type === "ice" && payload.candidate) {
+            await handleIce(from, payload.candidate);
+          }
         });
 
         channel.on("broadcast", { event: "transcript" }, async (message: any) => {
@@ -930,6 +900,7 @@ if (type === "offer" && payload.sdp) {
             isLocal: false,
           });
 
+          // ✅ Speak ONLY remote translated speech
           if (shouldSpeakTranslatedRef.current) {
             speakText(translatedText, outLang, 0.9);
           }
@@ -971,7 +942,6 @@ if (type === "offer" && payload.sdp) {
         channel.subscribe((status: RealtimeSubscribeStatus) => {
           if (!alive) return;
 
-          // log only on change
           if (lastRtStatusRef.current !== status) {
             lastRtStatusRef.current = status;
             log("realtime status", { status });
@@ -980,7 +950,6 @@ if (type === "offer" && payload.sdp) {
           setRtStatus(status);
 
           if (status === "SUBSCRIBED") {
-            // track with latest name without rejoining channel
             channel.track({ clientId, name: displayNameRef.current });
             return;
           }
@@ -997,7 +966,6 @@ if (type === "offer" && payload.sdp) {
     return () => {
       alive = false;
 
-      // stop rebuild timer
       if (rebuildTimerRef.current) {
         clearTimeout(rebuildTimerRef.current);
         rebuildTimerRef.current = null;
@@ -1005,9 +973,6 @@ if (type === "offer" && payload.sdp) {
       rebuildScheduledRef.current = false;
 
       teardownPeers("effect cleanup");
-
-      // do NOT stop local tracks on rebuild; only stop on full page leave
-      // (otherwise you get camera flashing on transient reconnects)
 
       try {
         const ch = channelRef.current;
@@ -1019,7 +984,7 @@ if (type === "offer" && payload.sdp) {
       channelRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, debugKey, rtNonce]); // <- no displayName dependency
+  }, [roomId, clientId, debugKey, rtNonce]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
@@ -1063,7 +1028,6 @@ if (type === "offer" && payload.sdp) {
       (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
 
     const fromName = displayNameRef.current || "You";
-
     const target = targetLangRef.current || "en-US";
     const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
 
@@ -1077,7 +1041,6 @@ if (type === "offer" && payload.sdp) {
       isLocal: true,
     });
 
-   
     if (channelRef.current) {
       channelRef.current.send({
         type: "broadcast",
@@ -1563,9 +1526,3 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
-
-
-
-
-
-
