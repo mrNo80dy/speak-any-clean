@@ -758,17 +758,22 @@ export default function RoomPage() {
 
         channel.on("broadcast", { event: "webrtc" }, async (message: any) => {
           const payload = message?.payload as WebRTCPayload | undefined;
-          const { type, from, to } = payload || {};
-          if (!type || from === clientId) return;
-          if (to && to !== clientId) return;
+if (!payload) return;
 
-          if (type === "offer" && payload?.sdp) {
-            await handleOffer(from, payload.sdp, channel);
-          } else if (type === "answer" && payload?.sdp) {
-            await handleAnswer(from, payload.sdp);
-          } else if (type === "ice" && payload?.candidate) {
-            await handleIce(from, payload.candidate);
-          }
+const { type, from, to } = payload;
+if (!type) return;
+if (!from) return; // ✅ fixes TS + runtime safety
+if (from === clientId) return;
+if (to && to !== clientId) return;
+
+if (type === "offer" && payload.sdp) {
+  await handleOffer(from, payload.sdp, channel);
+} else if (type === "answer" && payload.sdp) {
+  await handleAnswer(from, payload.sdp);
+} else if (type === "ice" && payload.candidate) {
+  await handleIce(from, payload.candidate);
+}
+
         });
 
         channel.on("broadcast", { event: "transcript" }, async (message: any) => {
@@ -1434,3 +1439,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
