@@ -52,13 +52,18 @@ type ChatMessage = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
+type TranslateResponse = {
+  translatedText?: string;
+  targetLang?: string;
+  detectedSourceLang?: string;
+  error?: string;
+};
+
 /**
- * DEBUG TRANSLATOR
- * -----------------
- * This version does NOT call /api/translate.
- * It just decorates the original text so you can verify:
- * - captions flow PC → phone and phone → PC
- * - "Show in" selector per-device is working
+ * REAL TRANSLATOR
+ * ---------------
+ * Calls /api/translate with { text, fromLang, toLang }.
+ * If anything fails, we fall back to the original text.
  */
 async function translateText(
   fromLang: string,
@@ -75,23 +80,37 @@ async function translateText(
     return { translatedText: trimmed, targetLang: toLang };
   }
 
-  // For now, just clearly mark what we're "pretending" to show
-  if (toLang.startsWith("pt")) {
-    return {
-      translatedText: `【PT SIM】 ${trimmed}`,
-      targetLang: toLang,
-    };
-  }
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: trimmed,
+        fromLang,
+        toLang,
+      }),
+    });
 
-  if (toLang.startsWith("en")) {
-    return {
-      translatedText: `【EN SIM】 ${trimmed}`,
-      targetLang: toLang,
-    };
-  }
+    if (!res.ok) {
+      console.error("translate API not ok", res.status);
+      return { translatedText: trimmed, targetLang: toLang };
+    }
 
-  // Fallback: no decoration
-  return { translatedText: trimmed, targetLang: toLang };
+    const data: TranslateResponse = await res.json();
+
+    if (!data || !data.translatedText) {
+      console.warn("translate API missing translatedText", data);
+      return { translatedText: trimmed, targetLang: toLang };
+    }
+
+    return {
+      translatedText: data.translatedText,
+      targetLang: data.targetLang || toLang,
+    };
+  } catch (err) {
+    console.error("translate API failed", err);
+    return { translatedText: trimmed, targetLang: toLang };
+  }
 }
 
 export default function RoomPage() {
@@ -137,10 +156,16 @@ export default function RoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showCaptions, setShowCaptions] = useState(false);
   const [captionLines, setCaptionLines] = useState<number>(3);
-  const [autoSpeak] = useState(true); // reserved for later TTS
+
+  // Voice playback (TTS of translated text)
+  const [autoSpeak, setAutoSpeak] = useState(true);
+  const autoSpeakRef = useRef(true);
 
   // Translation target language (what *you* want to read)
   const [targetLang, setTargetLang] = useState<string>(
+    (typeof navigator !== "undefined" && navigator.language) || "en-US"
+  );
+  const targetLangRef = useRef<string>(
     (typeof navigator !== "undefined" && navigator.language) || "en-US"
   );
 
@@ -161,7 +186,6 @@ export default function RoomPage() {
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 200));
-    // console.log(line); // uncomment if you want to see in DevTools
   };
 
   // helper: whenever a local <video> mounts, attach the current stream
@@ -186,10 +210,63 @@ export default function RoomPage() {
     setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
   }
 
+  function speakText(text: string, lang: string) {
+  if (typeof window === "undefined") return;
+  const synth = window.speechSynthesis;
+  if (!synth) {
+    console.warn("speechSynthesis not available");
+    return;
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) return;
+
+  console.log("🔊 speakText called:", { text: trimmed, lang });
+
+  try {
+    synth.cancel();
+  } catch {
+    // ignore
+  }
+
+  const utterance = new SpeechSynthesisUtterance(trimmed);
+
+  const voices = synth.getVoices();
+  console.log("available voices:", voices?.map(v => v.lang));
+  if (voices && voices.length > 0) {
+    let voice =
+      voices.find((v) => v.lang.toLowerCase() === lang.toLowerCase()) ??
+      voices.find((v) =>
+        v.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+      );
+
+    if (voice) {
+      utterance.voice = voice;
+      console.log("using voice:", voice.lang, voice.name);
+    }
+  }
+
+  utterance.lang = lang || "en-US";
+  utterance.rate = 1.0;
+
+  synth.speak(utterance);
+}
+
+
   // keep micOn in a ref so STT onend can see latest
   useEffect(() => {
     micOnRef.current = micOn;
   }, [micOn]);
+
+  // keep targetLang in a ref so STT + transcript handler can read latest
+  useEffect(() => {
+    targetLangRef.current = targetLang;
+  }, [targetLang]);
+
+  // keep autoSpeak in a ref so Supabase handler sees latest value
+  useEffect(() => {
+    autoSpeakRef.current = autoSpeak;
+  }, [autoSpeak]);
 
   // ---- Load display name from localStorage -------------------
   useEffect(() => {
@@ -227,6 +304,23 @@ export default function RoomPage() {
   }, [roomId]);
 
   // ---- Helpers ----------------------------------------------
+
+  // ✅ New helper to ensure ONLY video track is added (no raw mic audio)
+  function ensureVideoTrack(pc: RTCPeerConnection) {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    const alreadySending = pc
+      .getSenders()
+      .some((s) => s.track && s.track.id === videoTrack.id);
+
+    if (!alreadySending) {
+      pc.addTrack(videoTrack, stream);
+    }
+  }
+
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => {
       if (prev[remoteId] === stream) return prev;
@@ -276,7 +370,7 @@ export default function RoomPage() {
 
     pc.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-e.streams[0].getTracks().forEach((t) => {
+        e.streams[0].getTracks().forEach((t) => {
           if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
             remoteStream.addTrack(t);
           }
@@ -290,14 +384,12 @@ e.streams[0].getTracks().forEach((t) => {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
-    // Add local tracks if we already have them
+    // ✅ Only send VIDEO track; no audio track to peers
     if (localStreamRef.current) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
+      ensureVideoTrack(pc);
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
-      pc.addTransceiver("audio", { direction: "recvonly" });
+      pc.addTransceiver("audio", { direction: "recvonly" }); // still receive remote audio if any
     }
 
     const peer: Peer = { pc, remoteStream };
@@ -308,11 +400,8 @@ e.streams[0].getTracks().forEach((t) => {
   async function makeOffer(toId: string, channel: RealtimeChannel) {
     const { pc } = getOrCreatePeer(toId, channel);
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
-    }
+    // ✅ Make sure only video track is attached
+    ensureVideoTrack(pc);
 
     const offer = await pc.createOffer({
       offerToReceiveAudio: true,
@@ -338,11 +427,8 @@ e.streams[0].getTracks().forEach((t) => {
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
 
-    if (localStreamRef.current && pc.getSenders().length === 0) {
-      localStreamRef.current
-        .getTracks()
-        .forEach((t) => pc.addTrack(t, localStreamRef.current!));
-    }
+    // ✅ Make sure only video track is attached
+    ensureVideoTrack(pc);
 
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
@@ -380,8 +466,15 @@ e.streams[0].getTracks().forEach((t) => {
 
   async function acquireLocalMedia() {
     if (localStreamRef.current) return localStreamRef.current;
+
+    // ✅ Add noise/echo controls. This mostly affects the audio track
+    // (even though we don't send it over WebRTC anymore).
     const constraints: MediaStreamConstraints = {
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
     };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -443,34 +536,37 @@ e.streams[0].getTracks().forEach((t) => {
       const lang = rec.lang || "en-US";
       const fromName = displayName || "You";
 
-      // Translate into whatever *this device* wants to read RIGHT NOW
-      const target = targetLang || "en-US";
-      const { translatedText, targetLang: finalTarget } = await translateText(
-        lang,
-        target,
-        text
-      );
+      // Translate into whatever *this device* wants to read
+      const target = targetLangRef.current || "en-US";
+      const { translatedText, targetLang } = await translateText(
+      lang,
+      target,
+      text
+    );
 
-      // Local message
-      pushMessage({
-        fromId: clientId,
-        fromName,
-        originalLang: lang,
-        translatedLang: finalTarget,
-        originalText: text,
-        translatedText,
-        isLocal: true,
+    // Local message (for your own captions)
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: targetLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
+    });
+
+    // ⛔ DO NOT speak your own message on this device.
+    // Only remote devices should voice this via the transcript handler.
+
+    // Broadcast original text + source lang + name
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
       });
+    }
 
-      // Broadcast original text + source lang + name.
-      // Each receiver translates for themselves.
-      if (channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "transcript",
-          payload: { from: clientId, text, lang, name: fromName },
-        });
-      }
     };
 
     rec.onerror = (event: any) => {
@@ -507,7 +603,8 @@ e.streams[0].getTracks().forEach((t) => {
       } catch {}
       recognitionRef.current = null;
     };
-  }, [displayName, targetLang, sttStatus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayName]);
 
   // Start/stop STT when mic toggles
   useEffect(() => {
@@ -553,7 +650,7 @@ e.streams[0].getTracks().forEach((t) => {
 
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
-            broadcast: { self: false },
+            broadcast: { self: true },
             presence: { key: clientId },
           },
         });
@@ -580,39 +677,66 @@ e.streams[0].getTracks().forEach((t) => {
 
         // Broadcast: transcripts (captions)
         channel.on(
-          "broadcast",
-          { event: "transcript" },
-          async (message: { payload: TranscriptPayload }) => {
-            const { payload } = message;
-            if (!payload) return;
-            const { from, text, lang, name } = payload;
-            if (!text || !from || from === clientId) return;
+  "broadcast",
+  { event: "transcript" },
+  async (message: { payload: TranscriptPayload }) => {
+    const { payload } = message;
+    if (!payload) return;
+    const { from, text, lang, name } = payload;
+    if (!text || !from) return;
 
-            const fromName =
-              name ??
-              peerLabelsRef.current[from] ??
-              from.slice(0, 8) ??
-              "Guest";
+    const isLocal = from === clientId;
 
-            // Translate into *this* device's preferred reading language
-            const target = targetLang || "en-US";
-            const { translatedText, targetLang: finalTarget } =
-              await translateText(lang, target, text);
+    console.log("[Room] transcript event", {
+      from,
+      isLocal,
+      text,
+      lang,
+      targetLangPref: targetLangRef.current,
+    });
 
-            pushMessage({
-              fromId: from,
-              fromName,
-              originalLang: lang,
-              translatedLang: finalTarget,
-              originalText: text,
-              translatedText,
-              isLocal: false,
-            });
+    const fromName =
+      name ??
+      peerLabelsRef.current[from] ??
+      from.slice(0, 8) ??
+      "Guest";
 
-            // Later: if (autoSpeak) speakText(translatedText, finalTarget);
-          }
-        );
+    // Translate into *this* device's preferred reading language
+    const target = targetLangRef.current || "en-US";
+    const { translatedText, targetLang } = await translateText(
+      lang,
+      target,
+      text
+    );
 
+    console.log("[Room] transcript translated", {
+      from,
+      isLocal,
+      translatedText,
+      targetLang,
+    });
+
+    pushMessage({
+      fromId: from,
+      fromName,
+      originalLang: lang,
+      translatedLang: targetLang,
+      originalText: text,
+      translatedText,
+      isLocal,
+    });
+
+    // For now, speak BOTH local and remote to debug.
+    if (autoSpeakRef.current && translatedText) {
+      console.log("[Room] speaking translation", {
+        from,
+        isLocal,
+        speakLang: targetLang,
+      });
+      speakText(translatedText, targetLang);
+    }
+  }
+);
         // Broadcast: hand raise signals
         channel.on(
           "broadcast",
@@ -710,7 +834,8 @@ e.streams[0].getTracks().forEach((t) => {
         }
       } catch {}
     };
-  }, [roomId, clientId, displayName, targetLang]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, clientId, displayName]);
 
   // ---- UI controls ------------------------------------------
   const handleUnmuteClick = async () => {
@@ -762,9 +887,9 @@ e.streams[0].getTracks().forEach((t) => {
 
     const lang = "en-US"; // manual text assumed English for now
     const fromName = displayName || "You";
-    const target = targetLang || "en-US";
+    const target = targetLangRef.current || "en-US";
 
-    const { translatedText, targetLang: finalTarget } = await translateText(
+    const { translatedText, targetLang } = await translateText(
       lang,
       target,
       text
@@ -775,7 +900,7 @@ e.streams[0].getTracks().forEach((t) => {
       fromId: clientId,
       fromName,
       originalLang: lang,
-      translatedLang: finalTarget,
+      translatedLang: targetLang,
       originalText: text,
       translatedText,
       isLocal: true,
@@ -795,7 +920,7 @@ e.streams[0].getTracks().forEach((t) => {
 
   // ---- DEBUG: simulate captions without STT / translate API --
   const simulateDebugCaption = () => {
-    const target = targetLang || "en-US";
+    const target = targetLangRef.current || "en-US";
 
     const pickText = (baseEn: string, basePt: string) =>
       target === "pt-BR" ? basePt : baseEn;
@@ -941,6 +1066,28 @@ e.streams[0].getTracks().forEach((t) => {
                 Test CC
               </button>
             )}
+
+                        {/* Voice playback toggle */}
+            <button
+              onClick={() => setAutoSpeak((v) => !v)}
+              className={`${pillBase} ${
+                autoSpeak
+                  ? "bg-emerald-500 text-white border-emerald-400"
+                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+            >
+              Voice
+            </button>
+
+            {/* Manual test voice button */}
+            <button
+              onClick={() =>
+                speakText("Olá, esta é a voz sintética do Any-Speak.", "pt-BR")
+              }
+              className={`${pillBase} bg-amber-500 text-black border-amber-400`}
+            >
+              Test PT Voice
+            </button>
           </div>
 
           {/* Language selector for how YOU want to read captions */}
@@ -1021,19 +1168,7 @@ e.streams[0].getTracks().forEach((t) => {
                       el.srcObject !== firstRemoteStream
                     ) {
                       el.srcObject = firstRemoteStream;
-                    }
-                  }}
-                />
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    if (
-                      el &&
-                      firstRemoteStream &&
-                      el.srcObject !== firstRemoteStream
-                    ) {
-                      el.srcObject = firstRemoteStream;
+                      el.muted = true;
                     }
                   }}
                 />
@@ -1091,16 +1226,7 @@ e.streams[0].getTracks().forEach((t) => {
                         const stream = peerStreams[pid];
                         if (el && stream && el.srcObject !== stream) {
                           el.srcObject = stream;
-                        }
-                      }}
-                    />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (el && stream && el.srcObject !== stream) {
-                          el.srcObject = stream;
+                          el.muted = true;
                         }
                       }}
                     />
@@ -1141,20 +1267,11 @@ e.streams[0].getTracks().forEach((t) => {
                           const stream = peerStreams[spotlightId];
                           if (el && stream && el.srcObject !== stream) {
                             el.srcObject = stream;
+                            el.muted = true;
                           }
                         }}
                       />
-                      <audio
-                        data-remote
-                        autoPlay
-                        ref={(el) => {
-                          const stream = peerStreams[spotlightId];
-                          if (el && stream && el.srcObject !== stream) {
-                            el.srcObject = stream;
-                          }
-                        }}
-                      />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                     <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
                         <span>
                           {peerLabels[spotlightId] ??
@@ -1209,20 +1326,11 @@ e.streams[0].getTracks().forEach((t) => {
                             const stream = peerStreams[pid];
                             if (el && stream && el.srcObject !== stream) {
                               el.srcObject = stream;
+                              el.muted = true;
                             }
                           }}
-                        />
-                        <audio
-                          data-remote
-                          autoPlay
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
-                          }}
-                        />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        />                       
+                       <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
                           {handsUp[pid] && <span>✋</span>}
                           <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
                         </div>

@@ -1,131 +1,80 @@
 // app/api/translate/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const LIBRE_ENDPOINT = "https://libretranslate.de/translate";
-
-// Optional: force this route to always run on the server
-export const dynamic = "force-dynamic";
-
-type TranslateBody = {
-  text?: string;
-  fromLang?: string;
-  toLang?: string;
-};
-
-function normalizeLang(code?: string): string {
-  if (!code) return "en";
-  // "en-US" -> "en", "pt-BR" -> "pt"
-  return code.split("-")[0].toLowerCase();
-}
-
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as TranslateBody;
-    const rawText = (body.text ?? "").trim();
-    const fromLang = body.fromLang || "en-US";
-    const toLang = body.toLang || "en-US";
+    const { text, fromLang, toLang } = await req.json();
 
-    const displayTargetLang = toLang || fromLang || "en-US";
-
-    const source = normalizeLang(fromLang);
-    const target = normalizeLang(toLang);
-
-    const debugBase = {
-      rawText,
-      fromLang,
-      toLang,
-      source,
-      target,
-    };
-
-    // Nothing to translate or same language → just echo.
-    if (!rawText || source === target) {
+    if (!text || !toLang) {
       return NextResponse.json(
-        {
-          translatedText: rawText,
-          targetLang: displayTargetLang,
-          debug: {
-            ...debugBase,
-            reason: "same-lang-or-empty",
-            upstreamStatus: null,
-            upstreamError: null,
-            upstreamRawTranslated: null,
-            usedFallback: true,
-          },
-        },
-        { status: 200 }
+        { error: "Missing 'text' or 'toLang' in request body." },
+        { status: 400 }
       );
     }
 
-    const res = await fetch(LIBRE_ENDPOINT, {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY is not set on the server." },
+        { status: 500 }
+      );
+    }
+
+    const systemPrompt =
+      "You are a translation engine. You ONLY return the translated text, no explanations or extra words.";
+
+    const userPrompt = `Translate the following text from ${fromLang || "its original language"} to ${toLang}.
+Return ONLY the translated text.
+
+Text:
+${text}`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
-        q: rawText,
-        source,
-        target,
-        format: "text",
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0,
       }),
     });
 
-    if (!res.ok) {
-      // Upstream failed → fall back to original text
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("OpenAI API error:", response.status, errText);
       return NextResponse.json(
-        {
-          translatedText: rawText,
-          targetLang: displayTargetLang,
-          error: "upstream-error",
-          debug: {
-            ...debugBase,
-            reason: "upstream-error",
-            upstreamStatus: res.status,
-            upstreamError: null,
-            upstreamRawTranslated: null,
-            usedFallback: true,
-          },
-        },
-        { status: 200 }
+        { error: "OpenAI API request failed." },
+        { status: 500 }
       );
     }
 
-    const data = (await res.json()) as {
-      translatedText?: string;
-      error?: string;
-    };
+    const data = await response.json();
 
-    const maybe = (data.translatedText ?? "").trim();
-    const translated =
-      maybe.length > 0 && !data.error ? maybe : rawText;
+    const content =
+      data.choices?.[0]?.message?.content?.toString().trim() || "";
 
+    if (!content) {
+      return NextResponse.json(
+        { error: "No translation returned from OpenAI." },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      translatedText: content,
+      targetLang: toLang,
+    });
+  } catch (err: any) {
+    console.error("API /translate error:", err?.message || err);
     return NextResponse.json(
-      {
-        translatedText: translated,
-        targetLang: displayTargetLang,
-        debug: {
-          ...debugBase,
-          reason: "ok",
-          upstreamStatus: res.status,
-          upstreamError: data.error ?? null,
-          upstreamRawTranslated: data.translatedText ?? null,
-          usedFallback: translated === rawText,
-        },
-      },
-      { status: 200 }
-    );
-  } catch (err) {
-    console.error("Translate route error", err);
-    return NextResponse.json(
-      {
-        translatedText: "",
-        targetLang: "en-US",
-        error: "route-error",
-        debug: {
-          reason: "route-error",
-          errorMessage:
-            err instanceof Error ? err.message : String(err),
-        },
-      },
-      { status: 200 }
+      { error: "Unexpected error in /api/translate." },
+      { status: 500 }
     );
   }
 }
