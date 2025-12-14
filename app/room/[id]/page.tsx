@@ -159,6 +159,9 @@ export default function RoomPage() {
   const voicesReadyRef = useRef(false);
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
+  const sttRunningRef = useRef(false);
+  const sttStopRequestedRef = useRef(false);
+
 
   const micOnRef = useRef(false);
   const sttStatusRef = useRef<SttStatus>("unknown");
@@ -631,10 +634,12 @@ export default function RoomPage() {
     rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
 
     rec.onstart = () => {
-  log("stt onstart", { lang: rec.lang });
-  setSttStatus("ok");
-  setSttErrorMessage(null);
-};
+      sttRunningRef.current = true;
+      sttStopRequestedRef.current = false;
+      log("stt onstart", { lang: rec.lang });
+      setSttStatus("ok");
+      setSttErrorMessage(null);
+    };
 
     rec.onresult = async (event: any) => {
       const results = event.results;
@@ -692,14 +697,30 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
-      if (micOnRef.current && sttStatusRef.current !== "unsupported") {
-        setTimeout(() => {
-          try {
-            rec.start();
-          } catch {}
-        }, 200);
+  sttRunningRef.current = false;
+  log("stt onend", { stopRequested: sttStopRequestedRef.current });
+
+  // Only auto-restart if:
+  // - mic is still ON
+  // - we did NOT intentionally request stop()
+  // - and STT is supported
+  if (
+    micOnRef.current &&
+    !sttStopRequestedRef.current &&
+    sttStatusRef.current !== "unsupported"
+  ) {
+    setTimeout(() => {
+      try {
+        if (!sttRunningRef.current) {
+          rec.start();
+          log("stt auto-restart start() called", { lang: rec.lang });
+        }
+      } catch (e: any) {
+        log("stt auto-restart FAILED", { message: e?.message || String(e) });
       }
-    };
+    }, 250);
+  }
+};
 
     recognitionRef.current = rec;
 
@@ -714,30 +735,50 @@ export default function RoomPage() {
 
   // Start/stop STT when mic toggles
   useEffect(() => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
+  const rec = recognitionRef.current;
+  if (!rec) return;
 
-   if (micOn && sttStatus !== "unsupported") {
-  try {
-    rec.start();
-    log("stt start() called", { lang: rec.lang });
-  } catch (e: any) {
-    log("stt start() FAILED", {
-      message: e?.message || String(e),
-      lang: rec.lang,
-    });
+  if (micOn && sttStatus !== "unsupported") {
+    // Don’t double-start
+    if (sttRunningRef.current) {
+      log("stt start skipped (already running)", { lang: rec.lang });
+      return;
+    }
+
+    sttStopRequestedRef.current = false;
+
+    try {
+      rec.start();
+      log("stt start() called", { lang: rec.lang });
+    } catch (e: any) {
+      // If it says “already started”, treat it as running and move on.
+      const msg = e?.message || String(e);
+      if (msg.includes("already started")) {
+        sttRunningRef.current = true;
+        log("stt start() already running (ignored)", { lang: rec.lang });
+      } else {
+        log("stt start() FAILED", { message: msg, lang: rec.lang });
+      }
+    }
+  } else {
+    // Don’t double-stop
+    if (!sttRunningRef.current) {
+      log("stt stop skipped (not running)");
+      sttStopRequestedRef.current = true;
+      return;
+    }
+
+    sttStopRequestedRef.current = true;
+
+    try {
+      rec.stop();
+      log("stt stop() called");
+    } catch (e: any) {
+      log("stt stop() FAILED", { message: e?.message || String(e) });
+    }
   }
-} else {
-  try {
-    rec.stop();
-    log("stt stop() called");
-  } catch (e: any) {
-    log("stt stop() FAILED", {
-      message: e?.message || String(e),
-    });
-  }
-}
 }, [micOn, sttStatus]);
+
 
 
   // ---- Lifecycle: join room, wire realtime -------------------
@@ -1450,6 +1491,7 @@ if (type === "offer" && payload.sdp) {
     </div>
   );
 }
+
 
 
 
