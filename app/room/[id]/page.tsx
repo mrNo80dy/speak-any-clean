@@ -554,9 +554,12 @@ export default function RoomPage() {
     };
 
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) =>
-        pc.addTrack(t, localStreamRef.current!)
-      );
+  localStreamRef.current.getTracks().forEach((t) => {
+    // Don’t send local audio from mobile; translation is handled by STT -> broadcast -> TTS
+    if (isMobile && t.kind === "audio") return;
+    pc.addTrack(t, localStreamRef.current!);
+  });
+
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
@@ -576,10 +579,10 @@ export default function RoomPage() {
       );
 
       localStreamRef.current.getTracks().forEach((t) => {
-        if (!haveKinds.has(t.kind)) {
-          pc.addTrack(t, localStreamRef.current!);
-        }
-      });
+  if (isMobile && t.kind === "audio") return;
+  if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
+});
+
     }
 
     const offer = await pc.createOffer({
@@ -612,10 +615,10 @@ export default function RoomPage() {
       );
 
       localStreamRef.current.getTracks().forEach((t) => {
-        if (!haveKinds.has(t.kind)) {
-          pc.addTrack(t, localStreamRef.current!);
-        }
-      });
+  if (isMobile && t.kind === "audio") return;
+  if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
+});
+
     }
 
     const answer = await pc.createAnswer();
@@ -652,9 +655,12 @@ export default function RoomPage() {
     if (localStreamRef.current) return localStreamRef.current;
 
     const constraints = {
-      audio: true,
+  // On mobile, don’t grab the mic via getUserMedia when we’re doing STT-only translation.
+  // This prevents Chrome from starving SpeechRecognition of mic audio.
+      audio: isMobile ? false : true,
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
     };
+
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
@@ -1571,6 +1577,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
