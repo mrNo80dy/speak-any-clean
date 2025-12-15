@@ -162,6 +162,8 @@ export default function RoomPage() {
   // STT control refs (IMPORTANT: only declared ONCE)
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
+  const sttLastStartAtRef = useRef<number>(0);
+
 
   const sttRestartTimerRef = useRef<number | null>(null);
   const sttRestartHistoryRef = useRef<number[]>([]); // timestamps (ms)
@@ -726,12 +728,14 @@ export default function RoomPage() {
     if (speakLangRef.current) rec.lang = speakLangRef.current;
 
     rec.onstart = () => {
-      sttRunningRef.current = true;
-      sttStopRequestedRef.current = false;
-      log("stt onstart", { lang: rec.lang });
-      setSttStatus("ok");
-      setSttErrorMessage(null);
-    };
+  sttLastStartAtRef.current = Date.now();
+  sttRunningRef.current = true;
+  sttStopRequestedRef.current = false;
+  log("stt onstart", { lang: rec.lang });
+  setSttStatus("ok");
+  setSttErrorMessage(null);
+};
+
 
     rec.onresult = (event: any) => {
       const results = event.results;
@@ -772,52 +776,56 @@ export default function RoomPage() {
     };
 
     rec.onerror = (event: any) => {
-      log("stt error", { error: event.error });
-      setSttStatus("error");
-      setSttErrorMessage(event.error || "Speech recognition error.");
+  log("stt error", { error: event?.error, message: event?.message, event });
+  setSttStatus("error");
+  setSttErrorMessage(event?.error || event?.message || "Speech recognition error.");
 
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        try {
-          rec.stop();
-        } catch {}
-      }
-    };
+  // If Android says audio-capture or not-allowed, don't restart automatically.
+  if (event?.error === "audio-capture" || event?.error === "not-allowed" || event?.error === "service-not-allowed") {
+    sttStopRequestedRef.current = true;
+    clearSttRestartTimer();
+    try { rec.stop(); } catch {}
+  }
+};
+
 
     rec.onend = () => {
-      sttRunningRef.current = false;
-      log("stt onend", { stopRequested: sttStopRequestedRef.current });
+  sttRunningRef.current = false;
 
-      if (sttStopRequestedRef.current) {
-  log("stt onend: stop requested, not restarting");
-  return;
-}
+  const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
+  log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
 
-      if (!micOnRef.current) return;
+  // If it ended almost immediately, don't get stuck in a restart loop.
+  // This usually means: mic capture failed, permission issue, or browser/service issue.
+  if (!sttStopRequestedRef.current && ranForMs < 800) {
+    log("stt ended too fast; disabling auto-restart", { ranForMs });
+    setSttStatus("error");
+    setSttErrorMessage(
+      "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
+    );
 
-      recordRestart();
-      if (tooManyRestarts()) {
-        sttStopRequestedRef.current = true;
-        clearSttRestartTimer();
-        setSttStatus("error");
-        setSttErrorMessage(
-          "Live captions keeps stopping on this device. Tap Mic Off → On to restart."
-        );
-        log("stt auto-restart disabled (too many restarts)");
-        return;
-      }
+    // Prevent further auto-restarts until user taps again
+    sttStopRequestedRef.current = true;
+    clearSttRestartTimer();
+    return;
+  }
 
-      clearSttRestartTimer();
-      sttRestartTimerRef.current = window.setTimeout(() => {
-        try {
-          if (!sttRunningRef.current) {
-            rec.start();
-            log("stt auto-restart start() called", { lang: rec.lang });
-          }
-        } catch (e: any) {
-          log("stt auto-restart FAILED", { message: e?.message || String(e) });
+  // Normal auto-restart behavior (only if mic is still ON and we didn't request stop)
+  if (micOnRef.current && !sttStopRequestedRef.current) {
+    clearSttRestartTimer();
+    sttRestartTimerRef.current = window.setTimeout(() => {
+      try {
+        if (!sttRunningRef.current) {
+          rec.start();
+          log("stt auto-restart start() called", { lang: rec.lang });
         }
-      }, 500);
-    };
+      } catch (e: any) {
+        log("stt auto-restart FAILED", { message: e?.message || String(e) });
+      }
+    }, 400);
+  }
+};
+
 
     recognitionRef.current = rec;
 
@@ -1563,6 +1571,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
