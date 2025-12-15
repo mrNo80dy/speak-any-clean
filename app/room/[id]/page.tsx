@@ -1023,32 +1023,28 @@ export default function RoomPage() {
   };
 
   const toggleMic = async () => {
-  if (!localStreamRef.current) return;
-  const audioTrack = localStreamRef.current.getAudioTracks()[0];
-  if (!audioTrack) return;
+  const next = !micOn;
 
-  // TEMP TEST: on Android/mobile, don't enable WebRTC mic while using SpeechRecognition
-  if (isMobile) {
-    const next = !micOnRef.current;
-    micOnRef.current = next;
-    setMicOn(next);
+  // Always update UI state
+  setMicOn(next);
+  micOnRef.current = next;
 
-    if (next && sttStatusRef.current !== "unsupported") startSttNow();
-    else stopSttNow();
-
+  // If we have a real getUserMedia audio track (desktop), toggle it too.
+  const audioTrack = localStreamRef.current?.getAudioTracks?.()[0] || null;
+  if (audioTrack) {
+    audioTrack.enabled = next;
+  } else {
     log("mobile mic toggle (stt-only)", { next });
-    return;
   }
 
-  // Desktop behavior (normal WebRTC mic)
-  const next = !audioTrack.enabled;
-  audioTrack.enabled = next;
-  micOnRef.current = next;
-  setMicOn(next);
-
-  if (next && sttStatusRef.current !== "unsupported") startSttNow();
-  else stopSttNow();
+  // STT start/stop is what matters for translation
+  if (next && sttStatusRef.current !== "unsupported") {
+    startSttNow(); // ✅ user gesture
+  } else {
+    stopSttNow();  // ✅ user gesture
+  }
 };
+
 
   const toggleHand = () => {
   const next = !myHandUp;
@@ -1577,6 +1573,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
