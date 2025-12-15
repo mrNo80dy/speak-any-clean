@@ -1036,6 +1036,20 @@ export default function RoomPage() {
   else stopSttNow();
 };
 
+  const toggleHand = () => {
+  const next = !myHandUp;
+  setMyHandUp(next);
+
+  if (channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "hand",
+      payload: { from: clientId, up: next },
+    });
+  }
+};
+
+
 
   // Manual text caption submit
   const handleTextSubmit = async (e: FormEvent) => {
@@ -1549,6 +1563,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
