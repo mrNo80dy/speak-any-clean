@@ -861,7 +861,7 @@ export default function RoomPage() {
           if (!payload) return;
 
           const { type, from, to } = payload;
-          log("rx transcript", { type, from, to });
+          log("rx webrtc", { type, from, to });
           if (!type) return;
           if (!from) return;
           if (from === clientId) return;
@@ -1543,5 +1543,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
