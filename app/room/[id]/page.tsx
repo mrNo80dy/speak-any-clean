@@ -235,32 +235,39 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 250));
   };
 
-  const startSttNow = () => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
+ const startSttNow = () => {
+  const rec = recognitionRef.current;
+  if (!rec) return;
 
-    clearSttRestartTimer();
+  clearSttRestartTimer();
 
-    if (sttRunningRef.current) {
-      log("stt start skipped (already running)", { lang: rec.lang });
-      return;
+  // ✅ FORCE language before start
+  rec.lang =
+    speakLangRef.current ||
+    (typeof navigator !== "undefined" ? (navigator.language as string) : "en-US") ||
+    "en-US";
+
+  if (sttRunningRef.current) {
+    log("stt start skipped (already running)", { lang: rec.lang });
+    return;
+  }
+
+  sttStopRequestedRef.current = false;
+
+  try {
+    rec.start();
+    log("stt start() called (gesture)", { lang: rec.lang });
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    if (msg.includes("already started")) {
+      sttRunningRef.current = true;
+      log("stt start() already running (ignored)", { lang: rec.lang });
+    } else {
+      log("stt start() FAILED", { message: msg, lang: rec.lang });
     }
+  }
+};
 
-    sttStopRequestedRef.current = false;
-
-    try {
-      rec.start();
-      log("stt start() called (gesture)", { lang: rec.lang });
-    } catch (e: any) {
-      const msg = e?.message || String(e);
-      if (msg.includes("already started")) {
-        sttRunningRef.current = true;
-        log("stt start() already running (ignored)", { lang: rec.lang });
-      } else {
-        log("stt start() FAILED", { message: msg, lang: rec.lang });
-      }
-    }
-  };
 
   const stopSttNow = () => {
     const rec = recognitionRef.current;
@@ -716,7 +723,7 @@ export default function RoomPage() {
     const rec = new SpeechRecognitionCtor();
     rec.continuous = true;
     rec.interimResults = true;
-    rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
+    if (speakLangRef.current) rec.lang = speakLangRef.current;
 
     rec.onstart = () => {
       sttRunningRef.current = true;
@@ -730,7 +737,7 @@ export default function RoomPage() {
       const results = event.results;
       if (!results || results.length === 0) return;
 
-      rec.lang = speakLangRef.current || (navigator.language as string) || "en-US";
+      if (speakLangRef.current) rec.lang = speakLangRef.current;
 
       let sawFinal = false;
       let newestText = "";
@@ -1543,6 +1550,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
