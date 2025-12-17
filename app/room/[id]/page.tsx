@@ -189,8 +189,13 @@ export default function RoomPage() {
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
   const sttLastSentRef = useRef<string>("");
-
+  
+ 
   const micOnRef = useRef(false);
+  const micArmedRef = useRef(false);          // user intent (armed)
+  
+  const [sttListening, setSttListening] = useState(false); // reality (listening)
+
   const sttStatusRef = useRef<SttStatus>("unknown");
   const displayNameRef = useRef<string>("You");
 
@@ -455,6 +460,7 @@ export default function RoomPage() {
 
   const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
     localMedia;
+   const micUiOn = isMobile ? sttListening : micOn;
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -701,6 +707,7 @@ export default function RoomPage() {
 
     rec.onstart = () => {
   setSttArmedNotListening(false); // ✅ clear banner when listening resumes
+  setSttListening(true);
 
   sttLastStartAtRef.current = Date.now();
   sttRunningRef.current = true;
@@ -786,12 +793,16 @@ export default function RoomPage() {
   // ✅ Android: don't auto-restart (prevents "ding ding" loop)
 // ✅ Keep mic UI "armed" until user turns it off
 if (isMobile) {
-  if (micOnRef.current && !sttStopRequestedRef.current) {
+  setSttListening(false);
+
+  // If it ended on its own while armed, show the "resume" hint
+  if (micArmedRef.current && !sttStopRequestedRef.current) {
     setSttArmedNotListening(true);
-    log("stt ended (mobile) — staying armed (no auto-restart)", { ranForMs });
+    log("stt ended (mobile) — needs manual resume", { ranForMs });
   }
   return;
 }
+
 
 
   // Desktop: keep your auto-restart behavior
@@ -956,15 +967,27 @@ if (isMobile) {
           peerLabelsRef.current = labels;
 
           // ✅ 3+ users default: mic OFF (unless user already touched mic)
-          const total = others.length + 1;
-          if (total >= 3 && !userTouchedMicRef.current) {
-            if (!isMobile) {
-              setMicEnabled(false);
-            }
-            micOnRef.current = false;
-            stopSttNow();
-            log("auto-muted for 3+ participants", { total });
-          }
+const total = others.length + 1;
+if (total >= 3 && !userTouchedMicRef.current) {
+  // Desktop: turn off the actual audio track
+  if (!isMobile) {
+    setMicEnabled(false);
+  }
+
+  // Shared refs/state
+  micOnRef.current = false;
+  stopSttNow();
+
+  // ✅ Mobile-only: clear the "armed/resume" UI state too
+  if (isMobile) {
+    micArmedRef.current = false;
+    setSttListening(false);
+    setSttArmedNotListening(false);
+  }
+
+  log("auto-muted for 3+ participants", { total });
+}
+
 
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
@@ -1032,28 +1055,38 @@ const toggleCamera = async () => {
 const toggleMic = async () => {
   userTouchedMicRef.current = true;
 
+  if (isMobile) {
+    // Mobile: button reflects LISTENING state
+    if (sttListening) {
+      // user turns OFF
+      micArmedRef.current = false;
+      setSttArmedNotListening(false);
+      stopSttNow();
+      setSttListening(false); // reflect immediately
+      log("mobile mic OFF (stt)", {});
+      return;
+    } else {
+      // user turns ON / RESUME
+      micArmedRef.current = true;
+      setSttArmedNotListening(false);
+      startSttNow();
+      log("mobile mic ON (stt)", {});
+      return;
+    }
+  }
+
+  // Desktop: use audio track state
   const next = !micOn;
   micOnRef.current = next;
 
-  // ✅ STEP 4: if user deliberately turns mic OFF, clear the "armed but not listening" flag
   if (!next) setSttArmedNotListening(false);
 
-  // desktop: mic track exists
-  if (!isMobile) {
-    setMicEnabled(next);
-  } else {
-    // mobile STT-only: no audio track exists; mic toggle == STT toggle
-    setMicEnabled(next);
-    log("mobile mic toggle (stt-only)", { next });
-  }
+  setMicEnabled(next);
 
-  // STT is what matters for translation
-  if (next && sttStatusRef.current !== "unsupported") {
-    startSttNow();
-  } else {
-    stopSttNow();
-  }
+  if (next && sttStatusRef.current !== "unsupported") startSttNow();
+  else stopSttNow();
 };
+
 
 const toggleHand = () => {
   const next = !myHandUp;
@@ -1115,7 +1148,7 @@ const toggleHand = () => {
     ? "bg-emerald-600/90 text-white border-emerald-500"
     : "bg-red-900/70 text-red-200 border-red-700";
 
-  const micClass = micOn
+  const micClass = micUiOn
     ? "bg-neutral-800 text-neutral-50 border-neutral-600"
     : "bg-red-900/80 text-red-100 border-red-700";
 
@@ -1232,8 +1265,11 @@ const toggleHand = () => {
             </span>
 
             <button onClick={toggleMic} className={`${pillBase} ${micClass}`}>
-              {micOn ? "Mic On" : "Mic Off"}
-            </button>
+  {isMobile
+    ? (sttListening ? "Mic On" : (micArmedRef.current ? "Resume" : "Mic Off"))
+    : (micOn ? "Mic On" : "Mic Off")}
+</button>
+
 
             <button
               onClick={toggleCamera}
@@ -1380,11 +1416,12 @@ const toggleHand = () => {
             </div>
           )}
 
-          {showCaptions && micOn && sttArmedNotListening && (
-            <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
-              Mic is on, but Android stopped listening. Tap Mic Off → On to resume.
-            </div>
-    )}
+          {showCaptions && isMobile && sttArmedNotListening && (
+  <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
+    Android stopped listening. Tap Resume.
+  </div>
+)}
+
 
 
           <div className="h-full w-full">
@@ -1680,6 +1717,7 @@ const toggleHand = () => {
     </div>
   );
 }
+
 
 
 
