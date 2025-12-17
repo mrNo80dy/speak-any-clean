@@ -700,13 +700,16 @@ export default function RoomPage() {
     if (speakLangRef.current) rec.lang = speakLangRef.current;
 
     rec.onstart = () => {
-      sttLastStartAtRef.current = Date.now();
-      sttRunningRef.current = true;
-      sttStopRequestedRef.current = false;
-      log("stt onstart", { lang: rec.lang });
-      setSttStatus("ok");
-      setSttErrorMessage(null);
-    };
+  setSttArmedNotListening(false); // ✅ clear banner when listening resumes
+
+  sttLastStartAtRef.current = Date.now();
+  sttRunningRef.current = true;
+  sttStopRequestedRef.current = false;
+  log("stt onstart", { lang: rec.lang });
+  setSttStatus("ok");
+  setSttErrorMessage(null);
+};
+
 
     rec.onresult = (event: any) => {
       const results = event.results;
@@ -1018,15 +1021,15 @@ if (isMobile) {
   }, [roomId, clientId, debugKey, rtNonce, prejoinDone, mode]);
 
   // ---- UI controls ------------------------------------------
-  const toggleCamera = async () => {
-    if (mode === "audio") return;
-    const s = localStreamRef.current;
-    const vt = s?.getVideoTracks?.()[0] || null;
-    if (!vt) return;
-    setCamEnabled(!vt.enabled);
-  };
+const toggleCamera = async () => {
+  if (mode === "audio") return;
+  const s = localStreamRef.current;
+  const vt = s?.getVideoTracks?.()[0] || null;
+  if (!vt) return;
+  setCamEnabled(!vt.enabled);
+};
 
-  const toggleMic = async () => {
+const toggleMic = async () => {
   userTouchedMicRef.current = true;
 
   const next = !micOn;
@@ -1040,7 +1043,7 @@ if (isMobile) {
     setMicEnabled(next);
   } else {
     // mobile STT-only: no audio track exists; mic toggle == STT toggle
-    setMicEnabled(next); // will stay false internally because no track exists
+    setMicEnabled(next);
     log("mobile mic toggle (stt-only)", { next });
   }
 
@@ -1052,14 +1055,21 @@ if (isMobile) {
   }
 };
 
+const toggleHand = () => {
+  const next = !myHandUp;
+  setMyHandUp(next);
 
-  {showCaptions && sttArmedNotListening && (
-  <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
-    Mic is on, but Android stopped listening. Tap Mic Off → On to resume.
-  </div>
-)}
+  if (channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "hand",
+      payload: { from: clientId, up: next },
+    });
+  }
+};
 
 
+  
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
@@ -1159,6 +1169,7 @@ if (isMobile) {
 
       const qs = new URLSearchParams(searchParams?.toString() || "");
       qs.set("mode", "audio");
+      if (debugEnabled) qs.set("debug", "1");
       router.replace(`/room/${roomId}?${qs.toString()}`);
 
       setPrejoinDone(true);
@@ -1174,6 +1185,7 @@ if (isMobile) {
 
       const qs = new URLSearchParams(searchParams?.toString() || "");
       qs.set("mode", "video");
+      if (debugEnabled) qs.set("debug", "1");
       router.replace(`/room/${roomId}?${qs.toString()}`);
 
       setPrejoinDone(true);
@@ -1367,6 +1379,13 @@ if (isMobile) {
                 : "Checking live captions mic..."}
             </div>
           )}
+
+          {showCaptions && micOn && sttArmedNotListening && (
+            <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
+              Mic is on, but Android stopped listening. Tap Mic Off → On to resume.
+            </div>
+    )}
+
 
           <div className="h-full w-full">
             {peerIds.length === 0 && (
@@ -1661,6 +1680,7 @@ if (isMobile) {
     </div>
   );
 }
+
 
 
 
