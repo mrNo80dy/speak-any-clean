@@ -182,7 +182,7 @@ export default function RoomPage() {
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
   const sttLastStartAtRef = useRef<number>(0);
-
+  const [sttArmedNotListening, setSttArmedNotListening] = useState(false);
   const sttRestartTimerRef = useRef<number | null>(null);
 
   // Android finalize-on-silence refs
@@ -780,16 +780,16 @@ export default function RoomPage() {
     return;
   }
 
-  // ✅ Android: DO NOT auto-restart (prevents "ding ding")
-  // ✅ Also: reflect reality in UI — STT ended, so mic is effectively off
-  if (isMobile) {
-    micOnRef.current = false;
-    // keep UI in sync (your useLocalMedia now allows this even with no audio track)
-    setMicEnabled(false);
-
-    log("stt ended (mobile) — auto-restart disabled, mic UI forced off", { ranForMs });
-    return;
+  // ✅ Android: don't auto-restart (prevents "ding ding" loop)
+// ✅ Keep mic UI "armed" until user turns it off
+if (isMobile) {
+  if (micOnRef.current && !sttStopRequestedRef.current) {
+    setSttArmedNotListening(true);
+    log("stt ended (mobile) — staying armed (no auto-restart)", { ranForMs });
   }
+  return;
+}
+
 
   // Desktop: keep your auto-restart behavior
   if (micOnRef.current && !sttStopRequestedRef.current) {
@@ -1027,41 +1027,38 @@ export default function RoomPage() {
   };
 
   const toggleMic = async () => {
-    userTouchedMicRef.current = true;
+  userTouchedMicRef.current = true;
 
-    const next = !micOn;
-    micOnRef.current = next;
+  const next = !micOn;
+  micOnRef.current = next;
 
-    // desktop: mic track exists
-    if (!isMobile) {
-      setMicEnabled(next);
-    } else {
-  // mobile STT-only: no audio track exists; mic toggle == STT toggle
-  setMicEnabled(next); // will stay false internally because no track exists
-  log("mobile mic toggle (stt-only)", { next });
-}
+  // ✅ STEP 4: if user deliberately turns mic OFF, clear the "armed but not listening" flag
+  if (!next) setSttArmedNotListening(false);
+
+  // desktop: mic track exists
+  if (!isMobile) {
+    setMicEnabled(next);
+  } else {
+    // mobile STT-only: no audio track exists; mic toggle == STT toggle
+    setMicEnabled(next); // will stay false internally because no track exists
+    log("mobile mic toggle (stt-only)", { next });
+  }
+
+  // STT is what matters for translation
+  if (next && sttStatusRef.current !== "unsupported") {
+    startSttNow();
+  } else {
+    stopSttNow();
+  }
+};
 
 
-    // STT is what matters for translation
-    if (next && sttStatusRef.current !== "unsupported") {
-      startSttNow();
-    } else {
-      stopSttNow();
-    }
-  };
+  {showCaptions && sttArmedNotListening && (
+  <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
+    Mic is on, but Android stopped listening. Tap Mic Off → On to resume.
+  </div>
+)}
 
-  const toggleHand = () => {
-    const next = !myHandUp;
-    setMyHandUp(next);
-
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "hand",
-        payload: { from: clientId, up: next },
-      });
-    }
-  };
 
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -1664,6 +1661,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
