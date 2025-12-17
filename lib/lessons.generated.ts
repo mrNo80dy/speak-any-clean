@@ -19,7 +19,20 @@ export const LESSONS: Lesson[] = [
           "es-MX": "Hola, me llamo Chad.",
           "fr-FR": "Salut, je m'appelle Chad.",
           "de-DE": "Hallo, ich heiße Chad.",
-          "it-IT": "Ciao, mi chiamo Chad."
+          "it-IT": "Ciao, mi chiamo Chad.",
+          "ru-RU": "Привет, меня зовут Чад.",
+          "ar-SA": "مرحبًا، اسمي تشاد.",
+          "hi-IN": "नमस्ते, मेरा नाम चाड है।",
+          "bn-BD": "হ্যালো, আমার নাম চাড।",
+          "ur-PK": "ہیلو، میرا نام چیڈ ہے۔",
+          "id-ID": "Hai, nama saya Chad.",
+          "tr-TR": "Merhaba, benim adım Chad.",
+          "vi-VN": "Chào, tôi tên là Chad.",
+          "th-TH": "สวัสดีครับ ผมชื่อแชด",
+          "ja-JP": "こんにちは、私の名前はチャドです。",
+          "ko-KR": "안녕하세요, 제 이름은 채드입니다.",
+          "zh-CN": "你好，我叫查德。",
+          "zh-TW": "你好，我叫查德。"
         }
       },
       {
@@ -31,7 +44,20 @@ export const LESSONS: Lesson[] = [
           "es-MX": "Encantado de conocerte.",
           "fr-FR": "Enchanté de vous rencontrer.",
           "de-DE": "Schön, dich kennenzulernen.",
-          "it-IT": "Piacere di conoscerti."
+          "it-IT": "Piacere di conoscerti.",
+          "ru-RU": "Приятно познакомиться.",
+          "ar-SA": "تشرفت بلقائك.",
+          "hi-IN": "आपसे मिलकर अच्छा लगा।",
+          "bn-BD": "আপনার সাথে দেখা করে ভালো লাগলো।",
+          "ur-PK": "آپ سے مل کر خوشی ہوئی۔",
+          "id-ID": "Seninle tanıştığıma memnun oldum.",
+          "tr-TR": "Tanıştığımıza memnun oldum.",
+          "vi-VN": "Rất vui được gặp bạn.",
+          "th-TH": "ดีใจที่ได้พบคุณ",
+          "ja-JP": "お会いできて嬉しいです。",
+          "ko-KR": "만나서 반갑습니다.",
+          "zh-CN": "很高兴见到你。",
+          "zh-TW": "很高興見到你。"
         }
       },
       {
@@ -41,9 +67,22 @@ export const LESSONS: Lesson[] = [
           "pt-BR": "De onde você é?",
           "es-ES": "¿De dónde eres?",
           "es-MX": "¿De dónde eres?",
-          "fr-FR": "D'où viens-tu?",
+          "fr-FR": "D'où viens-tu ?",
           "de-DE": "Woher kommst du?",
-          "it-IT": "Da dove vieni?"
+          "it-IT": "Da dove vieni?",
+          "ru-RU": "Откуда вы?",
+          "ar-SA": "من أين أنت؟",
+          "hi-IN": "आप कहाँ से हैं?",
+          "bn-BD": "আপনি কোথা থেকে আসছেন?",
+          "ur-PK": "آپ کہاں سے ہیں؟",
+          "id-ID": "Kamu berasal dari mana?",
+          "tr-TR": "Nerelisin?",
+          "vi-VN": "Bạn đến từ đâu?",
+          "th-TH": "คุณมาจากที่ไหน?",
+          "ja-JP": "あなたはどこから来ましたか？",
+          "ko-KR": "어디서 오셨어요?",
+          "zh-CN": "你来自哪里？",
+          "zh-TW": "你從哪裡來？"
         }
       }
     ]
@@ -59,10 +98,23 @@ export const LESSONS: Lesson[] = [
           "en-US": "Excuse me, where is the bathroom?",
           "pt-BR": "Com licença, onde fica o banheiro?",
           "es-ES": "Disculpe, ¿dónde está el baño?",
-          "es-MX": "Disculpe, ¿dónde está el baño?",
-          "fr-FR": "Excusez-moi, où sont les toilettes?",
+          "es-MX": "Disculpa, ¿dónde está el baño?",
+          "fr-FR": "Excusez-moi, où sont les toilettes ?",
           "de-DE": "Entschuldigung, wo ist die Toilette?",
-          "it-IT": "Scusi, dove si trova il bagno?"
+          "it-IT": "Scusi, dove si trova il bagno?",
+          "ru-RU": "Извините, где туалет?",
+          "ar-SA": "عذرًا، أين الحمام؟",
+          "hi-IN": "माफ कीजिए, बाथरूम कहाँ है?",
+          "bn-BD": "দয়া করে, বাথরুম কোথায়?",
+          "ur-PK": "معاف کیجیے، باتھروم کہاں ہے؟",
+          "id-ID": "Permisi, di mana kamar mandi?",
+          "tr-TR": "Affedersiniz, tuvalet nerede?",
+          "vi-VN": "Xin lỗi, nhà vệ sinh ở đâu?",
+          "th-TH": "ขอโทษครับ/ค่ะ ห้องน้ำอยู่ที่ไหน?",
+          "ja-JP": "すみません、トイレはどこですか？",
+          "ko-KR": "실례합니다, 화장실은 어디에요?",
+          "zh-CN": "对不起，洗手间在哪里？",
+          "zh-TW": "對不起，廁所在哪裡？"
         }
       },
       {
@@ -72,9 +124,22 @@ export const LESSONS: Lesson[] = [
           "pt-BR": "Quanto custa isso?",
           "es-ES": "¿Cuánto cuesta esto?",
           "es-MX": "¿Cuánto cuesta esto?",
-          "fr-FR": "Combien ça coûte?",
+          "fr-FR": "Combien ça coûte ?",
           "de-DE": "Wie viel kostet das?",
-          "it-IT": "Quanto costa questo?"
+          "it-IT": "Quanto costa questo?",
+          "ru-RU": "Сколько это стоит?",
+          "ar-SA": "كم يكلف هذا؟",
+          "hi-IN": "यह कितना खर्च होता है?",
+          "bn-BD": "এটার দাম কত?",
+          "ur-PK": "اس کی قیمت کتنی ہے؟",
+          "id-ID": "Berapa harganya?",
+          "tr-TR": "Bu ne kadar?",
+          "vi-VN": "Cái này giá bao nhiêu?",
+          "th-TH": "นี่ราคาเท่าไหร่?",
+          "ja-JP": "これはいくらですか？",
+          "ko-KR": "이거 얼마예요?",
+          "zh-CN": "这个多少钱？",
+          "zh-TW": "這個多少錢？"
         }
       },
       {
@@ -86,7 +151,20 @@ export const LESSONS: Lesson[] = [
           "es-MX": "¿Puedes ayudarme, por favor?",
           "fr-FR": "Pouvez-vous m'aider, s'il vous plaît?",
           "de-DE": "Können Sie mir bitte helfen?",
-          "it-IT": "Puoi aiutarmi, per favore?"
+          "it-IT": "Puoi aiutarmi, per favore?",
+          "ru-RU": "Вы можете мне помочь, пожалуйста?",
+          "ar-SA": "هل يمكنك مساعدتي، من فضلك؟",
+          "hi-IN": "क्या आप मेरी मदद कर सकते हैं, कृपया?",
+          "bn-BD": "আপনি কি আমাকে সাহায্য করতে পারেন, দয়া করে?",
+          "ur-PK": "کیا آپ میری مدد کر سکتے ہیں، براہ کرم؟",
+          "id-ID": "Bisakah Anda membantu saya, tolong?",
+          "tr-TR": "Bana yardım edebilir misin, lütfen?",
+          "vi-VN": "Bạn có thể giúp tôi không, làm ơn?",
+          "th-TH": "คุณช่วยฉันได้ไหม, กรุณา?",
+          "ja-JP": "助けてくれますか？",
+          "ko-KR": "도와줄 수 있나요, 제발?",
+          "zh-CN": "你能帮我吗，请？",
+          "zh-TW": "你能幫我嗎，請？"
         }
       }
     ]
