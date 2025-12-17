@@ -3,10 +3,13 @@
 import { useCallback, useRef, useState } from "react";
 
 type UseLocalMediaOpts = {
-  wantVideo: boolean; // audio call => false, video call => true
+  wantVideo: boolean; // video call => true, audio call => false
+  wantAudio?: boolean; // default true; set false for STT-only/mobile no-raw-mic
 };
 
 export function useLocalMedia(opts: UseLocalMediaOpts) {
+  const wantAudio = opts.wantAudio ?? true;
+
   const localStreamRef = useRef<MediaStream | null>(null);
   const localVideoElRef = useRef<HTMLVideoElement | null>(null);
 
@@ -26,45 +29,77 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
   }, []);
 
   const acquire = useCallback(async () => {
+    if (typeof navigator === "undefined") return null;
     if (localStreamRef.current) return localStreamRef.current;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: opts.wantVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
-    });
+    const constraints: MediaStreamConstraints = {
+      audio: wantAudio,
+      video: opts.wantVideo
+        ? { width: { ideal: 1280 }, height: { ideal: 720 } }
+        : false,
+    };
 
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    // default all tracks off until caller enables based on UX rules
-    const a = stream.getAudioTracks()[0];
+    // Default all tracks OFF until caller enables them per UX rules.
+    const a = stream.getAudioTracks?.()[0] || null;
     if (a) a.enabled = false;
 
-    const v = stream.getVideoTracks()[0];
+    const v = stream.getVideoTracks?.()[0] || null;
     if (v) v.enabled = false;
 
-    // attach if the video element already exists
-    if (localVideoElRef.current) attachLocalVideo(localVideoElRef.current);
-
+    // If we didn't request audio, reflect that in state
     setMicOn(false);
     setCamOn(false);
 
+    // Attach if the video element already exists
+    if (localVideoElRef.current) attachLocalVideo(localVideoElRef.current);
+
     return stream;
-  }, [attachLocalVideo, opts.wantVideo]);
+  }, [attachLocalVideo, opts.wantVideo, wantAudio]);
 
   const setMicEnabled = useCallback((enabled: boolean) => {
     const s = localStreamRef.current;
-    if (!s) return;
-    const a = s.getAudioTracks()[0];
+    const a = s?.getAudioTracks?.()[0] || null;
+
+    // If no audio track exists (wantAudio=false), just keep UI state coherent
     if (a) a.enabled = enabled;
-    setMicOn(enabled);
+    setMicOn(Boolean(a) && enabled);
   }, []);
 
   const setCamEnabled = useCallback((enabled: boolean) => {
     const s = localStreamRef.current;
-    if (!s) return;
-    const v = s.getVideoTracks()[0];
+    const v = s?.getVideoTracks?.()[0] || null;
     if (v) v.enabled = enabled;
-    setCamOn(enabled);
+    setCamOn(Boolean(v) && enabled);
+  }, []);
+
+  const stop = useCallback(() => {
+    const s = localStreamRef.current;
+    if (!s) return;
+
+    try {
+      s.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {}
+      });
+    } catch {}
+
+    localStreamRef.current = null;
+
+    // Clear element binding so camera light/etc. releases cleanly
+    const el = localVideoElRef.current;
+    if (el) {
+      try {
+        // @ts-ignore
+        el.srcObject = null;
+      } catch {}
+    }
+
+    setMicOn(false);
+    setCamOn(false);
   }, []);
 
   return {
@@ -75,5 +110,7 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     attachLocalVideo,
     setMicEnabled,
     setCamEnabled,
+    stop,
+    wantAudio,
   };
 }
