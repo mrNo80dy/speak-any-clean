@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
+
+import { useCallMode } from "@/hooks/useCallMode";
+import { useLocalMedia } from "@/hooks/useLocalMedia";
 
 // Types
 type RealtimeSubscribeStatus =
@@ -125,13 +128,21 @@ async function translateText(
 }
 
 export default function RoomPage() {
+  const router = useRouter();
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
-  // ---- Debug Mode -------------------------------------------------
+  // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
-  const debugKey = debugEnabled ? "debug" : "normal"; // forces re-init when query changes
+  const debugKey = debugEnabled ? "debug" : "normal";
+
+  const modeParam = (searchParams?.get("mode") || "").toLowerCase(); // "audio" | "video" | ""
+
+  // Pre-join: require explicit choice (no auto start)
+  const [prejoinDone, setPrejoinDone] = useState<boolean>(
+    modeParam === "audio" || modeParam === "video"
+  );
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -150,8 +161,6 @@ export default function RoomPage() {
 
   // ---- Refs / state -----------------------------------------
   const channelRef = useRef<RealtimeChannel | null>(null);
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
@@ -159,29 +168,15 @@ export default function RoomPage() {
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
+  // Track if user manually touched mic so we don't "helpfully" auto-mute later
+  const userTouchedMicRef = useRef(false);
+
   // STT control refs (IMPORTANT: only declared ONCE)
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
   const sttLastStartAtRef = useRef<number>(0);
 
-
   const sttRestartTimerRef = useRef<number | null>(null);
-  const sttRestartHistoryRef = useRef<number[]>([]); // timestamps (ms)
-
-  const clearSttRestartTimer = () => {
-    if (sttRestartTimerRef.current) {
-      window.clearTimeout(sttRestartTimerRef.current);
-      sttRestartTimerRef.current = null;
-    }
-  };
-
-  const recordRestart = () => {
-    const now = Date.now();
-    sttRestartHistoryRef.current = sttRestartHistoryRef.current.filter((t) => now - t < 6000);
-    sttRestartHistoryRef.current.push(now);
-  };
-
-  const tooManyRestarts = () => sttRestartHistoryRef.current.length >= 4;
 
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
@@ -198,7 +193,7 @@ export default function RoomPage() {
   const lastRtStatusRef = useRef<string>("INIT");
 
   const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
-  const [rtNonce, setRtNonce] = useState(0); // force a full rebuild if realtime dies
+  const [rtNonce, setRtNonce] = useState(0);
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -207,9 +202,6 @@ export default function RoomPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
-
-  const [micOn, setMicOn] = useState(false); // default muted
-  const [camOn, setCamOn] = useState(true);
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
@@ -237,61 +229,18 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 250));
   };
 
- const startSttNow = () => {
-  const rec = recognitionRef.current;
-  if (!rec) return;
-
-  clearSttRestartTimer();
-
-  // ✅ FORCE language before start
-  rec.lang =
-    speakLangRef.current ||
-    (typeof navigator !== "undefined" ? (navigator.language as string) : "en-US") ||
-    "en-US";
-
-  if (sttRunningRef.current) {
-    log("stt start skipped (already running)", { lang: rec.lang });
-    return;
-  }
-
-  sttStopRequestedRef.current = false;
-
-  try {
-    rec.start();
-    log("stt start() called (gesture)", { lang: rec.lang });
-  } catch (e: any) {
-    const msg = e?.message || String(e);
-    if (msg.includes("already started")) {
-      sttRunningRef.current = true;
-      log("stt start() already running (ignored)", { lang: rec.lang });
-    } else {
-      log("stt start() FAILED", { message: msg, lang: rec.lang });
-    }
-  }
-};
-
-
-  const stopSttNow = () => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-
-    clearSttRestartTimer();
-    sttStopRequestedRef.current = true;
-    sttRunningRef.current = false;
-
-    try {
-      rec.stop();
-      log("stt stop() called (gesture)");
-    } catch (e: any) {
-      log("stt stop() FAILED", { message: e?.message || String(e) });
+  const clearSttRestartTimer = () => {
+    if (sttRestartTimerRef.current) {
+      window.clearTimeout(sttRestartTimerRef.current);
+      sttRestartTimerRef.current = null;
     }
   };
 
   // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
-  const FINAL_AUTOSPEAK_TRANSLATED = true; // production autospeak
+  const FINAL_AUTOSPEAK_TRANSLATED = true;
 
-  // Debug toggles (only visible in ?debug=1)
+  // Debug toggles
   const [debugHearRawAudio, setDebugHearRawAudio] = useState(false);
   const [debugSpeakTranslated, setDebugSpeakTranslated] = useState(false);
 
@@ -316,33 +265,16 @@ export default function RoomPage() {
   const shouldSpeakTranslated =
     FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
 
-  // helper: whenever a local <video> mounts, attach the current stream
-  const attachLocalVideoRef = (el: HTMLVideoElement | null) => {
-    localVideoRef.current = el;
-    const stream = localStreamRef.current;
-    if (el && stream && el.srcObject !== stream) {
-      el.srcObject = stream;
-      el.muted = true;
-      el.playsInline = true as any;
-      el.setAttribute("playsinline", "true");
-      el.play().catch(() => {});
-    }
-  };
-
   function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
     const full: ChatMessage = {
       ...msg,
       id: crypto.randomUUID(),
       at: Date.now(),
     };
-    setMessages((prev) => [...prev.slice(-29), full]); // keep last 30
+    setMessages((prev) => [...prev.slice(-29), full]);
   }
 
   // ---- keep refs updated ------------------------------------
-  useEffect(() => {
-    micOnRef.current = micOn;
-  }, [micOn]);
-
   useEffect(() => {
     shouldMuteRawAudioRef.current = shouldMuteRawAudio;
   }, [shouldMuteRawAudio]);
@@ -368,7 +300,7 @@ export default function RoomPage() {
     displayNameRef.current = displayName || "You";
   }, [displayName]);
 
-  // Keep remote audio tracks in sync with the mute policy (prevents "stuck muted" tracks)
+  // Keep remote audio tracks in sync with the mute policy
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudioRef.current;
     Object.values(peerStreams).forEach((stream) => {
@@ -441,7 +373,7 @@ export default function RoomPage() {
       isLocal: true,
     });
 
-    // IMPORTANT: no local speak (you never wanted device read-back)
+    // IMPORTANT: no local speak
 
     if (channelRef.current) {
       channelRef.current.send({
@@ -452,6 +384,83 @@ export default function RoomPage() {
     }
 
     log("stt sent transcript", { lang, textLen: text.length });
+  };
+
+  const startSttNow = () => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+
+    clearSttRestartTimer();
+
+    rec.lang =
+      speakLangRef.current ||
+      (typeof navigator !== "undefined" ? (navigator.language as string) : "en-US") ||
+      "en-US";
+
+    if (sttRunningRef.current) {
+      log("stt start skipped (already running)", { lang: rec.lang });
+      return;
+    }
+
+    sttStopRequestedRef.current = false;
+
+    try {
+      rec.start();
+      log("stt start() called (gesture)", { lang: rec.lang });
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      if (msg.includes("already started")) {
+        sttRunningRef.current = true;
+        log("stt start() already running (ignored)", { lang: rec.lang });
+      } else {
+        log("stt start() FAILED", { message: msg, lang: rec.lang });
+      }
+    }
+  };
+
+  const stopSttNow = () => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+
+    clearSttRestartTimer();
+    sttStopRequestedRef.current = true;
+    sttRunningRef.current = false;
+
+    try {
+      rec.stop();
+      log("stt stop() called (gesture)");
+    } catch (e: any) {
+      log("stt stop() FAILED", { message: e?.message || String(e) });
+    }
+  };
+
+  // ---- Hooks you built ---------------------------------------
+  const participantCount = peerIds.length + 1;
+  const { mode, micDefaultOn, camDefaultOn } = useCallMode({
+    modeParam,
+    participantCount,
+  });
+
+  const localMedia = useLocalMedia({ wantVideo: mode === "video" });
+  const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
+    localMedia;
+
+  // Keep this behavior from your older page:
+  // - on mobile, do not send raw mic audio track over WebRTC (STT-only strategy)
+  const disableMobileAudioTrackIfPresent = () => {
+    if (!isMobile) return;
+    const s = localStreamRef.current;
+    if (!s) return;
+    const a = s.getAudioTracks()[0];
+    if (!a) return;
+    try {
+      a.enabled = false;
+      a.stop(); // stop capture so it can't leak
+      s.removeTrack(a);
+      log("mobile: stopped/removed audio track (STT-only)");
+    } catch {
+      // ignore
+    }
   };
 
   // ---- Helpers ----------------------------------------------
@@ -482,10 +491,9 @@ export default function RoomPage() {
   }
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
-    let existing = peersRef.current.get(remoteId);
+    const existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
-    // STUN only (TURN later when you have creds)
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
@@ -553,13 +561,13 @@ export default function RoomPage() {
       log("ontrack", { from: remoteId, kind: e.track?.kind });
     };
 
+    // Add local tracks
     if (localStreamRef.current) {
-  localStreamRef.current.getTracks().forEach((t) => {
-    // Don’t send local audio from mobile; translation is handled by STT -> broadcast -> TTS
-    if (isMobile && t.kind === "audio") return;
-    pc.addTrack(t, localStreamRef.current!);
-  });
-
+      localStreamRef.current.getTracks().forEach((t) => {
+        // mobile: keep STT-only policy by not sending audio
+        if (isMobile && t.kind === "audio") return;
+        pc.addTrack(t, localStreamRef.current!);
+      });
     } else {
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
@@ -579,10 +587,9 @@ export default function RoomPage() {
       );
 
       localStreamRef.current.getTracks().forEach((t) => {
-  if (isMobile && t.kind === "audio") return;
-  if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
-});
-
+        if (isMobile && t.kind === "audio") return;
+        if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
+      });
     }
 
     const offer = await pc.createOffer({
@@ -615,10 +622,9 @@ export default function RoomPage() {
       );
 
       localStreamRef.current.getTracks().forEach((t) => {
-  if (isMobile && t.kind === "audio") return;
-  if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
-});
-
+        if (isMobile && t.kind === "audio") return;
+        if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
+      });
     }
 
     const answer = await pc.createAnswer();
@@ -651,39 +657,6 @@ export default function RoomPage() {
     }
   }
 
-  async function acquireLocalMedia() {
-    if (localStreamRef.current) return localStreamRef.current;
-
-    const constraints = {
-  // On mobile, don’t grab the mic via getUserMedia when we’re doing STT-only translation.
-  // This prevents Chrome from starving SpeechRecognition of mic audio.
-      audio: isMobile ? false : true,
-      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-    };
-
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    localStreamRef.current = stream;
-
-    log("local media acquired", {
-      audioTracks: stream.getAudioTracks().length,
-      videoTracks: stream.getVideoTracks().length,
-    });
-
-    const audioTrack = stream.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = false;
-      setMicOn(false);
-    }
-
-    const videoTrack = stream.getVideoTracks()[0];
-    if (videoTrack) setCamOn(videoTrack.enabled);
-
-    if (localVideoRef.current) attachLocalVideoRef(localVideoRef.current);
-
-    return stream;
-  }
-
   // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudio;
@@ -695,7 +668,7 @@ export default function RoomPage() {
     });
 
     document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
-      if (v === localVideoRef.current) return;
+      if (v.dataset?.local === "1") return; // avoid local video element
       v.muted = !allowRaw;
       v.volume = allowRaw ? 1 : 0;
       if (allowRaw) v.play().catch(() => {});
@@ -734,14 +707,13 @@ export default function RoomPage() {
     if (speakLangRef.current) rec.lang = speakLangRef.current;
 
     rec.onstart = () => {
-  sttLastStartAtRef.current = Date.now();
-  sttRunningRef.current = true;
-  sttStopRequestedRef.current = false;
-  log("stt onstart", { lang: rec.lang });
-  setSttStatus("ok");
-  setSttErrorMessage(null);
-};
-
+      sttLastStartAtRef.current = Date.now();
+      sttRunningRef.current = true;
+      sttStopRequestedRef.current = false;
+      log("stt onstart", { lang: rec.lang });
+      setSttStatus("ok");
+      setSttErrorMessage(null);
+    };
 
     rec.onresult = (event: any) => {
       const results = event.results;
@@ -758,7 +730,6 @@ export default function RoomPage() {
         if (!t) continue;
 
         newestText = t;
-        log("stt partial", { t });
 
         if (r.isFinal) {
           sawFinal = true;
@@ -768,7 +739,6 @@ export default function RoomPage() {
         }
       }
 
-      // Android Chrome: often never gives isFinal
       if (!sawFinal && newestText) {
         sttPendingTextRef.current = newestText;
         clearFinalizeTimer();
@@ -782,56 +752,54 @@ export default function RoomPage() {
     };
 
     rec.onerror = (event: any) => {
-  log("stt error", { error: event?.error, message: event?.message, event });
-  setSttStatus("error");
-  setSttErrorMessage(event?.error || event?.message || "Speech recognition error.");
+      log("stt error", { error: event?.error, message: event?.message, event });
+      setSttStatus("error");
+      setSttErrorMessage(event?.error || event?.message || "Speech recognition error.");
 
-  // If Android says audio-capture or not-allowed, don't restart automatically.
-  if (event?.error === "audio-capture" || event?.error === "not-allowed" || event?.error === "service-not-allowed") {
-    sttStopRequestedRef.current = true;
-    clearSttRestartTimer();
-    try { rec.stop(); } catch {}
-  }
-};
-
+      if (
+        event?.error === "audio-capture" ||
+        event?.error === "not-allowed" ||
+        event?.error === "service-not-allowed"
+      ) {
+        sttStopRequestedRef.current = true;
+        clearSttRestartTimer();
+        try {
+          rec.stop();
+        } catch {}
+      }
+    };
 
     rec.onend = () => {
-  sttRunningRef.current = false;
+      sttRunningRef.current = false;
 
-  const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
-  log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
+      const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
+      log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
 
-  // If it ended almost immediately, don't get stuck in a restart loop.
-  // This usually means: mic capture failed, permission issue, or browser/service issue.
-  if (!sttStopRequestedRef.current && ranForMs < 800) {
-    log("stt ended too fast; disabling auto-restart", { ranForMs });
-    setSttStatus("error");
-    setSttErrorMessage(
-      "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
-    );
-
-    // Prevent further auto-restarts until user taps again
-    sttStopRequestedRef.current = true;
-    clearSttRestartTimer();
-    return;
-  }
-
-  // Normal auto-restart behavior (only if mic is still ON and we didn't request stop)
-  if (micOnRef.current && !sttStopRequestedRef.current) {
-    clearSttRestartTimer();
-    sttRestartTimerRef.current = window.setTimeout(() => {
-      try {
-        if (!sttRunningRef.current) {
-          rec.start();
-          log("stt auto-restart start() called", { lang: rec.lang });
-        }
-      } catch (e: any) {
-        log("stt auto-restart FAILED", { message: e?.message || String(e) });
+      if (!sttStopRequestedRef.current && ranForMs < 800) {
+        log("stt ended too fast; disabling auto-restart", { ranForMs });
+        setSttStatus("error");
+        setSttErrorMessage(
+          "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
+        );
+        sttStopRequestedRef.current = true;
+        clearSttRestartTimer();
+        return;
       }
-    }, 400);
-  }
-};
 
+      if (micOnRef.current && !sttStopRequestedRef.current) {
+        clearSttRestartTimer();
+        sttRestartTimerRef.current = window.setTimeout(() => {
+          try {
+            if (!sttRunningRef.current) {
+              rec.start();
+              log("stt auto-restart start() called", { lang: rec.lang });
+            }
+          } catch (e: any) {
+            log("stt auto-restart FAILED", { message: e?.message || String(e) });
+          }
+        }, 400);
+      }
+    };
 
     recognitionRef.current = rec;
 
@@ -845,11 +813,12 @@ export default function RoomPage() {
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debugKey]);
+  }, [debugKey, speakLang]);
 
   // ---- Lifecycle: join room, wire realtime -------------------
   useEffect(() => {
     if (!roomId || !clientId) return;
+    if (!prejoinDone) return; // ✅ do not start media/realtime until choice made
 
     let alive = true;
 
@@ -866,7 +835,30 @@ export default function RoomPage() {
 
     (async () => {
       try {
-        await acquireLocalMedia();
+        await acquire();
+
+        // preserve mobile STT-only policy
+        disableMobileAudioTrackIfPresent();
+
+        log("local media acquired", {
+          audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+          videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+          mode,
+        });
+
+        // Apply hook-driven defaults
+        // - camera: on for video mode, off for audio mode
+        setCamEnabled(camDefaultOn);
+
+        // - mic default: on for 1:1 (<=2 total), off for 3+ total
+        //   but don't auto-start STT on mobile until user taps mic
+        if (!isMobile) {
+          setMicEnabled(micDefaultOn);
+          micOnRef.current = micDefaultOn;
+        } else {
+          setMicEnabled(false);
+          micOnRef.current = false;
+        }
 
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
@@ -926,7 +918,6 @@ export default function RoomPage() {
             isLocal: false,
           });
 
-          // ✅ Speak ONLY remote translated speech
           if (shouldSpeakTranslatedRef.current) {
             speakText(translatedText, outLang, 0.9);
           }
@@ -957,6 +948,17 @@ export default function RoomPage() {
           setPeerIds(others);
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
+
+          // ✅ 3+ users default: mic OFF (unless user already touched mic)
+          const total = others.length + 1;
+          if (total >= 3 && !userTouchedMicRef.current) {
+            if (!isMobile) {
+              setMicEnabled(false);
+            }
+            micOnRef.current = false;
+            stopSttNow();
+            log("auto-muted for 3+ participants", { total });
+          }
 
           others.forEach((id) => {
             if (!peersRef.current.has(id)) {
@@ -1010,58 +1012,55 @@ export default function RoomPage() {
       channelRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, debugKey, rtNonce]);
+  }, [roomId, clientId, debugKey, rtNonce, prejoinDone, mode]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
-    if (!localStreamRef.current) return;
-    const videoTrack = localStreamRef.current.getVideoTracks()[0];
-    if (!videoTrack) return;
-    const next = !videoTrack.enabled;
-    videoTrack.enabled = next;
-    setCamOn(next);
+    if (mode === "audio") return;
+    const s = localStreamRef.current;
+    const vt = s?.getVideoTracks?.()[0] || null;
+    if (!vt) return;
+    setCamEnabled(!vt.enabled);
   };
 
   const toggleMic = async () => {
-  const next = !micOn;
+    userTouchedMicRef.current = true;
 
-  // Always update UI state
-  setMicOn(next);
-  micOnRef.current = next;
+    const next = !micOn;
+    micOnRef.current = next;
 
-  // If we have a real getUserMedia audio track (desktop), toggle it too.
-  const audioTrack = localStreamRef.current?.getAudioTracks?.()[0] || null;
-  if (audioTrack) {
-    audioTrack.enabled = next;
-  } else {
-    log("mobile mic toggle (stt-only)", { next });
-  }
+    // desktop: mic track exists
+    if (!isMobile) {
+      setMicEnabled(next);
+    } else {
+      // mobile STT-only: no sending mic audio; mic toggle means STT toggle
+      // keep localMedia mic state in sync for UI
+      setMicEnabled(next);
+      disableMobileAudioTrackIfPresent();
+      log("mobile mic toggle (stt-only)", { next });
+    }
 
-  // STT start/stop is what matters for translation
-  if (next && sttStatusRef.current !== "unsupported") {
-    startSttNow(); // ✅ user gesture
-  } else {
-    stopSttNow();  // ✅ user gesture
-  }
-};
-
+    // STT is what matters for translation
+    if (next && sttStatusRef.current !== "unsupported") {
+      startSttNow();
+    } else {
+      stopSttNow();
+    }
+  };
 
   const toggleHand = () => {
-  const next = !myHandUp;
-  setMyHandUp(next);
+    const next = !myHandUp;
+    setMyHandUp(next);
 
-  if (channelRef.current) {
-    channelRef.current.send({
-      type: "broadcast",
-      event: "hand",
-      payload: { from: clientId, up: next },
-    });
-  }
-};
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "hand",
+        payload: { from: clientId, up: next },
+      });
+    }
+  };
 
-
-
-  // Manual text caption submit
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
@@ -1117,10 +1116,66 @@ export default function RoomPage() {
 
   const effectiveCaptionLines = Math.max(1, captionLines || 3);
 
+  const shareRoomCode = async () => {
+    const code = roomInfo?.code;
+    if (!code) return;
+
+    const shareText = `Any-Speak room code: ${code}`;
+
+    try {
+      // @ts-ignore
+      if (navigator.share) {
+        // @ts-ignore
+        await navigator.share({ text: shareText });
+      } else {
+        await navigator.clipboard.writeText(code);
+        log("copied room code", { code });
+      }
+    } catch {
+      try {
+        await navigator.clipboard.writeText(code);
+        log("copied room code", { code });
+      } catch {}
+    }
+  };
+
   // ---- Render -----------------------------------------------
   return (
     <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full">
+        {/* Pre-join overlay */}
+        {!prejoinDone && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+            <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-950 p-4">
+              <div className="text-lg font-semibold mb-2">Start call</div>
+              <div className="text-sm text-neutral-300 mb-4">
+                Choose audio or video. (You can switch later.)
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
+                  onClick={() => {
+                    router.replace(`/room/${roomId}?mode=audio${debugEnabled ? "&debug=1" : ""}`);
+                    setPrejoinDone(true);
+                  }}
+                >
+                  Audio
+                </button>
+                <button
+                  className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
+                  onClick={() => {
+                    router.replace(`/room/${roomId}?mode=video${debugEnabled ? "&debug=1" : ""}`);
+                    setPrejoinDone(true);
+                  }}
+                >
+                  Video
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between gap-2 flex-wrap px-4 py-2 bg-gradient-to-b from-black/70 to-transparent">
           <div className="flex items-center gap-2">
             {roomInfo?.code && (
@@ -1129,12 +1184,22 @@ export default function RoomPage() {
                 <span className="px-3 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 font-mono tracking-[0.25em] text-xs md:text-sm">
                   {roomInfo.code}
                 </span>
+                <button
+                  type="button"
+                  onClick={shareRoomCode}
+                  className="px-3 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 text-xs"
+                >
+                  Share
+                </button>
               </>
             )}
           </div>
 
           <div className="flex-1 text-center order-first md:order-none">
             <h1 className="text-lg md:text-xl font-semibold">Any-Speak</h1>
+            <div className="text-[10px] text-neutral-400">
+              {mode === "video" ? "Video call" : "Audio call"} · {totalParticipants} total
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -1146,7 +1211,14 @@ export default function RoomPage() {
               {micOn ? "Mic On" : "Mic Off"}
             </button>
 
-            <button onClick={toggleCamera} className={`${pillBase} ${camClass}`}>
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${
+                mode === "audio" ? "opacity-40 cursor-not-allowed" : ""
+              }`}
+              disabled={mode === "audio"}
+              title={mode === "audio" ? "Audio call: camera disabled" : "Toggle camera"}
+            >
               {camOn ? "Cam On" : "Cam Off"}
             </button>
 
@@ -1260,11 +1332,8 @@ export default function RoomPage() {
                 Raw audio muted:{" "}
                 <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
                 · Speak translated:{" "}
-                <span className="font-mono">
-                  {shouldSpeakTranslated ? "true" : "false"}
-                </span>{" "}
-                · Connected:{" "}
-                <span className="font-mono">{connected ? "true" : "false"}</span>
+                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
+                · Connected: <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
 
               <div className="mt-3 max-h-40 overflow-auto rounded-lg bg-black/50 border border-neutral-700 p-2">
@@ -1291,7 +1360,8 @@ export default function RoomPage() {
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
                 <video
-                  ref={attachLocalVideoRef}
+                  data-local="1"
+                  ref={attachLocalVideo}
                   autoPlay
                   playsInline
                   className="h-full w-full object-cover"
@@ -1335,7 +1405,8 @@ export default function RoomPage() {
 
                 <div className="absolute bottom-4 right-4 w-32 h-20 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg">
                   <video
-                    ref={attachLocalVideoRef}
+                    data-local="1"
+                    ref={attachLocalVideo}
                     autoPlay
                     playsInline
                     className="h-full w-full object-cover"
@@ -1352,7 +1423,8 @@ export default function RoomPage() {
               <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 sm:grid-cols-2 auto-rows-fr">
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
                   <video
-                    ref={attachLocalVideoRef}
+                    data-local="1"
+                    ref={attachLocalVideo}
                     autoPlay
                     playsInline
                     className="h-full w-full object-cover"
@@ -1405,7 +1477,8 @@ export default function RoomPage() {
                   {spotlightId === "local" ? (
                     <>
                       <video
-                        ref={attachLocalVideoRef}
+                        data-local="1"
+                        ref={attachLocalVideo}
                         autoPlay
                         playsInline
                         className="h-full w-full object-cover"
@@ -1439,9 +1512,7 @@ export default function RoomPage() {
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                         {handsUp[spotlightId] && <span>✋</span>}
-                        <span>
-                          {peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}
-                        </span>
+                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
                       </div>
                     </>
                   )}
@@ -1455,7 +1526,8 @@ export default function RoomPage() {
                       className="relative h-20 md:h-24 aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-700/80 flex-shrink-0"
                     >
                       <video
-                        ref={attachLocalVideoRef}
+                        data-local="1"
+                        ref={attachLocalVideo}
                         autoPlay
                         playsInline
                         className="h-full w-full object-cover"
@@ -1510,9 +1582,13 @@ export default function RoomPage() {
             )}
           </div>
 
-          {/* Subtitle overlay */}
+          {/* Subtitle overlay (moved up when Text input is open) */}
           {showCaptions && messages.length > 0 && (
-            <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+            <div
+              className={`pointer-events-none absolute inset-x-0 ${
+                showTextInput ? "bottom-24" : "bottom-2"
+              } flex justify-center`}
+            >
               <div className="max-w-xl w-[92%] space-y-2">
                 {messages.slice(-effectiveCaptionLines).map((m) => (
                   <div
@@ -1573,12 +1649,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
