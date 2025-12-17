@@ -525,20 +525,14 @@ export default function LearnPage() {
     }
   }
 
- return (
-  <div className="min-h-screen bg-background text-foreground">
-    <AppHeader />
-    <main className="mx-auto max-w-3xl px-4 py-8">
-      {/* your existing Learn UI */}
-
-      <Card className="w-full max-w-xl md:max-w-2xl shadow-lg flex flex-col">
-
+  return (
+    <div className="min-h-screen w-full flex items-center justify-center bg-slate-900 text-slate-100 px-4 py-4">
+      <Card className="w-full max-w-xl md:max-w-2xl bg-slate-800 border border-slate-400 shadow-2xl flex flex-col">
         <CardHeader className="pb-2 text-center">
-          <CardTitle className="text-2xl font-bold">Any-Speak Learn</CardTitle>
-<p className="text-sm text-muted-foreground mt-1">
-  Type or speak in your language, hear it in another, then practice saying it.
-</p>
-
+          <CardTitle className="text-2xl font-bold text-white">Any-Speak Learn</CardTitle>
+          <p className="text-sm text-slate-200 mt-1">
+            Type or speak in your language, hear it in another, then practice saying it.
+          </p>
         </CardHeader>
 
         <CardContent className="space-y-3 px-5 pb-3">
