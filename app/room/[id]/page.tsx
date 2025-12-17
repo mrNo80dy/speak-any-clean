@@ -1146,7 +1146,11 @@ export default function RoomPage() {
     className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
     onClick={() => {
       setChosenMode("audio");
-      router.replace(`/room/${roomId}?mode=audio${debugEnabled ? "&debug=1" : ""}`);
+
+      const qs = new URLSearchParams(searchParams?.toString() || "");
+      qs.set("mode", "audio");
+      router.replace(`/room/${roomId}?${qs.toString()}`);
+
       setPrejoinDone(true);
     }}
   >
@@ -1157,13 +1161,18 @@ export default function RoomPage() {
     className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
     onClick={() => {
       setChosenMode("video");
-      router.replace(`/room/${roomId}?mode=video${debugEnabled ? "&debug=1" : ""}`);
+
+      const qs = new URLSearchParams(searchParams?.toString() || "");
+      qs.set("mode", "video");
+      router.replace(`/room/${roomId}?${qs.toString()}`);
+
       setPrejoinDone(true);
     }}
   >
     Video
   </button>
 </div>
+
 
             </div>
           </div>
@@ -1642,5 +1651,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
