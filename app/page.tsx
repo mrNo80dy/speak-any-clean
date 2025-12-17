@@ -131,25 +131,19 @@ export default function HomePage() {
   };
 
   return (
-  <div className="min-h-screen bg-background text-foreground">
-    <AppHeader />
-
-    <main className="mx-auto max-w-5xl px-4 py-10">
-      {/* keep your existing content here, but remove the hardcoded gradient + gray text */}
-
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="w-full max-w-4xl">
         <div className="text-center mb-8">
-  <div className="flex items-center justify-center gap-3 mb-4">
-    <div className="p-3 rounded-xl bg-primary text-primary-foreground">
-      <Video className="w-8 h-8" />
-    </div>
-    <h1 className="text-4xl font-bold">Any-Speak</h1>
-  </div>
-  <p className="text-lg text-muted-foreground">
-    Real-time video chat with live translation
-  </p>
-</div>
-
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <div className="p-3 bg-indigo-600 rounded-xl">
+              <Video className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-4xl font-bold text-gray-900">Any-Speak</h1>
+          </div>
+          <p className="text-lg text-gray-600">
+            Real-time video chat with live translation
+          </p>
+        </div>
 
         <div className="grid md:grid-cols-2 gap-6">
           {/* Create Room */}
@@ -251,4 +245,3 @@ export default function HomePage() {
     </div>
   );
 }
-
