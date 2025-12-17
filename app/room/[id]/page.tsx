@@ -144,6 +144,13 @@ export default function RoomPage() {
     modeParam === "audio" || modeParam === "video"
   );
 
+  const [chosenMode, setChosenMode] = useState<"audio" | "video" | null>(
+  modeParam === "video" ? "video" : modeParam === "audio" ? "audio" : null
+  );
+
+  // Use this everywhere instead of raw modeParam during the “start call” click tick
+  const effectiveModeParam = chosenMode ?? (modeParam as any) ?? "audio";
+
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -437,7 +444,7 @@ export default function RoomPage() {
   // ---- Hooks you built ---------------------------------------
   const participantCount = peerIds.length + 1;
   const { mode, micDefaultOn, camDefaultOn } = useCallMode({
-    modeParam,
+    modeParam: effectiveModeParam,
     participantCount,
   });
 
@@ -1135,25 +1142,29 @@ export default function RoomPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
-                  onClick={() => {
-                    router.replace(`/room/${roomId}?mode=audio${debugEnabled ? "&debug=1" : ""}`);
-                    setPrejoinDone(true);
-                  }}
-                >
-                  Audio
-                </button>
-                <button
-                  className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
-                  onClick={() => {
-                    router.replace(`/room/${roomId}?mode=video${debugEnabled ? "&debug=1" : ""}`);
-                    setPrejoinDone(true);
-                  }}
-                >
-                  Video
-                </button>
-              </div>
+  <button
+    className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
+    onClick={() => {
+      setChosenMode("audio");
+      router.replace(`/room/${roomId}?mode=audio${debugEnabled ? "&debug=1" : ""}`);
+      setPrejoinDone(true);
+    }}
+  >
+    Audio
+  </button>
+
+  <button
+    className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
+    onClick={() => {
+      setChosenMode("video");
+      router.replace(`/room/${roomId}?mode=video${debugEnabled ? "&debug=1" : ""}`);
+      setPrejoinDone(true);
+    }}
+  >
+    Video
+  </button>
+</div>
+
             </div>
           </div>
         )}
@@ -1631,4 +1642,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
