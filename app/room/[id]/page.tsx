@@ -779,19 +779,25 @@ export default function RoomPage() {
         return;
       }
 
-      if (micOnRef.current && !sttStopRequestedRef.current) {
-        clearSttRestartTimer();
-        sttRestartTimerRef.current = window.setTimeout(() => {
-          try {
-            if (!sttRunningRef.current) {
-              rec.start();
-              log("stt auto-restart start() called", { lang: rec.lang });
-            }
-          } catch (e: any) {
-            log("stt auto-restart FAILED", { message: e?.message || String(e) });
-          }
-        }, 400);
+      // ✅ Android: don't auto-restart (prevents "ding ding" loop)
+if (isMobile) {
+  log("stt ended (mobile) — auto-restart disabled", { ranForMs });
+  return;
+}
+
+if (micOnRef.current && !sttStopRequestedRef.current) {
+  clearSttRestartTimer();
+  sttRestartTimerRef.current = window.setTimeout(() => {
+    try {
+      if (!sttRunningRef.current) {
+        rec.start();
+        log("stt auto-restart start() called", { lang: rec.lang });
       }
+    } catch (e: any) {
+      log("stt auto-restart FAILED", { message: e?.message || String(e) });
+    }
+  }, 400);
+}
     };
 
     recognitionRef.current = rec;
@@ -1651,6 +1657,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
