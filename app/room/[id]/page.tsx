@@ -763,43 +763,50 @@ export default function RoomPage() {
     };
 
     rec.onend = () => {
-      sttRunningRef.current = false;
+  sttRunningRef.current = false;
 
-      const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
-      log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
+  const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
+  log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
 
-      if (!sttStopRequestedRef.current && ranForMs < 800) {
-        log("stt ended too fast; disabling auto-restart", { ranForMs });
-        setSttStatus("error");
-        setSttErrorMessage(
-          "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
-        );
-        sttStopRequestedRef.current = true;
-        clearSttRestartTimer();
-        return;
+  // If it ended instantly, keep your existing error behavior
+  if (!sttStopRequestedRef.current && ranForMs < 800) {
+    log("stt ended too fast; disabling auto-restart", { ranForMs });
+    setSttStatus("error");
+    setSttErrorMessage(
+      "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
+    );
+    sttStopRequestedRef.current = true;
+    clearSttRestartTimer();
+    return;
+  }
+
+  // ✅ Android: DO NOT auto-restart (prevents "ding ding")
+  // ✅ Also: reflect reality in UI — STT ended, so mic is effectively off
+  if (isMobile) {
+    micOnRef.current = false;
+    // keep UI in sync (your useLocalMedia now allows this even with no audio track)
+    setMicEnabled(false);
+
+    log("stt ended (mobile) — auto-restart disabled, mic UI forced off", { ranForMs });
+    return;
+  }
+
+  // Desktop: keep your auto-restart behavior
+  if (micOnRef.current && !sttStopRequestedRef.current) {
+    clearSttRestartTimer();
+    sttRestartTimerRef.current = window.setTimeout(() => {
+      try {
+        if (!sttRunningRef.current) {
+          rec.start();
+          log("stt auto-restart start() called", { lang: rec.lang });
+        }
+      } catch (e: any) {
+        log("stt auto-restart FAILED", { message: e?.message || String(e) });
       }
-
-      // ✅ Android: don't auto-restart (prevents "ding ding" loop)
-if (isMobile) {
-  log("stt ended (mobile) — auto-restart disabled", { ranForMs });
-  return;
-}
-
-if (micOnRef.current && !sttStopRequestedRef.current) {
-  clearSttRestartTimer();
-  sttRestartTimerRef.current = window.setTimeout(() => {
-    try {
-      if (!sttRunningRef.current) {
-        rec.start();
-        log("stt auto-restart start() called", { lang: rec.lang });
-      }
-    } catch (e: any) {
-      log("stt auto-restart FAILED", { message: e?.message || String(e) });
-    }
-  }, 400);
-}
-    };
-
+    }, 400);
+  }
+};
+  
     recognitionRef.current = rec;
 
     return () => {
@@ -1657,6 +1664,7 @@ if (micOnRef.current && !sttStopRequestedRef.current) {
     </div>
   );
 }
+
 
 
 
