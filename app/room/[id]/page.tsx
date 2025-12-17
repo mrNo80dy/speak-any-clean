@@ -441,27 +441,13 @@ export default function RoomPage() {
     participantCount,
   });
 
-  const localMedia = useLocalMedia({ wantVideo: mode === "video" });
+  const localMedia = useLocalMedia({
+  wantVideo: mode === "video",
+  wantAudio: !isMobile, // ✅ mobile = STT-only (no raw mic track requested)
+});
+
   const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
     localMedia;
-
-  // Keep this behavior from your older page:
-  // - on mobile, do not send raw mic audio track over WebRTC (STT-only strategy)
-  const disableMobileAudioTrackIfPresent = () => {
-    if (!isMobile) return;
-    const s = localStreamRef.current;
-    if (!s) return;
-    const a = s.getAudioTracks()[0];
-    if (!a) return;
-    try {
-      a.enabled = false;
-      a.stop(); // stop capture so it can't leak
-      s.removeTrack(a);
-      log("mobile: stopped/removed audio track (STT-only)");
-    } catch {
-      // ignore
-    }
-  };
 
   // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
@@ -837,9 +823,6 @@ export default function RoomPage() {
       try {
         await acquire();
 
-        // preserve mobile STT-only policy
-        disableMobileAudioTrackIfPresent();
-
         log("local media acquired", {
           audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
           videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
@@ -1033,12 +1016,11 @@ export default function RoomPage() {
     if (!isMobile) {
       setMicEnabled(next);
     } else {
-      // mobile STT-only: no sending mic audio; mic toggle means STT toggle
-      // keep localMedia mic state in sync for UI
-      setMicEnabled(next);
-      disableMobileAudioTrackIfPresent();
-      log("mobile mic toggle (stt-only)", { next });
-    }
+  // mobile STT-only: no audio track exists; mic toggle == STT toggle
+  setMicEnabled(next); // will stay false internally because no track exists
+  log("mobile mic toggle (stt-only)", { next });
+}
+
 
     // STT is what matters for translation
     if (next && sttStatusRef.current !== "unsupported") {
@@ -1649,3 +1631,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
