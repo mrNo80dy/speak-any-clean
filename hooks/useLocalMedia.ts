@@ -65,7 +65,8 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
 
     // If no audio track exists (wantAudio=false), just keep UI state coherent
     if (a) a.enabled = enabled;
-    setMicOn(Boolean(a) && enabled);
+  // ✅ Always reflect the user's intent in the UI (mobile STT-only has no audio track)
+    setMicOn(enabled);
   }, []);
 
   const setCamEnabled = useCallback((enabled: boolean) => {
