@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-
+import { LANGUAGES } from "@/lib/languages";
 import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 
@@ -1345,9 +1345,12 @@ const toggleHand = () => {
                     value={speakLang}
                     onChange={(e) => setSpeakLang(e.target.value)}
                     className="w-full bg-black/60 text-xs border border-neutral-700 rounded-lg px-2 py-2"
-                  >
-                    <option value="en-US">English (en-US)</option>
-                    <option value="pt-BR">Português (pt-BR)</option>
+                    >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.label} ({l.code})
+                      </option>
+                    ))}
                   </select>
                 </label>
 
@@ -1717,6 +1720,7 @@ const toggleHand = () => {
     </div>
   );
 }
+
 
 
 
