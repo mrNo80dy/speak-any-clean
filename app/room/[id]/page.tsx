@@ -889,18 +889,20 @@ export default function RoomPage() {
 
     (async () => {
       try {
-        // ✅ Always acquire once so the browser grants mic permission (STT needs it)
-await acquire();
+  // ✅ Always acquire once so the browser grants mic permission (STT needs it)
+  await acquire();
 
-log("local media acquired", {
-  audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-  videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-  mode,
-});
+  log("local media acquired", {
+    audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+    videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+    mode,
+  });
 
-} else {
-  log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
+  // ...the rest of your code continues here (setCamEnabled, setMicEnabled, etc)
+} catch (err) {
+  log("init error", { err: (err as Error).message });
 }
+
 
 
         // Apply hook-driven defaults
@@ -1774,4 +1776,5 @@ log("local media acquired", {
     </div>
   );
 }
+
 
