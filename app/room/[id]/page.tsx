@@ -1678,7 +1678,7 @@ useEffect(() => {
         {/* Bottom control bar */}
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            const pttHeldRef = useRef(false);
+            
 
 <button
   className={`${pillBase} ${micClass} flex-1`}
@@ -1702,7 +1702,6 @@ useEffect(() => {
     setSttListening(true);
     log("PTT down", {});
   }}
-   const pttHeldRef = useRef(false);
 
     // ✅ If Android spuriously cancels while you're still holding,
     // pointer capture usually prevents this. But if it happens anyway,
@@ -1780,6 +1779,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
