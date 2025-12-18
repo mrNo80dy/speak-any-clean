@@ -237,7 +237,7 @@ export default function RoomPage() {
 
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [showCaptions, setShowCaptions] = useState(false);
+  const showCaptions = true; // ✅ always on
   const [captionLines, setCaptionLines] = useState<number>(3);
 
   // Manual text captions
@@ -473,6 +473,14 @@ export default function RoomPage() {
       log("stt stop() FAILED", { message: e?.message || String(e) });
     }
   };
+
+  const flushPendingStt = () => {
+  clearFinalizeTimer();
+  const pending = (sttPendingTextRef.current || "").trim();
+  sttPendingTextRef.current = "";
+  if (pending) void sendFinalTranscript(pending, recognitionRef.current?.lang || speakLangRef.current);
+};
+
 
   // ---- Hooks you built ---------------------------------------
   const participantCount = peerIds.length + 1;
@@ -1204,7 +1212,7 @@ if (!(isMobile && mode === "audio")) {
     }
   };
 
-  // ---- Render -----------------------------------------------
+    // ---- Render -----------------------------------------------
   return (
     <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full">
@@ -1222,12 +1230,10 @@ if (!(isMobile && mode === "audio")) {
                   className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
                   onClick={() => {
                     setChosenMode("audio");
-
                     const qs = new URLSearchParams(searchParams?.toString() || "");
                     qs.set("mode", "audio");
                     if (debugEnabled) qs.set("debug", "1");
                     router.replace(`/room/${roomId}?${qs.toString()}`);
-
                     setPrejoinDone(true);
                   }}
                 >
@@ -1238,12 +1244,10 @@ if (!(isMobile && mode === "audio")) {
                   className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
                   onClick={() => {
                     setChosenMode("video");
-
                     const qs = new URLSearchParams(searchParams?.toString() || "");
                     qs.set("mode", "video");
                     if (debugEnabled) qs.set("debug", "1");
                     router.replace(`/room/${roomId}?${qs.toString()}`);
-
                     setPrejoinDone(true);
                   }}
                 >
@@ -1254,96 +1258,32 @@ if (!(isMobile && mode === "audio")) {
           </div>
         )}
 
-        <header className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between gap-2 flex-wrap px-4 py-2 bg-gradient-to-b from-black/70 to-transparent">
-          <div className="flex items-center gap-2">
-            {roomInfo?.code && (
-              <>
-                <span className="text-xs text-neutral-300">Room Code</span>
-                <span className="px-3 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 font-mono tracking-[0.25em] text-xs md:text-sm">
-                  {roomInfo.code}
-                </span>
-                <button
-                  type="button"
-                  onClick={shareRoomCode}
-                  className="px-3 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 text-xs"
-                >
-                  Share
-                </button>
-              </>
-            )}
-          </div>
-
-          <div className="flex-1 text-center order-first md:order-none">
-            <h1 className="text-lg md:text-xl font-semibold">Any-Speak</h1>
-            <div className="text-[10px] text-neutral-400">
-              {mode === "video" ? "Video call" : "Audio call"} · {totalParticipants} total
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className={`${pillBase} ${connectedClass}`}>
-              {online ? "Online" : "Offline"}
-            </span>
-
-            <button onClick={toggleMic} className={`${pillBase} ${micClass}`}>
-              {isMobile
-                ? sttListening
-                  ? "Mic On"
-                  : micArmedRef.current
-                  ? "Resume"
-                  : "Mic Off"
-                : micOn
-                ? "Mic On"
-                : "Mic Off"}
-            </button>
-
-            <button
-              onClick={toggleCamera}
-              className={`${pillBase} ${camClass} ${
-                mode === "audio" ? "opacity-40 cursor-not-allowed" : ""
-              }`}
-              disabled={mode === "audio"}
-              title={mode === "audio" ? "Audio call: camera disabled" : "Toggle camera"}
-            >
-              {camOn ? "Cam On" : "Cam Off"}
-            </button>
-
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setShowCaptions((v) => !v)}
-                className={`${pillBase} ${
-                  showCaptions
-                    ? "bg-blue-500 text-white border-blue-400"
-                    : "bg-neutral-900 text-neutral-100 border-neutral-700"
-                }`}
-              >
-                CC
-              </button>
-              {showCaptions && (
-                <select
-                  value={captionLines}
-                  onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-                  className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
-                >
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                  <option value={3}>3</option>
-                  <option value={4}>4</option>
-                  <option value={5}>5</option>
-                </select>
+        {/* Minimal top header (mobile safe) */}
+        <header className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-gradient-to-b from-black/70 to-transparent">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              {roomInfo?.code && (
+                <>
+                  <span className="text-[10px] text-neutral-300">Room</span>
+                  <span className="px-2 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 font-mono tracking-[0.25em] text-[10px]">
+                    {roomInfo.code}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={shareRoomCode}
+                    className="px-2 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 text-[10px]"
+                  >
+                    Share
+                  </button>
+                </>
               )}
             </div>
 
-            <button
-              onClick={() => setShowTextInput((v) => !v)}
-              className={`${pillBase} ${
-                showTextInput
-                  ? "bg-emerald-600 text-white border-emerald-500"
-                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
-              }`}
-            >
-              Text
-            </button>
+            <div className="flex items-center gap-2">
+              <span className={`${pillBase} ${connectedClass}`}>
+                {online ? "Online" : "Offline"}
+              </span>
+            </div>
           </div>
         </header>
 
@@ -1415,7 +1355,7 @@ if (!(isMobile && mode === "audio")) {
                   </label>
 
                   <div className="text-[10px] text-neutral-400">
-                    Tip: after changing “I speak”, toggle Mic Off → On to apply.
+                    Tip: after changing “I speak”, hold to talk again.
                   </div>
                 </div>
               </div>
@@ -1438,19 +1378,19 @@ if (!(isMobile && mode === "audio")) {
           )}
 
           {/* STT status */}
-          {showCaptions && sttStatus !== "ok" && (
+          {sttStatus !== "ok" && (
             <div className="absolute top-16 left-4 z-20 text-[10px] md:text-xs text-amber-300 bg-black/60 px-2 py-1 rounded">
               {sttStatus === "unsupported"
-                ? "Live captions mic not supported on this device. Use Text button."
+                ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
-                ? sttErrorMessage || "Live captions mic error. Use Text button."
+                ? sttErrorMessage || "Live captions mic error. Use Text."
                 : "Checking live captions mic..."}
             </div>
           )}
 
-          {showCaptions && isMobile && sttArmedNotListening && (
-            <div className="absolute top-20 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
-              Android stopped listening. Tap Resume.
+          {isMobile && sttArmedNotListening && (
+            <div className="absolute top-16 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
+              Captions paused. Hold to Talk.
             </div>
           )}
 
@@ -1680,11 +1620,11 @@ if (!(isMobile && mode === "audio")) {
             )}
           </div>
 
-          {/* Subtitle overlay (moved up when Text input is open) */}
-          {showCaptions && messages.length > 0 && (
+          {/* Subtitle overlay */}
+          {messages.length > 0 && (
             <div
               className={`pointer-events-none absolute inset-x-0 ${
-                showTextInput ? "bottom-24" : "bottom-2"
+                showTextInput ? "bottom-28" : "bottom-20"
               } flex justify-center`}
             >
               <div className="max-w-xl w-[92%] space-y-2">
@@ -1715,7 +1655,7 @@ if (!(isMobile && mode === "audio")) {
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="pointer-events-auto absolute inset-x-0 bottom-16 flex justify-center"
+              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
@@ -1735,16 +1675,97 @@ if (!(isMobile && mode === "audio")) {
           )}
         </main>
 
+        {/* Bottom control bar */}
+        <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              className={`${pillBase} ${micClass} flex-1`}
+              onPointerDown={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
+                userTouchedMicRef.current = true;
+                micArmedRef.current = true;
+                setSttArmedNotListening(false);
+                startSttNow();
+                setSttListening(true);
+                log("PTT down", {});
+              }}
+              onPointerUp={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
+                micArmedRef.current = false;
+                stopSttNow();
+                flushPendingStt();
+                setSttListening(false);
+                log("PTT up", {});
+              }}
+              onPointerCancel={() => {
+                if (!isMobile) return;
+                micArmedRef.current = false;
+                stopSttNow();
+                flushPendingStt();
+                setSttListening(false);
+                log("PTT cancel", {});
+              }}
+              onClick={() => {
+                if (isMobile) return;
+                toggleMic();
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {isMobile
+                ? sttListening
+                  ? "Hold… Talking"
+                  : "Hold to Talk"
+                : micOn
+                ? "Mic On"
+                : "Mic Off"}
+            </button>
+
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${
+                mode === "audio" ? "opacity-40 cursor-not-allowed" : ""
+              }`}
+              disabled={mode === "audio"}
+            >
+              {camOn ? "Cam" : "Cam Off"}
+            </button>
+
+            <button
+              onClick={() => setShowTextInput((v) => !v)}
+              className={`${pillBase} ${
+                showTextInput
+                  ? "bg-emerald-600 text-white border-emerald-500"
+                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
+              }`}
+            >
+              Text
+            </button>
+
+            <select
+              value={captionLines}
+              onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
+              className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
+              title="Caption lines"
+            >
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+              <option value={5}>5</option>
+            </select>
+          </div>
+        </div>
+
         {/* Hand raise button */}
         <button
           type="button"
           onClick={toggleHand}
-          className="fixed bottom-4 right-4 z-30 rounded-full w-12 h-12 flex items-center justify-center bg-amber-500 hover:bg-amber-400 text-black shadow-lg"
+          className="fixed bottom-24 right-4 z-30 rounded-full w-12 h-12 flex items-center justify-center bg-amber-500 hover:bg-amber-400 text-black shadow-lg"
         >
           <span className="text-xl">✋</span>
         </button>
       </div>
     </div>
   );
-  }
-
