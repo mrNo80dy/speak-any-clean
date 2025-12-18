@@ -491,8 +491,9 @@ export default function RoomPage() {
 
   const localMedia = useLocalMedia({
     wantVideo: mode === "video",
-    wantAudio: !isMobile, // ✅ mobile = STT-only (no raw mic track requested)
+    wantAudio: true, // ✅ always request mic permission (STT still needs it)
   });
+
 
   const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
     localMedia;
@@ -888,15 +889,15 @@ export default function RoomPage() {
 
     (async () => {
       try {
-        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
-if (!(isMobile && mode === "audio")) {
-  await acquire();
+        // ✅ Always acquire once so the browser grants mic permission (STT needs it)
+await acquire();
 
-  log("local media acquired", {
-    audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-    videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-    mode,
-  });
+log("local media acquired", {
+  audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+  videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+  mode,
+});
+
 } else {
   log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
 }
@@ -1012,6 +1013,9 @@ if (!(isMobile && mode === "audio")) {
             // Shared refs/state
             micOnRef.current = false;
             stopSttNow();
+            sttPendingTextRef.current = "";
+            clearFinalizeTimer();
+
 
             // ✅ Mobile-only: clear the "armed/resume" UI state too
             if (isMobile) {
@@ -1679,7 +1683,7 @@ if (!(isMobile && mode === "audio")) {
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <button
-              className={`${pillBase} ${micClass} flex-1`}
+              className={`${pillBase} ${micClass} flex-1`touch-none'}
               onPointerDown={(e) => {
                 if (!isMobile) return;
                 e.preventDefault();
@@ -1769,3 +1773,5 @@ if (!(isMobile && mode === "audio")) {
       </div>
     </div>
   );
+}
+
