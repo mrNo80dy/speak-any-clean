@@ -1678,16 +1678,13 @@ useEffect(() => {
         {/* Bottom control bar */}
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            
-
-<button
+         <button
   className={`${pillBase} ${micClass} flex-1`}
   style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
   onPointerDown={(e) => {
     if (!isMobile) return;
     e.preventDefault();
 
-    // ✅ keep receiving events even if finger drifts
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {}
@@ -1702,19 +1699,41 @@ useEffect(() => {
     setSttListening(true);
     log("PTT down", {});
   }}
+  onPointerUp={(e) => {
+    if (!isMobile) return;
+    e.preventDefault();
 
-    // ✅ If Android spuriously cancels while you're still holding,
-    // pointer capture usually prevents this. But if it happens anyway,
-    // we only stop if we *were* held.
+    pttHeldRef.current = false;
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+
+    micArmedRef.current = false;
+    stopSttNow();
+
+    window.setTimeout(() => {
+      flushPendingStt();
+      setSttListening(false);
+      log("PTT up", {});
+    }, 250);
+  }}
+  onPointerCancel={(e) => {
+    if (!isMobile) return;
+    e.preventDefault();
+
+    // only stop if we were actually holding
     if (!pttHeldRef.current) return;
-
     pttHeldRef.current = false;
 
     micArmedRef.current = false;
     stopSttNow();
-    flushPendingStt();
-    setSttListening(false);
-    log("PTT cancel", {});
+
+    window.setTimeout(() => {
+      flushPendingStt();
+      setSttListening(false);
+      log("PTT cancel", {});
+    }, 250);
   }}
   onClick={() => {
     if (isMobile) return;
@@ -1722,13 +1741,7 @@ useEffect(() => {
   }}
   onContextMenu={(e) => e.preventDefault()}
 >
-  {isMobile
-    ? sttListening
-      ? "Hold… Talking"
-      : "Hold to Talk"
-    : micOn
-    ? "Mic On"
-    : "Mic Off"}
+  {isMobile ? (sttListening ? "Hold… Talking" : "Hold to Talk") : micOn ? "Mic On" : "Mic Off"}
 </button>
 
             <button
@@ -1779,6 +1792,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
