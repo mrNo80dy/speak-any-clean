@@ -1058,7 +1058,6 @@ export default function RoomPage() {
       } catch (err) {
         log("init error", { err: (err as Error).message });
       }
-    })();
 
     return () => {
       alive = false;
@@ -1776,5 +1775,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
