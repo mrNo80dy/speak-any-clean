@@ -1677,48 +1677,50 @@ useEffect(() => {
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <button
-              className={`${pillBase} ${micClass} flex-1 touch-none'}
-              onPointerDown={(e) => {
-                if (!isMobile) return;
-                e.preventDefault();
-                userTouchedMicRef.current = true;
-                micArmedRef.current = true;
-                setSttArmedNotListening(false);
-                startSttNow();
-                setSttListening(true);
-                log("PTT down", {});
-              }}
-              onPointerUp={(e) => {
-                if (!isMobile) return;
-                e.preventDefault();
-                micArmedRef.current = false;
-                stopSttNow();
-                flushPendingStt();
-                setSttListening(false);
-                log("PTT up", {});
-              }}
-              onPointerCancel={() => {
-                if (!isMobile) return;
-                micArmedRef.current = false;
-                stopSttNow();
-                flushPendingStt();
-                setSttListening(false);
-                log("PTT cancel", {});
-              }}
-              onClick={() => {
-                if (isMobile) return;
-                toggleMic();
-              }}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              {isMobile
-                ? sttListening
-                  ? "Hold… Talking"
-                  : "Hold to Talk"
-                : micOn
-                ? "Mic On"
-                : "Mic Off"}
-            </button>
+  className={`${pillBase} ${micClass} flex-1 touch-none`}
+  onPointerDown={(e) => {
+    if (!isMobile) return;
+    e.preventDefault();
+    userTouchedMicRef.current = true;
+    micArmedRef.current = true;
+    setSttArmedNotListening(false);
+    startSttNow();
+    setSttListening(true);
+    log("PTT down", {});
+  }}
+  onPointerUp={(e) => {
+    if (!isMobile) return;
+    e.preventDefault();
+    micArmedRef.current = false;
+    stopSttNow();
+    flushPendingStt();
+    setSttListening(false);
+    log("PTT up", {});
+  }}
+  onPointerCancel={(e) => {
+    if (!isMobile) return;
+    e.preventDefault();
+    micArmedRef.current = false;
+    stopSttNow();
+    flushPendingStt();
+    setSttListening(false);
+    log("PTT cancel", {});
+  }}
+  onClick={() => {
+    if (isMobile) return;
+    void toggleMic();
+  }}
+  onContextMenu={(e) => e.preventDefault()}
+>
+  {isMobile
+    ? sttListening
+      ? "Hold… Talking"
+      : "Hold to Talk"
+    : micOn
+    ? "Mic On"
+    : "Mic Off"}
+</button>
+
 
             <button
               onClick={toggleCamera}
@@ -1768,6 +1770,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
