@@ -150,6 +150,7 @@ export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
+  const pttHeldRef = useRef(false);
 
   // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
@@ -1676,14 +1677,26 @@ useEffect(() => {
         {/* Bottom control bar */}
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-            <button
-  className={`${pillBase} ${micClass} flex-1 touch-none`}
+            const pttHeldRef = useRef(false);
+
+<button
+  className={`${pillBase} ${micClass} flex-1`}
+  style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
   onPointerDown={(e) => {
     if (!isMobile) return;
     e.preventDefault();
+
+    // ✅ keep receiving events even if finger drifts
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+
+    pttHeldRef.current = true;
+
     userTouchedMicRef.current = true;
     micArmedRef.current = true;
     setSttArmedNotListening(false);
+
     startSttNow();
     setSttListening(true);
     log("PTT down", {});
@@ -1691,6 +1704,13 @@ useEffect(() => {
   onPointerUp={(e) => {
     if (!isMobile) return;
     e.preventDefault();
+
+    pttHeldRef.current = false;
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+
     micArmedRef.current = false;
     stopSttNow();
     flushPendingStt();
@@ -1700,6 +1720,14 @@ useEffect(() => {
   onPointerCancel={(e) => {
     if (!isMobile) return;
     e.preventDefault();
+
+    // ✅ If Android spuriously cancels while you're still holding,
+    // pointer capture usually prevents this. But if it happens anyway,
+    // we only stop if we *were* held.
+    if (!pttHeldRef.current) return;
+
+    pttHeldRef.current = false;
+
     micArmedRef.current = false;
     stopSttNow();
     flushPendingStt();
@@ -1720,6 +1748,7 @@ useEffect(() => {
     ? "Mic On"
     : "Mic Off"}
 </button>
+
 
 
             <button
@@ -1770,6 +1799,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
