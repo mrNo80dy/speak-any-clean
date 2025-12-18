@@ -124,6 +124,7 @@ export default function PricingPage() {
           Learn is a separate product. Meet plans can optionally include Learn access for a paired partner language.
         </div>
       </div>
+  </main>
     </div>
   );
 }
