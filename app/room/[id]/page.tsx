@@ -150,7 +150,7 @@ export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
-  const pttHeldRef = useRef(false);
+ 
 
   // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
@@ -212,7 +212,8 @@ export default function RoomPage() {
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
-
+  const pttHeldRef = useRef(false);
+  
   const [sttListening, setSttListening] = useState(false); // reality (listening)
 
   const sttStatusRef = useRef<SttStatus>("unknown");
@@ -1701,25 +1702,7 @@ useEffect(() => {
     setSttListening(true);
     log("PTT down", {});
   }}
-  onPointerUp={(e) => {
-    if (!isMobile) return;
-    e.preventDefault();
-
-    pttHeldRef.current = false;
-
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
-
-    micArmedRef.current = false;
-    stopSttNow();
-    flushPendingStt();
-    setSttListening(false);
-    log("PTT up", {});
-  }}
-  onPointerCancel={(e) => {
-    if (!isMobile) return;
-    e.preventDefault();
+   const pttHeldRef = useRef(false);
 
     // ✅ If Android spuriously cancels while you're still holding,
     // pointer capture usually prevents this. But if it happens anyway,
@@ -1748,8 +1731,6 @@ useEffect(() => {
     ? "Mic On"
     : "Mic Off"}
 </button>
-
-
 
             <button
               onClick={toggleCamera}
@@ -1799,6 +1780,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
