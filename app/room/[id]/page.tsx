@@ -380,41 +380,51 @@ export default function RoomPage() {
     }
   };
 
-  const sendFinalTranscript = async (finalText: string, recLang: string) => {
-    const text = finalText.trim();
-    if (!text) return;
+ const sendFinalTranscript = async (finalText: string, recLang: string) => {
+  const text = finalText.trim();
+  if (!text) return;
 
-    if (text === sttLastSentRef.current) return;
-    sttLastSentRef.current = text;
+  // ✅ Prevent "incremental partial spam" like:
+  // "are you there can" -> "are you there can you" -> "are you there can you hear me"
+  const last = (sttLastSentRef.current || "").trim();
+  if (last) {
+    // if new text is basically the old text plus a tiny bit, don't send yet
+    if (text.startsWith(last) && text.length - last.length < 8) return;
 
-    const lang = recLang || "en-US";
-    const fromName = displayNameRef.current || "You";
-    const target = targetLangRef.current || "en-US";
+    // if Android sends a shorter rollback, ignore it
+    if (last.startsWith(text)) return;
+  }
 
-    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+  sttLastSentRef.current = text;
 
-    pushMessage({
-      fromId: clientId,
-      fromName,
-      originalLang: lang,
-      translatedLang: outLang,
-      originalText: text,
-      translatedText,
-      isLocal: true,
+  const lang = recLang || "en-US";
+  const fromName = displayNameRef.current || "You";
+  const target = targetLangRef.current || "en-US";
+
+  const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+  pushMessage({
+    fromId: clientId,
+    fromName,
+    originalLang: lang,
+    translatedLang: outLang,
+    originalText: text,
+    translatedText,
+    isLocal: true,
+  });
+
+  // IMPORTANT: no local speak
+
+  if (channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "transcript",
+      payload: { from: clientId, text, lang, name: fromName },
     });
+  }
 
-    // IMPORTANT: no local speak
-
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "transcript",
-        payload: { from: clientId, text, lang, name: fromName },
-      });
-    }
-
-    log("stt sent transcript", { lang, textLen: text.length });
-  };
+  log("stt sent transcript", { lang, textLen: text.length });
+};
 
   const startSttNow = () => {
     const rec = recognitionRef.current;
@@ -767,7 +777,7 @@ export default function RoomPage() {
           const pending = sttPendingTextRef.current.trim();
           sttPendingTextRef.current = "";
           if (pending) void sendFinalTranscript(pending, rec.lang);
-        }, 850);
+        }, 1400);
       }
     };
 
@@ -870,13 +880,19 @@ export default function RoomPage() {
 
     (async () => {
       try {
-        await acquire();
+        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
+if (!(isMobile && mode === "audio")) {
+  await acquire();
 
-        log("local media acquired", {
-          audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-          videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-          mode,
-        });
+  log("local media acquired", {
+    audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+    videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+    mode,
+  });
+} else {
+  log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
+}
+
 
         // Apply hook-driven defaults
         // - camera: on for video mode, off for audio mode
@@ -1731,3 +1747,4 @@ export default function RoomPage() {
     </div>
   );
   }
+
