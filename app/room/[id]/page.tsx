@@ -1376,8 +1376,8 @@ useEffect(() => {
 
   // ---- Render -----------------------------------------------
   return (
-    <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
-      <div className="relative h-full w-full">
+    <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
+      <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
             Audio rooms auto-join; joiners no longer choose audio/video. */}
         {roomType === "video" && joinCamOn === null && (
@@ -1412,8 +1412,8 @@ useEffect(() => {
         )}
 
         {/* Minimal top header (mobile safe) */}
-        <header className="absolute top-0 left-0 right-0 z-20 px-3 py-2 bg-gradient-to-b from-black/70 to-transparent">
-          <div className="flex items-center justify-between gap-2">
+        <header className="absolute top-0 left-0 right-0 z-20 px-3 py-2 pt-[calc(env(safe-area-inset-top)+8px)] bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
+          <div className="flex items-center justify-between gap-2 pointer-events-auto">
             <div className="flex items-center gap-2 min-w-0">
               {roomInfo?.code && (
                 <>
@@ -1446,7 +1446,7 @@ useEffect(() => {
           </div>
         </header>
 
-        <main className="absolute inset-0 pt-10 md:pt-14">
+        <main className="absolute inset-0 pt-0 md:pt-14">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1538,7 +1538,7 @@ useEffect(() => {
 
           {/* STT status */}
           {sttStatus !== "ok" && (
-            <div className="absolute top-16 left-4 z-20 text-[10px] md:text-xs text-amber-300 bg-black/60 px-2 py-1 rounded">
+            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
               {sttStatus === "unsupported"
                 ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
@@ -1548,7 +1548,7 @@ useEffect(() => {
           )}
 
           {isMobile && sttArmedNotListening && (
-            <div className="absolute top-16 left-4 z-20 text-[10px] md:text-xs text-sky-200 bg-black/60 px-2 py-1 rounded">
+            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
               Captions paused. Hold to Talk.
             </div>
           )}
@@ -1786,7 +1786,7 @@ useEffect(() => {
                 showTextInput ? "bottom-28" : "bottom-20"
               } flex justify-center`}
             >
-              <div className="max-w-xl w-[92%] space-y-2">
+              <div className="max-w-xl w-[92%] space-y-2 pr-28 md:pr-0">
                 {messages.slice(-effectiveCaptionLines).map((m) => (
                   <div
                     key={m.id}
@@ -1832,122 +1832,190 @@ useEffect(() => {
               </div>
             </form>
           )}
-        </main>
+                </main>
 
-        {/* Bottom control bar */}
-        <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              className={`${pillBase} ${micClass} flex-1`}
-              style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-              onPointerDown={(e) => {
-                if (!isMobile) return;
-                e.preventDefault();
-
-                try {
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                } catch {}
-
-                pttHeldRef.current = true;
-
-                userTouchedMicRef.current = true;
-                micArmedRef.current = true;
-                setSttArmedNotListening(false);
-
-                // clear buffers for a new push-to-talk burst
-                sttPendingTextRef.current = "";
-                sttLastInterimRef.current = "";
-
-                startSttNow();
-                setSttListening(true);
-                log("PTT down", {});
-              }}
-              onPointerUp={(e) => {
-                if (!isMobile) return;
-                e.preventDefault();
-
-                pttHeldRef.current = false;
-
-                try {
-                  e.currentTarget.releasePointerCapture(e.pointerId);
-                } catch {}
-
-                micArmedRef.current = false;
-                stopSttNow();
-
-                // wait longer, then flush even if Android never marked final
-                clearFlushTimer();
-                sttFlushTimerRef.current = window.setTimeout(() => {
-                  flushPendingStt("PTT up");
-                  setSttListening(false);
-                  log("PTT up", {});
-                }, 650);
-              }}
-              onPointerCancel={(e) => {
-                if (!isMobile) return;
-                e.preventDefault();
-
-                if (!pttHeldRef.current) return;
-                pttHeldRef.current = false;
-
-                micArmedRef.current = false;
-                stopSttNow();
-
-                clearFlushTimer();
-                sttFlushTimerRef.current = window.setTimeout(() => {
-                  flushPendingStt("PTT cancel");
-                  setSttListening(false);
-                  log("PTT cancel", {});
-                }, 650);
-              }}
-              onClick={() => {
-                if (isMobile) return;
-                void toggleMic();
-              }}
-              onContextMenu={(e) => e.preventDefault()}
+        {/* Bottom control dock (translucent) + Center PTT */}
+        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+          {/* Dock */}
+          <div
+            className="
+              pointer-events-auto
+              mx-auto
+              w-full
+              max-w-xl
+              px-3
+              pb-[calc(env(safe-area-inset-bottom)+10px)]
+              pt-3
+            "
+          >
+            <div
+              className="
+                relative
+                rounded-2xl
+                bg-black/35
+                backdrop-blur-md
+                border border-white/10
+                shadow-lg
+                px-3
+                pt-10
+                pb-3
+              "
             >
-              {isMobile
-                ? sttListening
-                  ? "Hold… Talking"
-                  : "Hold to Talk"
-                : micOn
-                  ? "Mic On"
-                  : "Mic Off"}
-            </button>
+              {/* Left / Right controls */}
+              <div className="flex items-center justify-between gap-2">
+                {/* Left side */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleCamera}
+                    className={`${pillBase} ${camClass} ${
+                      roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+                    }`}
+                    disabled={roomType !== "video"}
+                  >
+                    {camOn ? "Cam" : "Cam Off"}
+                  </button>
 
-            <button
-              onClick={toggleCamera}
-              className={`${pillBase} ${camClass} ${
-                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-              }`}
-              disabled={roomType !== "video"}
-            >
-              {camOn ? "Cam" : "Cam Off"}
-            </button>
+                  <button
+                    onClick={() => setShowTextInput((v) => !v)}
+                    className={`${pillBase} ${
+                      showTextInput
+                        ? "bg-emerald-600/80 text-white border-emerald-500/60"
+                        : "bg-neutral-900/50 text-neutral-100 border-white/10"
+                    }`}
+                  >
+                    Text
+                  </button>
+                </div>
 
-            <button
-              onClick={() => setShowTextInput((v) => !v)}
-              className={`${pillBase} ${
-                showTextInput
-                  ? "bg-emerald-600 text-white border-emerald-500"
-                  : "bg-neutral-900 text-neutral-100 border-neutral-700"
-              }`}
-            >
-              Text
-            </button>
+                {/* Right side */}
+                <div className="flex items-center gap-2">
+                  <select
+                    value={captionLines}
+                    onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
+                    className="bg-neutral-900/50 text-xs border border-white/10 rounded-full px-2 py-1"
+                    title="Caption lines"
+                  >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                    <option value={4}>4</option>
+                    <option value={5}>5</option>
+                  </select>
+                </div>
+              </div>
 
-            <select
-              value={captionLines}
-              onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-              className="bg-neutral-900 text-xs border border-neutral-700 rounded-full px-2 py-1"
-              title="Caption lines"
-            >
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-              <option value={3}>3</option>
-              <option value={4}>4</option>
-              <option value={5}>5</option>
-            </select>
+              {/* Center PTT button (floating inside dock) */}
+              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2">
+                <button
+                  className={`
+                    pointer-events-auto
+                    w-20 h-20
+                    rounded-full
+                    border
+                    shadow-xl
+                    backdrop-blur
+                    transition
+                    active:scale-[0.98]
+                    ${
+                      micUiOn
+                        ? "bg-emerald-600/80 border-emerald-400/60"
+                        : "bg-red-600/70 border-red-400/50"
+                    }
+                  `}
+                  style={{
+                    touchAction: "none",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                  }}
+                  onPointerDown={(e) => {
+                    if (!isMobile) return;
+                    e.preventDefault();
+
+                    try {
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                    } catch {}
+
+                    pttHeldRef.current = true;
+
+                    userTouchedMicRef.current = true;
+                    micArmedRef.current = true;
+                    setSttArmedNotListening(false);
+
+                    // clear buffers for a new push-to-talk burst
+                    sttPendingTextRef.current = "";
+                    sttLastInterimRef.current = "";
+
+                    startSttNow();
+                    setSttListening(true);
+                    log("PTT down", {});
+                  }}
+                  onPointerUp={(e) => {
+                    if (!isMobile) return;
+                    e.preventDefault();
+
+                    pttHeldRef.current = false;
+
+                    try {
+                      e.currentTarget.releasePointerCapture(e.pointerId);
+                    } catch {}
+
+                    micArmedRef.current = false;
+                    stopSttNow();
+
+                    // wait longer, then flush even if Android never marked final
+                    clearFlushTimer();
+                    sttFlushTimerRef.current = window.setTimeout(() => {
+                      flushPendingStt("PTT up");
+                      setSttListening(false);
+                      log("PTT up", {});
+                    }, 650);
+                  }}
+                  onPointerCancel={(e) => {
+                    if (!isMobile) return;
+                    e.preventDefault();
+
+                    if (!pttHeldRef.current) return;
+                    pttHeldRef.current = false;
+
+                    micArmedRef.current = false;
+                    stopSttNow();
+
+                    clearFlushTimer();
+                    sttFlushTimerRef.current = window.setTimeout(() => {
+                      flushPendingStt("PTT cancel");
+                      setSttListening(false);
+                      log("PTT cancel", {});
+                    }, 650);
+                  }}
+                  onClick={() => {
+                    if (isMobile) return;
+                    void toggleMic();
+                  }}
+                  onContextMenu={(e) => e.preventDefault()}
+                  aria-label="Push to talk"
+                >
+                  {/* Inner label */}
+                  <div className="flex flex-col items-center justify-center text-center leading-tight">
+                    <div className="text-[11px] text-white/90">
+                      {isMobile
+                        ? sttListening
+                          ? "Talking"
+                          : "Hold"
+                        : micOn
+                          ? "Mic On"
+                          : "Mic Off"}
+                    </div>
+                    <div className="text-[10px] text-white/70">
+                      {isMobile
+                        ? sttListening
+                          ? "Release to send"
+                          : "to talk"
+                        : "Click to toggle"}
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1955,7 +2023,25 @@ useEffect(() => {
         <button
           type="button"
           onClick={toggleHand}
-          className="fixed bottom-24 right-4 z-30 rounded-full w-12 h-12 flex items-center justify-center bg-amber-500 hover:bg-amber-400 text-black shadow-lg"
+          className="
+            fixed
+            right-4
+            top-1/2
+            -translate-y-1/2
+            z-30
+            rounded-full
+            w-11
+            h-11
+            flex
+            items-center
+            justify-center
+            bg-amber-400/65
+            hover:bg-amber-400/85
+            text-black
+            shadow-lg
+            backdrop-blur
+            border border-white/10
+          "
         >
           <span className="text-xl">✋</span>
         </button>
@@ -1963,6 +2049,3 @@ useEffect(() => {
     </div>
   );
 }
-
-
-
