@@ -1783,14 +1783,14 @@ useEffect(() => {
           {messages.length > 0 && (
             <div
               className={`pointer-events-none absolute inset-x-0 ${
-                showTextInput ? "bottom-28" : "bottom-20"
+                showTextInput ? "bottom-[170px]" : "bottom-[140px]"
               } flex justify-center`}
             >
               <div className="max-w-xl w-[92%] space-y-2 pr-28 md:pr-0">
                 {messages.slice(-effectiveCaptionLines).map((m) => (
                   <div
                     key={m.id}
-                    className="bg-black/70 backdrop-blur rounded-xl px-3 py-2 text-xs md:text-sm border border-white/10"
+                    className="bg-black/80 backdrop-blur-md rounded-xl px-3 py-2 text-xs md:text-sm border border-white/15"
                   >
                     <div className="flex justify-between text-[10px] text-neutral-300 mb-0.5">
                       <span>{m.isLocal ? "You" : m.fromName}</span>
@@ -1845,7 +1845,7 @@ useEffect(() => {
               max-w-xl
               px-3
               pb-[calc(env(safe-area-inset-bottom)+10px)]
-              pt-3
+              pt-2
             "
           >
             <div
@@ -1857,7 +1857,7 @@ useEffect(() => {
                 border border-white/10
                 shadow-lg
                 px-3
-                pt-10
+                pt-7
                 pb-3
               "
             >
@@ -1905,7 +1905,7 @@ useEffect(() => {
               </div>
 
               {/* Center PTT button (floating inside dock) */}
-              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2">
+              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[25%]">
                 <button
                   className={`
                     pointer-events-auto
@@ -2049,3 +2049,4 @@ useEffect(() => {
     </div>
   );
 }
+
