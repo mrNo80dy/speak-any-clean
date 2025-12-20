@@ -37,8 +37,11 @@ type Peer = {
 
 type PeerStreams = Record<string, MediaStream>;
 
+type RoomType = "audio" | "video";
+
 type RoomInfo = {
   code: string | null;
+  room_type: RoomType;
 };
 
 type ChatMessage = {
@@ -59,13 +62,10 @@ type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
   const pref = (preferred || "").trim();
-
   if (!pref) return fallback;
 
-  // exact match
   if (LANGUAGES.some((l) => l.code === pref)) return pref;
 
-  // try same base language (e.g. en-US -> en, or en -> en-US)
   const base = pref.slice(0, 2).toLowerCase();
   const baseMatch =
     LANGUAGES.find((l) => l.code.toLowerCase() === base) ||
@@ -156,20 +156,6 @@ export default function RoomPage() {
   const debugEnabled = searchParams?.get("debug") === "1";
   const debugKey = debugEnabled ? "debug" : "normal";
 
-  const modeParam = (searchParams?.get("mode") || "").toLowerCase(); // "audio" | "video" | ""
-
-  // Pre-join: require explicit choice (no auto start)
-  const [prejoinDone, setPrejoinDone] = useState<boolean>(
-    modeParam === "audio" || modeParam === "video"
-  );
-
-  const [chosenMode, setChosenMode] = useState<"audio" | "video" | null>(
-    modeParam === "video" ? "video" : modeParam === "audio" ? "audio" : null
-  );
-
-  // Use this everywhere instead of raw modeParam during the “start call” click tick
-  const effectiveModeParam = chosenMode ?? (modeParam as any) ?? "audio";
-
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -197,7 +183,7 @@ export default function RoomPage() {
   // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
 
-  // STT control refs (IMPORTANT: only declared ONCE)
+  // STT control refs
   const sttRunningRef = useRef(false);
   const sttStopRequestedRef = useRef(false);
   const sttLastStartAtRef = useRef<number>(0);
@@ -209,13 +195,13 @@ export default function RoomPage() {
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
 
-  // ✅ keep the last interim phrase so PTT up can still send even if onresult arrives late
+  // keep the last interim phrase so PTT up can still send even if onresult arrives late
   const sttLastInterimRef = useRef<string>("");
 
-  // ✅ last sent used for spam prevention
+  // last sent used for spam prevention
   const sttLastSentRef = useRef<string>("");
 
-  // ✅ flush timer so PTT up waits long enough for Android to emit final/onresult
+  // flush timer so PTT up waits long enough for Android to emit final/onresult
   const sttFlushTimerRef = useRef<number | null>(null);
 
   const micOnRef = useRef(false);
@@ -247,7 +233,6 @@ export default function RoomPage() {
 
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const showCaptions = true; // ✅ always on
   const [captionLines, setCaptionLines] = useState<number>(3);
 
   // Manual text captions
@@ -261,6 +246,17 @@ export default function RoomPage() {
   // STT status
   const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
+
+  // ✅ Enforced room mode (from DB)
+  const roomType: RoomType | null = roomInfo?.room_type ?? null;
+
+  // ✅ Joiner camera choice for VIDEO rooms (creator still chose "video")
+  // null => not chosen yet (we can show a small overlay)
+  const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
+
+  // Pre-join: joiner does NOT choose audio/video anymore
+  const prejoinDone =
+    roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -280,6 +276,13 @@ export default function RoomPage() {
     if (sttFlushTimerRef.current) {
       window.clearTimeout(sttFlushTimerRef.current);
       sttFlushTimerRef.current = null;
+    }
+  };
+
+  const clearFinalizeTimer = () => {
+    if (sttFinalizeTimerRef.current) {
+      window.clearTimeout(sttFinalizeTimerRef.current);
+      sttFinalizeTimerRef.current = null;
     }
   };
 
@@ -364,7 +367,7 @@ export default function RoomPage() {
     if (saved) setDisplayName(saved);
   }, []);
 
-  // ---- Load room code from Supabase --------------------------
+  // ---- Load room info (code + room_type) from Supabase -------
   useEffect(() => {
     if (!roomId) return;
 
@@ -372,7 +375,7 @@ export default function RoomPage() {
       try {
         const { data, error } = await supabase
           .from("rooms")
-          .select("code")
+          .select("code, room_type")
           .eq("id", roomId)
           .maybeSingle();
 
@@ -381,7 +384,19 @@ export default function RoomPage() {
           return;
         }
 
-        if (data) setRoomInfo({ code: data.code ?? null });
+        const dbType = (data?.room_type || "audio") as RoomType;
+        const safeType: RoomType = dbType === "video" ? "video" : "audio";
+
+        setRoomInfo({ code: (data?.code ?? null) as any, room_type: safeType });
+
+        // ✅ If it's an audio room, auto-join immediately (no popups)
+        if (safeType === "audio") {
+          setJoinCamOn(null);
+        } else {
+          // video room: if we haven't asked, default to "ask"
+          // you can change this default if you want it auto-join with cam ON:
+          // setJoinCamOn(true);
+        }
       } catch (err) {
         log("room load error", { err: (err as Error).message });
       }
@@ -389,30 +404,19 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ✅ STT “finalize on silence” helpers (Android fix)
-  const clearFinalizeTimer = () => {
-    if (sttFinalizeTimerRef.current) {
-      window.clearTimeout(sttFinalizeTimerRef.current);
-      sttFinalizeTimerRef.current = null;
-    }
-  };
-
+  // ✅ STT send helper (with duplicate protection)
   const sendFinalTranscript = async (finalText: string, recLang: string) => {
     const text = (finalText || "").trim();
     if (!text) return;
 
-    // ✅ hard dedupe window (kills "double send" on Android)
     const lastExact = (sttLastSentRef.current || "").trim();
-    const lastAt = sttLastSentAtRef.current || 0;
-    if (lastExact && lastExact === text && Date.now() - lastAt < 1500) return;
+    if (lastExact && lastExact === text) return;
 
-    // ✅ Prevent partial spam, but DON'T block real short phrases
+    // Prevent partial spam, but DON'T block real short phrases
     const last = (sttLastSentRef.current || "").trim();
     if (last) {
-      // ignore rollback
       if (last.startsWith(text) && last.length - text.length >= 2) return;
 
-      // ignore tiny incremental growth when it's clearly the same sentence
       if (text.startsWith(last) && last.length >= 10 && text.length - last.length < 4) return;
     }
 
@@ -504,20 +508,17 @@ export default function RoomPage() {
     clearFinalizeTimer();
     clearFlushTimer();
 
-    // ✅ If we already sent something very recently, don't send again from flush.
-    // This prevents "double send" when Android emits final + then we flush onend.
+    // If we already sent something very recently, don't send again from flush.
     const msSinceLastSend = Date.now() - (sttLastSentAtRef.current || 0);
     if (msSinceLastSend < 900) {
       log("flushPendingStt: skipped (recent send)", { why, msSinceLastSend });
       return;
     }
 
-    // Prefer pending, then last interim
     const pending = (sttPendingTextRef.current || "").trim();
     const interim = (sttLastInterimRef.current || "").trim();
 
     sttPendingTextRef.current = "";
-
     const chosen = pending || interim;
 
     if (!chosen) {
@@ -525,21 +526,24 @@ export default function RoomPage() {
       return;
     }
 
-    sttLastInterimRef.current = ""; // prevent duplicate send
+    sttLastInterimRef.current = "";
     void sendFinalTranscript(chosen, recognitionRef.current?.lang || speakLangRef.current);
     log("flushPendingStt: sent", { why, len: chosen.length });
   };
 
   // ---- Hooks you built ---------------------------------------
+  // ✅ Enforce modeParam from room_type (creator decides)
+  const enforcedModeParam: "audio" | "video" = roomType === "video" ? "video" : "audio";
+
   const participantCount = peerIds.length + 1;
   const { mode } = useCallMode({
-    modeParam: effectiveModeParam,
+    modeParam: enforcedModeParam,
     participantCount,
   });
 
   const localMedia = useLocalMedia({
     wantVideo: mode === "video",
-    wantAudio: !isMobile, // ✅ mobile: DO NOT grab mic via getUserMedia (STT uses mic)
+    wantAudio: !isMobile, // mobile: DO NOT grab mic via getUserMedia (STT uses mic)
   });
 
   const {
@@ -805,7 +809,6 @@ export default function RoomPage() {
       sttRunningRef.current = true;
       sttStopRequestedRef.current = false;
 
-      // clear previous buffers at a fresh start
       sttPendingTextRef.current = "";
       sttLastInterimRef.current = "";
 
@@ -829,16 +832,33 @@ export default function RoomPage() {
         if (!t) continue;
 
         newestText = t;
-        sttLastInterimRef.current = t; // ✅ always keep latest interim
+        sttLastInterimRef.current = t;
 
         if (r.isFinal) {
           sawFinal = true;
+
+          // ✅ PTT FIX: while holding PTT on mobile, DO NOT send on finals.
+          // Android often emits many "finals" incrementally (4,7,9,14,25,41...)
+          // We only want ONE send: on release (flush).
+          if (isMobile && pttHeldRef.current) {
+            sttPendingTextRef.current = t;
+            continue;
+          }
+
           sttPendingTextRef.current = "";
           clearFinalizeTimer();
           void sendFinalTranscript(t, rec.lang);
         }
       }
 
+      // ✅ While holding PTT on mobile, do NOT run finalize-on-silence timer
+      // (it causes spam/partials while still holding)
+      if (isMobile && pttHeldRef.current) {
+        if (newestText) sttPendingTextRef.current = newestText;
+        return;
+      }
+
+      // Desktop / non-PTT behavior: finalize on silence
       if (!sawFinal && newestText) {
         sttPendingTextRef.current = newestText;
         clearFinalizeTimer();
@@ -876,7 +896,6 @@ export default function RoomPage() {
       const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
       log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
 
-      // If it ended instantly, keep your existing error behavior
       if (!sttStopRequestedRef.current && ranForMs < 800) {
         log("stt ended too fast; disabling auto-restart", { ranForMs });
         setSttStatus("error");
@@ -889,7 +908,7 @@ export default function RoomPage() {
         return;
       }
 
-      // ✅ If we requested stop (PTT up), Android often emits final/onresult AFTER stop.
+      // If we requested stop (PTT up), Android often emits late results.
       // So: schedule one last flush shortly after onend.
       if (sttStopRequestedRef.current) {
         clearFlushTimer();
@@ -899,7 +918,7 @@ export default function RoomPage() {
         }, 300);
       }
 
-      // ✅ Android: don't auto-restart
+      // Android: don't auto-restart
       if (isMobile) {
         setSttListening(false);
 
@@ -946,6 +965,7 @@ export default function RoomPage() {
   useEffect(() => {
     if (!roomId || !clientId) return;
     if (!prejoinDone) return;
+    if (!roomType) return;
 
     let alive = true;
 
@@ -962,18 +982,23 @@ export default function RoomPage() {
 
     (async () => {
       try {
-        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
-        if (!(isMobile && mode === "audio")) {
+        // ✅ Acquire media only if needed.
+        // - Mobile never grabs mic (Web Speech uses mic)
+        // - Video rooms grab camera; audio rooms do not
+        const needVideo = roomType === "video";
+        const canAcquire =
+          !(isMobile && roomType === "audio") && (needVideo || !isMobile); // desktop needs audio track for preview/mic state
+
+        if (canAcquire) {
           await acquire();
 
           log("local media acquired", {
             audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
             videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-            mode,
+            roomType,
           });
 
-          // ✅ Mobile: free the mic for Web Speech STT.
-          // Even if the hook grabbed audio, kill it so STT can actually receive sound.
+          // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
           if (isMobile && localStreamRef.current) {
             const ats = localStreamRef.current.getAudioTracks();
             ats.forEach((t) => {
@@ -984,23 +1009,24 @@ export default function RoomPage() {
                 localStreamRef.current?.removeTrack(t);
               } catch {}
             });
-            log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
+            if (ats.length) log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
           }
-
-          // ✅ Camera default applied AFTER acquire (fixes "video chosen but cam off")
-          setCamEnabled(mode === "video");
-          const vt = localStreamRef.current?.getVideoTracks?.()?.[0];
-          if (vt) vt.enabled = mode === "video";
-
-          log("cam default applied after acquire", {
-            mode,
-            haveVideoTrack: !!vt,
-            enabled: vt?.enabled ?? null,
-          });
         } else {
-          // mobile audio mode: no getUserMedia at all
+          log("skipping getUserMedia (mobile STT-only audio room)", { roomType });
+        }
+
+        // ✅ Enforce camera state based on room type + joiner choice
+        if (roomType === "video") {
+          const wantCam = joinCamOn === null ? true : joinCamOn;
+          setCamEnabled(wantCam);
+          const vt = localStreamRef.current?.getVideoTracks?.()[0];
+          if (vt) vt.enabled = wantCam;
+          log("forced cam state (video room)", { wantCam });
+        } else {
           setCamEnabled(false);
-          log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
+          const vt = localStreamRef.current?.getVideoTracks?.()[0];
+          if (vt) vt.enabled = false;
+          log("forced cam OFF (audio room)", {});
         }
 
         const channel = supabase.channel(`room:${roomId}`, {
@@ -1087,7 +1113,7 @@ export default function RoomPage() {
           setPeerLabels(labels);
           peerLabelsRef.current = labels;
 
-          // ✅ 3+ users default: mic OFF (unless user already touched mic)
+          // 3+ users default: mic OFF (unless user already touched mic)
           const total = others.length + 1;
           if (total >= 3 && !userTouchedMicRef.current) {
             if (!isMobile) {
@@ -1158,11 +1184,11 @@ export default function RoomPage() {
       channelRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, debugKey, rtNonce, prejoinDone, mode]);
+  }, [roomId, clientId, debugKey, rtNonce, prejoinDone, roomType, joinCamOn]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
-    if (mode === "audio") return;
+    if (roomType !== "video") return;
     const s = localStreamRef.current;
     const vt = s?.getVideoTracks?.()[0] || null;
     if (!vt) return;
@@ -1178,11 +1204,12 @@ export default function RoomPage() {
         setSttArmedNotListening(false);
         stopSttNow();
         setSttListening(false);
-        // ✅ give Android a moment to deliver late results, then flush
+
         clearFlushTimer();
         sttFlushTimerRef.current = window.setTimeout(() => {
           flushPendingStt("toggleMic-off");
         }, 650);
+
         log("mobile mic OFF (stt)", {});
         return;
       } else {
@@ -1194,7 +1221,6 @@ export default function RoomPage() {
       }
     }
 
-    // Desktop: use audio track state
     const next = !micOn;
     micOnRef.current = next;
 
@@ -1224,8 +1250,7 @@ export default function RoomPage() {
     const text = textInput.trim();
     if (!text) return;
 
-    const lang =
-      (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
+    const lang = (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
 
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
@@ -1301,43 +1326,34 @@ export default function RoomPage() {
   return (
     <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full">
-        {/* Pre-join overlay */}
-        {!prejoinDone && (
+        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
+            Audio rooms auto-join; joiners no longer choose audio/video. */}
+        {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
             <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-950 p-4">
-              <div className="text-lg font-semibold mb-2">Start call</div>
+              <div className="text-lg font-semibold mb-2">Video room</div>
               <div className="text-sm text-neutral-300 mb-4">
-                Choose audio or video. (You can switch later.)
+                Join with camera on or off.
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2">
                 <button
-                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
-                  onClick={() => {
-                    setChosenMode("audio");
-                    const qs = new URLSearchParams(searchParams?.toString() || "");
-                    qs.set("mode", "audio");
-                    if (debugEnabled) qs.set("debug", "1");
-                    router.replace(`/room/${roomId}?${qs.toString()}`);
-                    setPrejoinDone(true);
-                  }}
+                  className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
+                  onClick={() => setJoinCamOn(true)}
                 >
-                  Audio
+                  Join with Camera ON
                 </button>
 
                 <button
-                  className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
-                  onClick={() => {
-                    setChosenMode("video");
-                    const qs = new URLSearchParams(searchParams?.toString() || "");
-                    qs.set("mode", "video");
-                    if (debugEnabled) qs.set("debug", "1");
-                    router.replace(`/room/${roomId}?${qs.toString()}`);
-                    setPrejoinDone(true);
-                  }}
+                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
+                  onClick={() => setJoinCamOn(false)}
                 >
-                  Video
+                  Join with Camera OFF
                 </button>
+              </div>
+
+              <div className="mt-3 text-[11px] text-neutral-400">
+                Room type is set by the creator.
               </div>
             </div>
           </div>
@@ -1361,6 +1377,12 @@ export default function RoomPage() {
                     Share
                   </button>
                 </>
+              )}
+
+              {roomType && (
+                <span className="ml-2 px-2 py-1 rounded-full bg-neutral-900/60 border border-neutral-700 text-[10px] text-neutral-200">
+                  {roomType === "video" ? "Video" : "Audio"}
+                </span>
               )}
             </div>
 
@@ -1801,7 +1823,7 @@ export default function RoomPage() {
                 micArmedRef.current = false;
                 stopSttNow();
 
-                // ✅ KEY FIX: wait longer, then flush even if Android never marked final
+                // wait longer, then flush even if Android never marked final
                 clearFlushTimer();
                 sttFlushTimerRef.current = window.setTimeout(() => {
                   flushPendingStt("PTT up");
@@ -1844,9 +1866,9 @@ export default function RoomPage() {
             <button
               onClick={toggleCamera}
               className={`${pillBase} ${camClass} ${
-                mode === "audio" ? "opacity-40 cursor-not-allowed" : ""
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
               }`}
-              disabled={mode === "audio"}
+              disabled={roomType !== "video"}
             >
               {camOn ? "Cam" : "Cam Off"}
             </button>
