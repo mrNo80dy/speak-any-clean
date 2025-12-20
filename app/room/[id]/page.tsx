@@ -1411,40 +1411,45 @@ useEffect(() => {
           </div>
         )}
 
-        {/* Minimal top header (mobile safe) */}
-        <header className="absolute top-0 left-0 right-0 z-20 px-3 py-2 pt-[calc(env(safe-area-inset-top)+8px)] bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
-          <div className="flex items-center justify-between gap-2 pointer-events-auto">
-            <div className="flex items-center gap-2 min-w-0">
-              {roomInfo?.code && (
-                <>
-                  <span className="text-[10px] text-neutral-300">Room</span>
-                  <span className="px-2 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 font-mono tracking-[0.25em] text-[10px]">
-                    {roomInfo.code}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={shareRoomCode}
-                    className="px-2 py-1 rounded-full bg-neutral-900/80 border border-neutral-700 text-[10px]"
-                  >
-                    Share
-                  </button>
-                </>
-              )}
+        {/* Top floating controls (no code, no audio/video) */}
+<header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
+  <div className="flex items-center justify-end gap-2">
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          const url = window.location.href;
+          // @ts-ignore
+          if (navigator.share) {
+            // @ts-ignore
+            await navigator.share({ url, text: "Join my Any-Speak room" });
+          } else {
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          }
+        } catch {
+          try {
+            const url = window.location.href;
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          } catch {}
+        }
+      }}
+      className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
+    >
+      Share
+    </button>
 
-              {roomType && (
-                <span className="ml-2 px-2 py-1 rounded-full bg-neutral-900/60 border border-neutral-700 text-[10px] text-neutral-200">
-                  {roomType === "video" ? "Video" : "Audio"}
-                </span>
-              )}
-            </div>
+    <span
+      className={`pointer-events-auto px-3 py-1.5 rounded-full text-[11px] shadow backdrop-blur-md border border-white/10 ${
+        online ? "bg-emerald-600/55 text-white" : "bg-red-600/45 text-white"
+      }`}
+    >
+      {online ? "Online" : "Offline"}
+    </span>
+  </div>
+</header>
 
-            <div className="flex items-center gap-2">
-              <span className={`${pillBase} ${connectedClass}`}>
-                {online ? "Online" : "Offline"}
-              </span>
-            </div>
-          </div>
-        </header>
 
         <main className="absolute inset-0 pt-0 md:pt-14">
           {/* Debug Panel */}
@@ -1779,36 +1784,40 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Subtitle overlay */}
-          {messages.length > 0 && (
-            <div
-              className={`pointer-events-none absolute inset-x-0 ${
-                showTextInput ? "bottom-[170px]" : "bottom-[140px]"
-              } flex justify-center`}
-            >
-              <div className="max-w-xl w-[92%] space-y-2 pr-28 md:pr-0">
-                {messages.slice(-effectiveCaptionLines).map((m) => (
-                  <div
-                    key={m.id}
-                    className="bg-black/80 backdrop-blur-md rounded-xl px-3 py-2 text-xs md:text-sm border border-white/15"
-                  >
-                    <div className="flex justify-between text-[10px] text-neutral-300 mb-0.5">
-                      <span>{m.isLocal ? "You" : m.fromName}</span>
-                      <span>
-                        {m.originalLang} → {m.translatedLang}
-                      </span>
-                    </div>
-                    {m.originalLang !== m.translatedLang && (
-                      <div className="text-[10px] text-neutral-400 italic mb-0.5">
-                        {m.originalText}
-                      </div>
-                    )}
-                    <div className="text-sm">{m.translatedText}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Subtitle overlay (small + left/right + never touches bottom controls) */}
+{messages.length > 0 && (
+  <div
+    className="pointer-events-none absolute left-0 right-0 flex flex-col gap-2 px-3"
+    style={{ bottom: showTextInput ? 220 : 150 }} // keeps clear of floating bottom controls
+  >
+    {messages.slice(-effectiveCaptionLines).map((m) => (
+      <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
+        <div
+          className="
+            max-w-[78%]
+            bg-black/40
+            backdrop-blur-md
+            border border-white/10
+            rounded-2xl
+            px-3
+            py-2
+            shadow
+          "
+        >
+          <div className="flex justify-between gap-3 text-[10px] text-white/70 mb-1">
+            <span className="truncate">{m.isLocal ? "You" : m.fromName}</span>
+            <span className="shrink-0">{m.originalLang} → {m.translatedLang}</span>
+          </div>
+
+          <div className="text-[13px] leading-snug text-white/95">
+            {m.translatedText}
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>
+)}
+
 
           {/* Manual text input */}
           {showTextInput && (
@@ -1834,219 +1843,158 @@ useEffect(() => {
           )}
                 </main>
 
-        {/* Bottom control dock (translucent) + Center PTT */}
-        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
-          {/* Dock */}
-          <div
-            className="
-              pointer-events-auto
-              mx-auto
-              w-full
-              max-w-xl
-              px-3
-              pb-[calc(env(safe-area-inset-bottom)+10px)]
-              pt-2
-            "
-          >
-            <div
-              className="
-                relative
-                rounded-2xl
-                bg-black/35
-                backdrop-blur-md
-                border border-white/10
-                shadow-lg
-                px-3
-                pt-7
-                pb-3
-              "
-            >
-              {/* Left / Right controls */}
-              <div className="flex items-center justify-between gap-2">
-                {/* Left side */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={toggleCamera}
-                    className={`${pillBase} ${camClass} ${
-                      roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                    }`}
-                    disabled={roomType !== "video"}
-                  >
-                    {camOn ? "Cam" : "Cam Off"}
-                  </button>
+        {/* Floating bottom controls (like the top) */}
+<div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+  {/* Left controls */}
+  <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+    <button
+      onClick={toggleCamera}
+      className={`${pillBase} ${camClass} ${roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""} bg-black/25 backdrop-blur-md border-white/10`}
+      disabled={roomType !== "video"}
+    >
+      {camOn ? "Cam" : "Cam Off"}
+    </button>
 
-                  <button
-                    onClick={() => setShowTextInput((v) => !v)}
-                    className={`${pillBase} ${
-                      showTextInput
-                        ? "bg-emerald-600/80 text-white border-emerald-500/60"
-                        : "bg-neutral-900/50 text-neutral-100 border-white/10"
-                    }`}
-                  >
-                    Text
-                  </button>
-                </div>
+    <button
+      onClick={() => setShowTextInput((v) => !v)}
+      className={`${pillBase} ${
+        showTextInput
+          ? "bg-emerald-600/60 text-white border-emerald-400/30"
+          : "bg-black/25 text-white border-white/10"
+      } backdrop-blur-md`}
+    >
+      Text
+    </button>
+  </div>
 
-                {/* Right side */}
-                <div className="flex items-center gap-2">
-                  <select
-                    value={captionLines}
-                    onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-                    className="bg-neutral-900/50 text-xs border border-white/10 rounded-full px-2 py-1"
-                    title="Caption lines"
-                  >
-                    <option value={1}>1</option>
-                    <option value={2}>2</option>
-                    <option value={3}>3</option>
-                    <option value={4}>4</option>
-                    <option value={5}>5</option>
-                  </select>
-                </div>
-              </div>
+  {/* Right controls */}
+  <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+    <select
+      value={captionLines}
+      onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
+      className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
+      title="Caption lines"
+    >
+      <option value={1}>1</option>
+      <option value={2}>2</option>
+      <option value={3}>3</option>
+      <option value={4}>4</option>
+      <option value={5}>5</option>
+    </select>
+  </div>
 
-              {/* Center PTT button (floating inside dock) */}
-              <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-[25%]">
-                <button
-                  className={`
-                    pointer-events-auto
-                    w-20 h-20
-                    rounded-full
-                    border
-                    shadow-xl
-                    backdrop-blur
-                    transition
-                    active:scale-[0.98]
-                    ${
-                      micUiOn
-                        ? "bg-emerald-600/80 border-emerald-400/60"
-                        : "bg-red-600/70 border-red-400/50"
-                    }
-                  `}
-                  style={{
-                    touchAction: "none",
-                    userSelect: "none",
-                    WebkitUserSelect: "none",
-                  }}
-                  onPointerDown={(e) => {
-                    if (!isMobile) return;
-                    e.preventDefault();
+  {/* Center PTT (lower, round, floating) */}
+  <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
+    <button
+      className={`
+        w-[76px] h-[76px]
+        rounded-full
+        border
+        shadow-xl
+        backdrop-blur-md
+        active:scale-[0.98]
+        transition
+        ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+      `}
+      style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+      onPointerDown={(e) => {
+        if (!isMobile) return;
+        e.preventDefault();
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
 
-                    try {
-                      e.currentTarget.setPointerCapture(e.pointerId);
-                    } catch {}
+        pttHeldRef.current = true;
+        userTouchedMicRef.current = true;
+        micArmedRef.current = true;
+        setSttArmedNotListening(false);
 
-                    pttHeldRef.current = true;
+        sttPendingTextRef.current = "";
+        sttLastInterimRef.current = "";
 
-                    userTouchedMicRef.current = true;
-                    micArmedRef.current = true;
-                    setSttArmedNotListening(false);
+        startSttNow();
+        setSttListening(true);
+        log("PTT down", {});
+      }}
+      onPointerUp={(e) => {
+        if (!isMobile) return;
+        e.preventDefault();
+        pttHeldRef.current = false;
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
 
-                    // clear buffers for a new push-to-talk burst
-                    sttPendingTextRef.current = "";
-                    sttLastInterimRef.current = "";
+        micArmedRef.current = false;
+        stopSttNow();
 
-                    startSttNow();
-                    setSttListening(true);
-                    log("PTT down", {});
-                  }}
-                  onPointerUp={(e) => {
-                    if (!isMobile) return;
-                    e.preventDefault();
+        clearFlushTimer();
+        sttFlushTimerRef.current = window.setTimeout(() => {
+          flushPendingStt("PTT up");
+          setSttListening(false);
+          log("PTT up", {});
+        }, 650);
+      }}
+      onPointerCancel={(e) => {
+        if (!isMobile) return;
+        e.preventDefault();
+        if (!pttHeldRef.current) return;
+        pttHeldRef.current = false;
 
-                    pttHeldRef.current = false;
+        micArmedRef.current = false;
+        stopSttNow();
 
-                    try {
-                      e.currentTarget.releasePointerCapture(e.pointerId);
-                    } catch {}
-
-                    micArmedRef.current = false;
-                    stopSttNow();
-
-                    // wait longer, then flush even if Android never marked final
-                    clearFlushTimer();
-                    sttFlushTimerRef.current = window.setTimeout(() => {
-                      flushPendingStt("PTT up");
-                      setSttListening(false);
-                      log("PTT up", {});
-                    }, 650);
-                  }}
-                  onPointerCancel={(e) => {
-                    if (!isMobile) return;
-                    e.preventDefault();
-
-                    if (!pttHeldRef.current) return;
-                    pttHeldRef.current = false;
-
-                    micArmedRef.current = false;
-                    stopSttNow();
-
-                    clearFlushTimer();
-                    sttFlushTimerRef.current = window.setTimeout(() => {
-                      flushPendingStt("PTT cancel");
-                      setSttListening(false);
-                      log("PTT cancel", {});
-                    }, 650);
-                  }}
-                  onClick={() => {
-                    if (isMobile) return;
-                    void toggleMic();
-                  }}
-                  onContextMenu={(e) => e.preventDefault()}
-                  aria-label="Push to talk"
-                >
-                  {/* Inner label */}
-                  <div className="flex flex-col items-center justify-center text-center leading-tight">
-                    <div className="text-[11px] text-white/90">
-                      {isMobile
-                        ? sttListening
-                          ? "Talking"
-                          : "Hold"
-                        : micOn
-                          ? "Mic On"
-                          : "Mic Off"}
-                    </div>
-                    <div className="text-[10px] text-white/70">
-                      {isMobile
-                        ? sttListening
-                          ? "Release to send"
-                          : "to talk"
-                        : "Click to toggle"}
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
+        clearFlushTimer();
+        sttFlushTimerRef.current = window.setTimeout(() => {
+          flushPendingStt("PTT cancel");
+          setSttListening(false);
+          log("PTT cancel", {});
+        }, 650);
+      }}
+      onClick={() => {
+        if (isMobile) return;
+        void toggleMic();
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+      aria-label="Push to talk"
+    >
+      <div className="flex flex-col items-center justify-center text-center leading-tight">
+        <div className="text-[11px] text-white/90">
+          {isMobile ? (sttListening ? "Talking" : "Hold") : micOn ? "Mic On" : "Mic Off"}
         </div>
+        <div className="text-[10px] text-white/70">
+          {isMobile ? (sttListening ? "Release" : "to talk") : "Click"}
+        </div>
+      </div>
+    </button>
+  </div>
+</div>
 
-        {/* Hand raise button */}
-        <button
-          type="button"
-          onClick={toggleHand}
-          className="
-            fixed
-            right-4
-            top-1/2
-            -translate-y-1/2
-            z-30
-            rounded-full
-            w-11
-            h-11
-            flex
-            items-center
-            justify-center
-            bg-amber-400/65
-            hover:bg-amber-400/85
-            text-black
-            shadow-lg
-            backdrop-blur
-            border border-white/10
-          "
-        >
-          <span className="text-xl">✋</span>
-        </button>
+{/* Hand raise (mid-right, floating) */}
+<button
+  type="button"
+  onClick={toggleHand}
+  className="
+    fixed
+    right-3
+    top-1/2
+    -translate-y-1/2
+    z-30
+    rounded-full
+    w-11
+    h-11
+    flex
+    items-center
+    justify-center
+    bg-amber-400/55
+    hover:bg-amber-400/75
+    text-black
+    shadow-lg
+    backdrop-blur-md
+    border border-white/10
+  "
+>
+  <span className="text-xl">✋</span>
+</button>
+
       </div>
     </div>
   );
 }
+
 
