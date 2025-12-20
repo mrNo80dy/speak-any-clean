@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,8 +26,8 @@ export default function HomePage() {
   const [joining, setJoining] = useState(false);
   const [displayName, setDisplayName] = useState("");
 
-  // ✅ Creator chooses the room type
-  const [roomType, setRoomType] = useState<RoomType>("audio");
+  // ✅ Creator must choose (NO default)
+  const [roomType, setRoomType] = useState<RoomType | null>(null);
 
   // Load saved display name once (shared between create/join, PC/phone)
   useEffect(() => {
@@ -51,6 +51,12 @@ export default function HomePage() {
     const name = roomName.trim();
     if (!name) return;
 
+    // ✅ Enforce explicit choice
+    if (!roomType) {
+      alert("Please choose Audio or Video.");
+      return;
+    }
+
     setCreating(true);
     try {
       console.log("[CreateRoom] start", { name, roomType });
@@ -58,14 +64,14 @@ export default function HomePage() {
       const code = generateRoomCode();
       saveDisplayName();
 
-      // ✅ Creator-enforced room_type saved in DB
+      // ✅ Save creator-enforced room_type in DB
       const { data, error } = await supabase
         .from("rooms")
         .insert({
           name,
           code,
           is_active: true,
-          room_type: roomType, // ✅ NEW
+          room_type: roomType,
         })
         .select("id, code, room_type")
         .single();
@@ -137,12 +143,14 @@ export default function HomePage() {
     }
   };
 
-  const onCreateKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onCreateKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") handleCreateRoom();
   };
-  const onJoinKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const onJoinKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") handleJoinRoom();
   };
+
+  const createDisabled = creating || !roomName.trim() || !roomType;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
@@ -190,7 +198,7 @@ export default function HomePage() {
                 />
               </div>
 
-              {/* ✅ Room type picker */}
+              {/* ✅ Room type picker (required) */}
               <div className="space-y-2">
                 <Label>Room Type</Label>
                 <div className="grid grid-cols-2 gap-2">
@@ -220,21 +228,26 @@ export default function HomePage() {
                     Video
                   </button>
                 </div>
+
+                {roomType === null && (
+                  <div className="text-xs text-amber-700">
+                    Choose Audio or Video to enable Create.
+                  </div>
+                )}
+
                 <div className="text-xs text-gray-600">
-                  Billing/minutes can differ by type later — this locks the room’s type now.
+                  This locks the room’s type in the database.
                 </div>
               </div>
 
-              <Button
-                onClick={handleCreateRoom}
-                disabled={creating || !roomName.trim()}
-                className="w-full"
-              >
+              <Button onClick={handleCreateRoom} disabled={createDisabled} className="w-full">
                 {creating
                   ? "Creating..."
                   : roomType === "video"
                     ? "Create Video Room"
-                    : "Create Audio Room"}
+                    : roomType === "audio"
+                      ? "Create Audio Room"
+                      : "Create Room"}
               </Button>
             </CardContent>
           </Card>
@@ -257,6 +270,7 @@ export default function HomePage() {
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="room-id">Room ID or Code</Label>
                 <Input
@@ -267,6 +281,7 @@ export default function HomePage() {
                   onKeyDown={onJoinKey}
                 />
               </div>
+
               <Button
                 onClick={handleJoinRoom}
                 disabled={joining || !roomIdOrCode.trim()}
