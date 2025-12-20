@@ -587,6 +587,12 @@ export default function RoomPage() {
   }
 
     // ---- ICE servers (STUN + optional TURN) -------------------
+const {
+  iceServers,
+  turnEnabled,
+  turnUrlsCount,
+  turnMissing,
+} = useMemo(() => {
   const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
     .split(",")
     .map((s) => s.trim())
@@ -595,24 +601,40 @@ export default function RoomPage() {
   const turnUsername = process.env.NEXT_PUBLIC_TURN_USERNAME || "";
   const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "";
 
-  const iceServers: RTCIceServer[] = [
-    { urls: ["stun:stun.l.google.com:19302"] },
-  ];
+  const servers: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302"] }];
 
-  if (turnUrls.length && turnUsername && turnCredential) {
-    iceServers.push({
+  const enabled = !!(turnUrls.length && turnUsername && turnCredential);
+
+  if (enabled) {
+    servers.push({
       urls: turnUrls,
       username: turnUsername,
       credential: turnCredential,
     });
-    log("TURN enabled", { turnUrlsCount: turnUrls.length });
-  } else {
-    log("TURN not configured", {
-      urls: turnUrls.length,
-      username: !!turnUsername,
-      credential: !!turnCredential,
-    });
   }
+
+  return {
+    iceServers: servers,
+    turnEnabled: enabled,
+    turnUrlsCount: turnUrls.length,
+    turnMissing: {
+      urls: turnUrls.length === 0,
+      username: !turnUsername,
+      credential: !turnCredential,
+    },
+  };
+}, []);
+
+// ✅ Log once (NO render-loop)
+useEffect(() => {
+  if (turnEnabled) {
+    log("TURN enabled", { turnUrlsCount });
+  } else {
+    log("TURN not configured", turnMissing);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     const existing = peersRef.current.get(remoteId);
@@ -1941,5 +1963,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
