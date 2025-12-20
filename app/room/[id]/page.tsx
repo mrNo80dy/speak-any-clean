@@ -402,7 +402,7 @@ export default function RoomPage() {
     if (!text) return;
 
     const lastExact = (sttLastSentRef.current || "").trim();
-    if (lastExtract && lastExact === text) return;
+    if (lastExact && lastExact === text) return;
 
     // ✅ Prevent partial spam, but DON'T block real short phrases
     const last = (sttLastSentRef.current || "").trim();
@@ -1873,5 +1873,6 @@ export default function RoomPage() {
     </div>
   );
         }
+
 
 
