@@ -150,7 +150,6 @@ export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
- 
 
   // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
@@ -208,12 +207,20 @@ export default function RoomPage() {
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
+
+  // ✅ NEW: keep the last interim phrase so PTT up can still send even if onresult arrives late
+  const sttLastInterimRef = useRef<string>("");
+
+  // ✅ NEW: last sent used for spam prevention
   const sttLastSentRef = useRef<string>("");
+
+  // ✅ NEW: flush timer so PTT up waits long enough for Android to emit final/onresult
+  const sttFlushTimerRef = useRef<number | null>(null);
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
-  
+
   const [sttListening, setSttListening] = useState(false); // reality (listening)
 
   const sttStatusRef = useRef<SttStatus>("unknown");
@@ -265,6 +272,13 @@ export default function RoomPage() {
     if (sttRestartTimerRef.current) {
       window.clearTimeout(sttRestartTimerRef.current);
       sttRestartTimerRef.current = null;
+    }
+  };
+
+  const clearFlushTimer = () => {
+    if (sttFlushTimerRef.current) {
+      window.clearTimeout(sttFlushTimerRef.current);
+      sttFlushTimerRef.current = null;
     }
   };
 
@@ -382,57 +396,59 @@ export default function RoomPage() {
     }
   };
 
- const sendFinalTranscript = async (finalText: string, recLang: string) => {
-  const text = finalText.trim();
-  if (!text) return;
+  const sendFinalTranscript = async (finalText: string, recLang: string) => {
+    const text = (finalText || "").trim();
+    if (!text) return;
 
-  // ✅ Prevent "incremental partial spam" like:
-  // "are you there can" -> "are you there can you" -> "are you there can you hear me"
-  const last = (sttLastSentRef.current || "").trim();
-  if (last) {
-    // if new text is basically the old text plus a tiny bit, don't send yet
-    if (text.startsWith(last) && text.length - last.length < 8) return;
+    // ✅ Prevent partial spam, but DON'T block real short phrases
+    const last = (sttLastSentRef.current || "").trim();
+    if (last) {
+      // ignore rollback
+      if (last.startsWith(text) && last.length - text.length >= 2) return;
 
-    // if Android sends a shorter rollback, ignore it
-    if (last.startsWith(text)) return;
-  }
+      // ignore tiny incremental growth when it's clearly the same sentence
+      if (text.startsWith(last) && last.length >= 10 && text.length - last.length < 4) return;
+    }
 
-  sttLastSentRef.current = text;
+    sttLastSentRef.current = text;
 
-  const lang = recLang || "en-US";
-  const fromName = displayNameRef.current || "You";
-  const target = targetLangRef.current || "en-US";
+    const lang = recLang || "en-US";
+    const fromName = displayNameRef.current || "You";
+    const target = targetLangRef.current || "en-US";
 
-  const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
 
-  pushMessage({
-    fromId: clientId,
-    fromName,
-    originalLang: lang,
-    translatedLang: outLang,
-    originalText: text,
-    translatedText,
-    isLocal: true,
-  });
-
-  // IMPORTANT: no local speak
-
-  if (channelRef.current) {
-    channelRef.current.send({
-      type: "broadcast",
-      event: "transcript",
-      payload: { from: clientId, text, lang, name: fromName },
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: outLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
     });
-  }
 
-  log("stt sent transcript", { lang, textLen: text.length });
-};
+    // IMPORTANT: no local speak
+
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
+      });
+    } else {
+      log("stt send skipped (no channelRef)", {});
+    }
+
+    log("stt sent transcript", { lang, textLen: text.length });
+  };
 
   const startSttNow = () => {
     const rec = recognitionRef.current;
     if (!rec) return;
 
     clearSttRestartTimer();
+    clearFlushTimer();
 
     rec.lang =
       speakLangRef.current ||
@@ -465,6 +481,7 @@ export default function RoomPage() {
     if (!rec) return;
 
     clearSttRestartTimer();
+
     sttStopRequestedRef.current = true;
     sttRunningRef.current = false;
 
@@ -476,25 +493,27 @@ export default function RoomPage() {
     }
   };
 
-  const flushPendingStt = () => {
-  clearFinalizeTimer();
+  const flushPendingStt = (why: string) => {
+    clearFinalizeTimer();
+    clearFlushTimer();
 
-  const pending = (sttPendingTextRef.current || "").trim();
-  sttPendingTextRef.current = "";
+    // Prefer pending, then last interim
+    const pending = (sttPendingTextRef.current || "").trim();
+    const interim = (sttLastInterimRef.current || "").trim();
 
-  // ✅ If Android never triggered onresult, pending will be empty.
-  // In that case, do nothing, but log so we can see it.
-  if (!pending) {
-    log("flushPendingStt: no pending text", {});
-    return;
-  }
+    sttPendingTextRef.current = "";
 
-  void sendFinalTranscript(
-    pending,
-    recognitionRef.current?.lang || speakLangRef.current
-  );
-};
+    const chosen = pending || interim;
 
+    if (!chosen) {
+      log("flushPendingStt: no text", { why });
+      return;
+    }
+
+    sttLastInterimRef.current = ""; // prevent duplicate send
+    void sendFinalTranscript(chosen, recognitionRef.current?.lang || speakLangRef.current);
+    log("flushPendingStt: sent", { why, len: chosen.length });
+  };
 
   // ---- Hooks you built ---------------------------------------
   const participantCount = peerIds.length + 1;
@@ -508,9 +527,9 @@ export default function RoomPage() {
     wantAudio: true, // ✅ always request mic permission (STT still needs it)
   });
 
-
   const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
     localMedia;
+
   const micUiOn = isMobile ? sttListening : micOn;
 
   // ---- Helpers ----------------------------------------------
@@ -718,7 +737,7 @@ export default function RoomPage() {
     });
 
     document.querySelectorAll<HTMLVideoElement>("video").forEach((v) => {
-      if (v.dataset?.local === "1") return; // avoid local video element
+      if ((v as any).dataset?.local === "1") return; // avoid local video element
       v.muted = !allowRaw;
       v.volume = allowRaw ? 1 : 0;
       if (allowRaw) v.play().catch(() => {});
@@ -757,12 +776,17 @@ export default function RoomPage() {
     if (speakLangRef.current) rec.lang = speakLangRef.current;
 
     rec.onstart = () => {
-      setSttArmedNotListening(false); // ✅ clear banner when listening resumes
+      setSttArmedNotListening(false);
       setSttListening(true);
 
       sttLastStartAtRef.current = Date.now();
       sttRunningRef.current = true;
       sttStopRequestedRef.current = false;
+
+      // clear previous buffers at a fresh start
+      sttPendingTextRef.current = "";
+      sttLastInterimRef.current = "";
+
       log("stt onstart", { lang: rec.lang });
       setSttStatus("ok");
       setSttErrorMessage(null);
@@ -783,6 +807,7 @@ export default function RoomPage() {
         if (!t) continue;
 
         newestText = t;
+        sttLastInterimRef.current = t; // ✅ always keep latest interim
 
         if (r.isFinal) {
           sawFinal = true;
@@ -816,6 +841,7 @@ export default function RoomPage() {
       ) {
         sttStopRequestedRef.current = true;
         clearSttRestartTimer();
+        clearFlushTimer();
         try {
           rec.stop();
         } catch {}
@@ -837,15 +863,24 @@ export default function RoomPage() {
         );
         sttStopRequestedRef.current = true;
         clearSttRestartTimer();
+        clearFlushTimer();
         return;
       }
 
-      // ✅ Android: don't auto-restart (prevents "ding ding" loop)
-      // ✅ Keep mic UI "armed" until user turns it off
+      // ✅ If we requested stop (PTT up), Android often emits final/onresult AFTER stop.
+      // So: schedule one last flush shortly after onend.
+      if (sttStopRequestedRef.current) {
+        clearFlushTimer();
+        sttFlushTimerRef.current = window.setTimeout(() => {
+          flushPendingStt("onend-after-stop");
+          setSttListening(false);
+        }, 300);
+      }
+
+      // ✅ Android: don't auto-restart
       if (isMobile) {
         setSttListening(false);
 
-        // If it ended on its own while armed, show the "resume" hint
         if (micArmedRef.current && !sttStopRequestedRef.current) {
           setSttArmedNotListening(true);
           log("stt ended (mobile) — needs manual resume", { ranForMs });
@@ -853,7 +888,7 @@ export default function RoomPage() {
         return;
       }
 
-      // Desktop: keep your auto-restart behavior
+      // Desktop: keep auto-restart
       if (micOnRef.current && !sttStopRequestedRef.current) {
         clearSttRestartTimer();
         sttRestartTimerRef.current = window.setTimeout(() => {
@@ -874,7 +909,9 @@ export default function RoomPage() {
     return () => {
       clearFinalizeTimer();
       clearSttRestartTimer();
+      clearFlushTimer();
       sttPendingTextRef.current = "";
+      sttLastInterimRef.current = "";
       try {
         rec.stop();
       } catch {}
@@ -884,210 +921,206 @@ export default function RoomPage() {
   }, [debugKey, speakLang]);
 
   // ---- Lifecycle: join room, wire realtime -------------------
-useEffect(() => {
-  if (!roomId || !clientId) return;
-  if (!prejoinDone) return; // ✅ do not start media/realtime until choice made
+  useEffect(() => {
+    if (!roomId || !clientId) return;
+    if (!prejoinDone) return;
 
-  let alive = true;
+    let alive = true;
 
-  const scheduleRebuildOnce = (why: any) => {
-    if (rebuildScheduledRef.current) return;
-    rebuildScheduledRef.current = true;
-    log("realtime died; scheduling rebuild", why);
+    const scheduleRebuildOnce = (why: any) => {
+      if (rebuildScheduledRef.current) return;
+      rebuildScheduledRef.current = true;
+      log("realtime died; scheduling rebuild", why);
 
-    rebuildTimerRef.current = window.setTimeout(() => {
-      rebuildScheduledRef.current = false;
-      setRtNonce((n) => n + 1);
-    }, 500);
-  };
+      rebuildTimerRef.current = window.setTimeout(() => {
+        rebuildScheduledRef.current = false;
+        setRtNonce((n) => n + 1);
+      }, 500);
+    };
 
-  (async () => {
-    try {
-      // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
-      if (!(isMobile && mode === "audio")) {
-        await acquire();
+    (async () => {
+      try {
+        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
+        if (!(isMobile && mode === "audio")) {
+          await acquire();
 
-        log("local media acquired", {
-          audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-          videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-          mode,
-        });
-      } else {
-        log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
-      }
-
-      // Apply hook-driven defaults
-      setCamEnabled(camDefaultOn);
-
-      // Mic default: desktop can enable track; mobile stays STT-only until user PTT
-      if (!isMobile) {
-        setMicEnabled(micDefaultOn);
-        micOnRef.current = micDefaultOn;
-      } else {
-        setMicEnabled(false);
-        micOnRef.current = false;
-      }
-
-      const channel = supabase.channel(`room:${roomId}`, {
-        config: {
-          broadcast: { self: false },
-          presence: { key: clientId },
-        },
-      });
-
-      channelRef.current = channel;
-
-      channel.on("broadcast", { event: "webrtc" }, async (message: any) => {
-        const payload = message?.payload as WebRTCPayload | undefined;
-        if (!payload) return;
-
-        const { type, from, to } = payload;
-        log("rx webrtc", { type, from, to });
-        if (!type || !from) return;
-        if (from === clientId) return;
-        if (to && to !== clientId) return;
-
-        if (type === "offer" && payload.sdp) {
-          await handleOffer(from, payload.sdp, channel);
-        } else if (type === "answer" && payload.sdp) {
-          await handleAnswer(from, payload.sdp);
-        } else if (type === "ice" && payload.candidate) {
-          await handleIce(from, payload.candidate);
+          log("local media acquired", {
+            audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+            videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+            mode,
+          });
+        } else {
+          log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
         }
-      });
 
-      channel.on("broadcast", { event: "transcript" }, async (message: any) => {
-        const payload = message?.payload as TranscriptPayload | undefined;
-        if (!payload) return;
+        // Apply hook-driven defaults
+        setCamEnabled(camDefaultOn);
 
-        const { from, text, lang, name } = payload;
-        log("rx transcript", { from, lang, textLen: (text || "").length });
+        // Mic default: desktop can enable track; mobile stays STT-only until user PTT
+        if (!isMobile) {
+          setMicEnabled(micDefaultOn);
+          micOnRef.current = micDefaultOn;
+        } else {
+          setMicEnabled(false);
+          micOnRef.current = false;
+        }
 
-        if (!text || !from || from === clientId) return;
-
-        const fromName =
-          name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
-
-        const target = targetLangRef.current || "en-US";
-        const { translatedText, targetLang: outLang } = await translateText(
-          lang,
-          target,
-          text
-        );
-
-        pushMessage({
-          fromId: from,
-          fromName,
-          originalLang: lang,
-          translatedLang: outLang,
-          originalText: text,
-          translatedText,
-          isLocal: false,
+        const channel = supabase.channel(`room:${roomId}`, {
+          config: {
+            broadcast: { self: false },
+            presence: { key: clientId },
+          },
         });
 
-        if (shouldSpeakTranslatedRef.current) {
-          speakText(translatedText, outLang, 0.9);
-        }
-      });
+        channelRef.current = channel;
 
-      channel.on("broadcast", { event: "hand" }, (message: any) => {
-        const payload = message?.payload as { from: string; up: boolean } | undefined;
-        if (!payload) return;
-        const { from, up } = payload;
-        if (!from || from === clientId) return;
-        setHandsUp((prev) => ({ ...prev, [from]: up }));
-      });
+        channel.on("broadcast", { event: "webrtc" }, async (message: any) => {
+          const payload = message?.payload as WebRTCPayload | undefined;
+          if (!payload) return;
 
-      channel.on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState() as Record<string, any[]>;
-        const others: string[] = [];
-        const labels: Record<string, string> = {};
+          const { type, from, to } = payload;
+          log("rx webrtc", { type, from, to });
+          if (!type || !from) return;
+          if (from === clientId) return;
+          if (to && to !== clientId) return;
 
-        Object.values(state).forEach((arr) => {
-          arr.forEach((m: any) => {
-            if (!m?.clientId) return;
-            if (m.clientId === clientId) return;
-            others.push(m.clientId);
-            labels[m.clientId] = (m.name as string | undefined) || m.clientId.slice(0, 8);
+          if (type === "offer" && payload.sdp) {
+            await handleOffer(from, payload.sdp, channel);
+          } else if (type === "answer" && payload.sdp) {
+            await handleAnswer(from, payload.sdp);
+          } else if (type === "ice" && payload.candidate) {
+            await handleIce(from, payload.candidate);
+          }
+        });
+
+        channel.on("broadcast", { event: "transcript" }, async (message: any) => {
+          const payload = message?.payload as TranscriptPayload | undefined;
+          if (!payload) return;
+
+          const { from, text, lang, name } = payload;
+          log("rx transcript", { from, lang, textLen: (text || "").length });
+
+          if (!text || !from || from === clientId) return;
+
+          const fromName =
+            name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
+
+          const target = targetLangRef.current || "en-US";
+          const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+          pushMessage({
+            fromId: from,
+            fromName,
+            originalLang: lang,
+            translatedLang: outLang,
+            originalText: text,
+            translatedText,
+            isLocal: false,
+          });
+
+          if (shouldSpeakTranslatedRef.current) {
+            speakText(translatedText, outLang, 0.9);
+          }
+        });
+
+        channel.on("broadcast", { event: "hand" }, (message: any) => {
+          const payload = message?.payload as { from: string; up: boolean } | undefined;
+          if (!payload) return;
+          const { from, up } = payload;
+          if (!from || from === clientId) return;
+          setHandsUp((prev) => ({ ...prev, [from]: up }));
+        });
+
+        channel.on("presence", { event: "sync" }, () => {
+          const state = channel.presenceState() as Record<string, any[]>;
+          const others: string[] = [];
+          const labels: Record<string, string> = {};
+
+          Object.values(state).forEach((arr) => {
+            arr.forEach((m: any) => {
+              if (!m?.clientId) return;
+              if (m.clientId === clientId) return;
+              others.push(m.clientId);
+              labels[m.clientId] = (m.name as string | undefined) || m.clientId.slice(0, 8);
+            });
+          });
+
+          setPeerIds(others);
+          setPeerLabels(labels);
+          peerLabelsRef.current = labels;
+
+          // ✅ 3+ users default: mic OFF (unless user already touched mic)
+          const total = others.length + 1;
+          if (total >= 3 && !userTouchedMicRef.current) {
+            if (!isMobile) {
+              setMicEnabled(false);
+            }
+
+            micOnRef.current = false;
+            stopSttNow();
+
+            if (isMobile) {
+              micArmedRef.current = false;
+              setSttListening(false);
+              setSttArmedNotListening(false);
+            }
+
+            log("auto-muted for 3+ participants", { total });
+          }
+
+          others.forEach((id) => {
+            if (!peersRef.current.has(id)) {
+              makeOffer(id, channel).catch(() => {});
+            }
           });
         });
 
-        setPeerIds(others);
-        setPeerLabels(labels);
-        peerLabelsRef.current = labels;
+        channel.subscribe((status: RealtimeSubscribeStatus) => {
+          if (!alive) return;
 
-        // ✅ 3+ users default: mic OFF (unless user already touched mic)
-        const total = others.length + 1;
-        if (total >= 3 && !userTouchedMicRef.current) {
-          if (!isMobile) {
-            setMicEnabled(false);
+          if (lastRtStatusRef.current !== status) {
+            lastRtStatusRef.current = status;
+            log("realtime status", { status });
           }
 
-          micOnRef.current = false;
-          stopSttNow();
+          setRtStatus(status);
 
-          if (isMobile) {
-            micArmedRef.current = false;
-            setSttListening(false);
-            setSttArmedNotListening(false);
+          if (status === "SUBSCRIBED") {
+            channel.track({ clientId, name: displayNameRef.current });
+            return;
           }
 
-          log("auto-muted for 3+ participants", { total });
-        }
-
-        others.forEach((id) => {
-          if (!peersRef.current.has(id)) {
-            makeOffer(id, channel).catch(() => {});
+          if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
+            scheduleRebuildOnce({ status });
           }
         });
-      });
-
-      channel.subscribe((status: RealtimeSubscribeStatus) => {
-        if (!alive) return;
-
-        if (lastRtStatusRef.current !== status) {
-          lastRtStatusRef.current = status;
-          log("realtime status", { status });
-        }
-
-        setRtStatus(status);
-
-        if (status === "SUBSCRIBED") {
-          channel.track({ clientId, name: displayNameRef.current });
-          return;
-        }
-
-        if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-          scheduleRebuildOnce({ status });
-        }
-      });
-    } catch (err) {
-      log("init error", { err: (err as Error).message });
-    }
-  })();
-
-  return () => {
-    alive = false;
-
-    if (rebuildTimerRef.current) {
-      clearTimeout(rebuildTimerRef.current);
-      rebuildTimerRef.current = null;
-    }
-    rebuildScheduledRef.current = false;
-
-    teardownPeers("effect cleanup");
-
-    try {
-      const ch = channelRef.current;
-      if (ch) {
-        ch.untrack();
-        ch.unsubscribe();
+      } catch (err) {
+        log("init error", { err: (err as Error).message });
       }
-    } catch {}
-    channelRef.current = null;
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [roomId, clientId, debugKey, rtNonce, prejoinDone, mode]);
+    })();
+
+    return () => {
+      alive = false;
+
+      if (rebuildTimerRef.current) {
+        clearTimeout(rebuildTimerRef.current);
+        rebuildTimerRef.current = null;
+      }
+      rebuildScheduledRef.current = false;
+
+      teardownPeers("effect cleanup");
+
+      try {
+        const ch = channelRef.current;
+        if (ch) {
+          ch.untrack();
+          ch.unsubscribe();
+        }
+      } catch {}
+      channelRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, clientId, debugKey, rtNonce, prejoinDone, mode]);
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
@@ -1102,17 +1135,19 @@ useEffect(() => {
     userTouchedMicRef.current = true;
 
     if (isMobile) {
-      // Mobile: button reflects LISTENING state
       if (sttListening) {
-        // user turns OFF
         micArmedRef.current = false;
         setSttArmedNotListening(false);
         stopSttNow();
-        setSttListening(false); // reflect immediately
+        setSttListening(false);
+        // ✅ give Android a moment to deliver late results, then flush
+        clearFlushTimer();
+        sttFlushTimerRef.current = window.setTimeout(() => {
+          flushPendingStt("toggleMic-off");
+        }, 650);
         log("mobile mic OFF (stt)", {});
         return;
       } else {
-        // user turns ON / RESUME
         micArmedRef.current = true;
         setSttArmedNotListening(false);
         startSttNow();
@@ -1224,7 +1259,7 @@ useEffect(() => {
     }
   };
 
-    // ---- Render -----------------------------------------------
+  // ---- Render -----------------------------------------------
   return (
     <div className="h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full">
@@ -1395,8 +1430,8 @@ useEffect(() => {
               {sttStatus === "unsupported"
                 ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
-                ? sttErrorMessage || "Live captions mic error. Use Text."
-                : "Checking live captions mic..."}
+                  ? sttErrorMessage || "Live captions mic error. Use Text."
+                  : "Checking live captions mic..."}
             </div>
           )}
 
@@ -1690,71 +1725,83 @@ useEffect(() => {
         {/* Bottom control bar */}
         <div className="fixed bottom-0 inset-x-0 z-40 bg-black/70 backdrop-blur border-t border-neutral-800 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
-         <button
-  className={`${pillBase} ${micClass} flex-1`}
-  style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-  onPointerDown={(e) => {
-    if (!isMobile) return;
-    e.preventDefault();
+            <button
+              className={`${pillBase} ${micClass} flex-1`}
+              style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+              onPointerDown={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
 
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {}
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {}
 
-    pttHeldRef.current = true;
+                pttHeldRef.current = true;
 
-    userTouchedMicRef.current = true;
-    micArmedRef.current = true;
-    setSttArmedNotListening(false);
+                userTouchedMicRef.current = true;
+                micArmedRef.current = true;
+                setSttArmedNotListening(false);
 
-    startSttNow();
-    setSttListening(true);
-    log("PTT down", {});
-  }}
-  onPointerUp={(e) => {
-    if (!isMobile) return;
-    e.preventDefault();
+                // clear buffers for a new push-to-talk burst
+                sttPendingTextRef.current = "";
+                sttLastInterimRef.current = "";
 
-    pttHeldRef.current = false;
+                startSttNow();
+                setSttListening(true);
+                log("PTT down", {});
+              }}
+              onPointerUp={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
 
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {}
+                pttHeldRef.current = false;
 
-    micArmedRef.current = false;
-    stopSttNow();
+                try {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                } catch {}
 
-    window.setTimeout(() => {
-      flushPendingStt();
-      setSttListening(false);
-      log("PTT up", {});
-    }, 250);
-  }}
-  onPointerCancel={(e) => {
-    if (!isMobile) return;
-    e.preventDefault();
+                micArmedRef.current = false;
+                stopSttNow();
 
-    // only stop if we were actually holding
-    if (!pttHeldRef.current) return;
-    pttHeldRef.current = false;
+                // ✅ KEY FIX: wait longer, then flush even if Android never marked final
+                clearFlushTimer();
+                sttFlushTimerRef.current = window.setTimeout(() => {
+                  flushPendingStt("PTT up");
+                  setSttListening(false);
+                  log("PTT up", {});
+                }, 650);
+              }}
+              onPointerCancel={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
 
-    micArmedRef.current = false;
-    stopSttNow();
+                if (!pttHeldRef.current) return;
+                pttHeldRef.current = false;
 
-    window.setTimeout(() => {
-      flushPendingStt();
-      setSttListening(false);
-      log("PTT cancel", {});
-    }, 250);
-  }}
-  onClick={() => {
-    if (isMobile) return;
-    void toggleMic();
-  }}
-  onContextMenu={(e) => e.preventDefault()}
->
-  {isMobile ? (sttListening ? "Hold… Talking" : "Hold to Talk") : micOn ? "Mic On" : "Mic Off"}
-</button>
+                micArmedRef.current = false;
+                stopSttNow();
+
+                clearFlushTimer();
+                sttFlushTimerRef.current = window.setTimeout(() => {
+                  flushPendingStt("PTT cancel");
+                  setSttListening(false);
+                  log("PTT cancel", {});
+                }, 650);
+              }}
+              onClick={() => {
+                if (isMobile) return;
+                void toggleMic();
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {isMobile
+                ? sttListening
+                  ? "Hold… Talking"
+                  : "Hold to Talk"
+                : micOn
+                  ? "Mic On"
+                  : "Mic Off"}
+            </button>
 
             <button
               onClick={toggleCamera}
@@ -1803,15 +1850,4 @@ useEffect(() => {
       </div>
     </div>
   );
-}
-
-
-
-
-
-
-
-
-
-
-
+        }
