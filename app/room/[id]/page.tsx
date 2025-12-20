@@ -586,12 +586,41 @@ export default function RoomPage() {
     setConnected(false);
   }
 
+    // ---- ICE servers (STUN + optional TURN) -------------------
+  const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const turnUsername = process.env.NEXT_PUBLIC_TURN_USERNAME || "";
+  const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "";
+
+  const iceServers: RTCIceServer[] = [
+    { urls: ["stun:stun.l.google.com:19302"] },
+  ];
+
+  if (turnUrls.length && turnUsername && turnCredential) {
+    iceServers.push({
+      urls: turnUrls,
+      username: turnUsername,
+      credential: turnCredential,
+    });
+    log("TURN enabled", { turnUrlsCount: turnUrls.length });
+  } else {
+    log("TURN not configured", {
+      urls: turnUrls.length,
+      username: !!turnUsername,
+      credential: !!turnCredential,
+    });
+  }
+
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     const existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+        const pc = new RTCPeerConnection({
+      iceServers,
+      iceCandidatePoolSize: 4,
     });
 
     const remoteStream = new MediaStream();
@@ -1912,4 +1941,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
