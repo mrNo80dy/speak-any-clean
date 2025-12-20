@@ -209,13 +209,13 @@ export default function RoomPage() {
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
 
-  // ✅ NEW: keep the last interim phrase so PTT up can still send even if onresult arrives late
+  // ✅ keep the last interim phrase so PTT up can still send even if onresult arrives late
   const sttLastInterimRef = useRef<string>("");
 
-  // ✅ NEW: last sent used for spam prevention
+  // ✅ last sent used for spam prevention
   const sttLastSentRef = useRef<string>("");
 
-  // ✅ NEW: flush timer so PTT up waits long enough for Android to emit final/onresult
+  // ✅ flush timer so PTT up waits long enough for Android to emit final/onresult
   const sttFlushTimerRef = useRef<number | null>(null);
 
   const micOnRef = useRef(false);
@@ -401,8 +401,10 @@ export default function RoomPage() {
     const text = (finalText || "").trim();
     if (!text) return;
 
+    // ✅ hard dedupe window (kills "double send" on Android)
     const lastExact = (sttLastSentRef.current || "").trim();
-    if (lastExact && lastExact === text) return;
+    const lastAt = sttLastSentAtRef.current || 0;
+    if (lastExact && lastExact === text && Date.now() - lastAt < 1500) return;
 
     // ✅ Prevent partial spam, but DON'T block real short phrases
     const last = (sttLastSentRef.current || "").trim();
@@ -504,12 +506,11 @@ export default function RoomPage() {
 
     // ✅ If we already sent something very recently, don't send again from flush.
     // This prevents "double send" when Android emits final + then we flush onend.
-  const msSinceLastSend = Date.now() - (sttLastSentAtRef.current || 0);
+    const msSinceLastSend = Date.now() - (sttLastSentAtRef.current || 0);
     if (msSinceLastSend < 900) {
       log("flushPendingStt: skipped (recent send)", { why, msSinceLastSend });
       return;
     }
-
 
     // Prefer pending, then last interim
     const pending = (sttPendingTextRef.current || "").trim();
@@ -531,19 +532,25 @@ export default function RoomPage() {
 
   // ---- Hooks you built ---------------------------------------
   const participantCount = peerIds.length + 1;
-  const { mode, micDefaultOn, camDefaultOn } = useCallMode({
+  const { mode } = useCallMode({
     modeParam: effectiveModeParam,
     participantCount,
   });
 
   const localMedia = useLocalMedia({
-  wantVideo: mode === "video",
-  wantAudio: !isMobile, // ✅ mobile: DO NOT grab mic via getUserMedia (STT uses mic)
+    wantVideo: mode === "video",
+    wantAudio: !isMobile, // ✅ mobile: DO NOT grab mic via getUserMedia (STT uses mic)
   });
 
-
-  const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
-    localMedia;
+  const {
+    localStreamRef,
+    micOn,
+    camOn,
+    acquire,
+    attachLocalVideo,
+    setMicEnabled,
+    setCamEnabled,
+  } = localMedia;
 
   const micUiOn = isMobile ? sttListening : micOn;
 
@@ -954,38 +961,47 @@ export default function RoomPage() {
     };
 
     (async () => {
-  try {
-    // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
-    if (!(isMobile && mode === "audio")) {
-      await acquire();
+      try {
+        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
+        if (!(isMobile && mode === "audio")) {
+          await acquire();
 
-      log("local media acquired", {
-        audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-        videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-        mode,
-      });
+          log("local media acquired", {
+            audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+            videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+            mode,
+          });
 
-      // ✅ ADD THIS RIGHT HERE (immediately after the log above)
-      // ✅ Mobile: free the mic for Web Speech STT.
-      // Even if the hook grabbed audio, kill it so STT can actually receive sound.
-      if (isMobile && localStreamRef.current) {
-        const ats = localStreamRef.current.getAudioTracks();
-        ats.forEach((t) => {
-          try {
-            t.stop();
-          } catch {}
-          try {
-            localStreamRef.current?.removeTrack(t);
-          } catch {}
-        });
-        log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
-      }
-    } else {
-      log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
-    }
+          // ✅ Mobile: free the mic for Web Speech STT.
+          // Even if the hook grabbed audio, kill it so STT can actually receive sound.
+          if (isMobile && localStreamRef.current) {
+            const ats = localStreamRef.current.getAudioTracks();
+            ats.forEach((t) => {
+              try {
+                t.stop();
+              } catch {}
+              try {
+                localStreamRef.current?.removeTrack(t);
+              } catch {}
+            });
+            log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
+          }
 
-    // ...the rest of your init continues here...
+          // ✅ Camera default applied AFTER acquire (fixes "video chosen but cam off")
+          setCamEnabled(mode === "video");
+          const vt = localStreamRef.current?.getVideoTracks?.()?.[0];
+          if (vt) vt.enabled = mode === "video";
 
+          log("cam default applied after acquire", {
+            mode,
+            haveVideoTrack: !!vt,
+            enabled: vt?.enabled ?? null,
+          });
+        } else {
+          // mobile audio mode: no getUserMedia at all
+          setCamEnabled(false);
+          log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
+        }
 
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
@@ -1872,7 +1888,4 @@ export default function RoomPage() {
       </div>
     </div>
   );
-        }
-
-
-
+}
