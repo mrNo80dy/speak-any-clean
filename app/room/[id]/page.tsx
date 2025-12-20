@@ -523,9 +523,10 @@ export default function RoomPage() {
   });
 
   const localMedia = useLocalMedia({
-    wantVideo: mode === "video",
-    wantAudio: true, // ✅ always request mic permission (STT still needs it)
+  wantVideo: mode === "video",
+  wantAudio: !isMobile, // ✅ mobile: DO NOT grab mic via getUserMedia (STT uses mic)
   });
+
 
   const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled } =
     localMedia;
@@ -939,31 +940,38 @@ export default function RoomPage() {
     };
 
     (async () => {
-      try {
-        // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
-        if (!(isMobile && mode === "audio")) {
-          await acquire();
+  try {
+    // ✅ Mobile + Audio call = STT-only: DO NOT call getUserMedia
+    if (!(isMobile && mode === "audio")) {
+      await acquire();
 
-          log("local media acquired", {
-            audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-            videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-            mode,
-          });
-        } else {
-          log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
-        }
+      log("local media acquired", {
+        audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+        videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+        mode,
+      });
 
-        // Apply hook-driven defaults
-        setCamEnabled(camDefaultOn);
+      // ✅ ADD THIS RIGHT HERE (immediately after the log above)
+      // ✅ Mobile: free the mic for Web Speech STT.
+      // Even if the hook grabbed audio, kill it so STT can actually receive sound.
+      if (isMobile && localStreamRef.current) {
+        const ats = localStreamRef.current.getAudioTracks();
+        ats.forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+          try {
+            localStreamRef.current?.removeTrack(t);
+          } catch {}
+        });
+        log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
+      }
+    } else {
+      log("skipping getUserMedia (mobile STT-only audio mode)", { mode });
+    }
 
-        // Mic default: desktop can enable track; mobile stays STT-only until user PTT
-        if (!isMobile) {
-          setMicEnabled(micDefaultOn);
-          micOnRef.current = micDefaultOn;
-        } else {
-          setMicEnabled(false);
-          micOnRef.current = false;
-        }
+    // ...the rest of your init continues here...
+
 
         const channel = supabase.channel(`room:${roomId}`, {
           config: {
@@ -1851,3 +1859,4 @@ export default function RoomPage() {
     </div>
   );
         }
+
