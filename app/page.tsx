@@ -12,16 +12,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Video, Globe } from "lucide-react";
+import { Video, Globe, Mic } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
+
+type RoomType = "audio" | "video";
 
 export default function HomePage() {
   const router = useRouter();
+
   const [roomName, setRoomName] = useState("");
   const [roomIdOrCode, setRoomIdOrCode] = useState("");
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
   const [displayName, setDisplayName] = useState("");
+
+  // ✅ Creator chooses the room type
+  const [roomType, setRoomType] = useState<RoomType>("audio");
 
   // Load saved display name once (shared between create/join, PC/phone)
   useEffect(() => {
@@ -33,19 +39,35 @@ export default function HomePage() {
   const generateRoomCode = () =>
     Math.random().toString(36).slice(2, 8).toUpperCase();
 
+  const saveDisplayName = () => {
+    const nameToSave = displayName.trim() || "Guest";
+    if (typeof window !== "undefined") {
+      localStorage.setItem("displayName", nameToSave);
+    }
+    return nameToSave;
+  };
+
   const handleCreateRoom = async () => {
     const name = roomName.trim();
     if (!name) return;
 
     setCreating(true);
     try {
-      console.log("[CreateRoom] start", { name });
-      const code = generateRoomCode();
+      console.log("[CreateRoom] start", { name, roomType });
 
+      const code = generateRoomCode();
+      saveDisplayName();
+
+      // ✅ Creator-enforced room_type saved in DB
       const { data, error } = await supabase
         .from("rooms")
-        .insert({ name, code, is_active: true })
-        .select("id, code")
+        .insert({
+          name,
+          code,
+          is_active: true,
+          room_type: roomType, // ✅ NEW
+        })
+        .select("id, code, room_type")
         .single();
 
       console.log("[CreateRoom] result", { data, error });
@@ -57,11 +79,6 @@ export default function HomePage() {
       if (!data?.id || !data?.code) {
         alert("Create failed: no id/code returned from database");
         return;
-      }
-
-      const nameToSave = displayName.trim() || "Guest";
-      if (typeof window !== "undefined") {
-        localStorage.setItem("displayName", nameToSave);
       }
 
       router.push(`/room/${data.id}`);
@@ -81,15 +98,12 @@ export default function HomePage() {
     try {
       console.log("[JoinRoom] value", value);
 
+      saveDisplayName();
+
       const looksLikeUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
           value
         );
-
-      const nameToSave = displayName.trim() || "Guest";
-      if (typeof window !== "undefined") {
-        localStorage.setItem("displayName", nameToSave);
-      }
 
       if (looksLikeUUID) {
         router.push(`/room/${value}`);
@@ -141,7 +155,7 @@ export default function HomePage() {
             <h1 className="text-4xl font-bold text-gray-900">Any-Speak</h1>
           </div>
           <p className="text-lg text-gray-600">
-            Real-time video chat with live translation
+            Real-time calls with live translation (audio or video)
           </p>
         </div>
 
@@ -150,7 +164,9 @@ export default function HomePage() {
           <Card>
             <CardHeader>
               <CardTitle>Create Room</CardTitle>
-              <CardDescription>Start a new video chat session</CardDescription>
+              <CardDescription>
+                The creator chooses Audio or Video. Joiners follow the room type.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -162,6 +178,7 @@ export default function HomePage() {
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="room-name">Room Name</Label>
                 <Input
@@ -172,12 +189,52 @@ export default function HomePage() {
                   onKeyDown={onCreateKey}
                 />
               </div>
+
+              {/* ✅ Room type picker */}
+              <div className="space-y-2">
+                <Label>Room Type</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRoomType("audio")}
+                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                      roomType === "audio"
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-white text-gray-900 border-gray-300"
+                    }`}
+                  >
+                    <Mic className="w-4 h-4" />
+                    Audio
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRoomType("video")}
+                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                      roomType === "video"
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-white text-gray-900 border-gray-300"
+                    }`}
+                  >
+                    <Video className="w-4 h-4" />
+                    Video
+                  </button>
+                </div>
+                <div className="text-xs text-gray-600">
+                  Billing/minutes can differ by type later — this locks the room’s type now.
+                </div>
+              </div>
+
               <Button
                 onClick={handleCreateRoom}
                 disabled={creating || !roomName.trim()}
                 className="w-full"
               >
-                {creating ? "Creating..." : "Create Room"}
+                {creating
+                  ? "Creating..."
+                  : roomType === "video"
+                    ? "Create Video Room"
+                    : "Create Audio Room"}
               </Button>
             </CardContent>
           </Card>
@@ -187,7 +244,7 @@ export default function HomePage() {
             <CardHeader>
               <CardTitle>Join Room</CardTitle>
               <CardDescription>
-                Enter a Room ID (UUID) or Room Code
+                Enter a Room ID (UUID) or Room Code. Room type is enforced by the creator.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -226,17 +283,12 @@ export default function HomePage() {
           <div className="flex items-start gap-3">
             <Globe className="w-5 h-5 text-indigo-600 mt-0.5" />
             <div>
-              <h3 className="font-semibold text-gray-900 mb-2">
-                How it works
-              </h3>
+              <h3 className="font-semibold text-gray-900 mb-2">How it works</h3>
               <ul className="text-sm text-gray-600 space-y-1">
-                <li>• Create or join a room to start a video call</li>
-                <li>• Select your language preference</li>
-                <li>
-                  • Speak naturally — your words will be translated in
-                  real-time
-                </li>
-                <li>• See live captions in multiple languages</li>
+                <li>• Create an Audio or Video room (creator sets the type)</li>
+                <li>• Join with the Room ID or 6-character code</li>
+                <li>• Speak naturally — captions translate in real-time</li>
+                <li>• Optionally hear translated speech (if enabled)</li>
               </ul>
             </div>
           </div>
