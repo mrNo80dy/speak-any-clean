@@ -203,6 +203,7 @@ export default function RoomPage() {
   const sttLastStartAtRef = useRef<number>(0);
   const [sttArmedNotListening, setSttArmedNotListening] = useState(false);
   const sttRestartTimerRef = useRef<number | null>(null);
+  const sttLastSentAtRef = useRef<number>(0);
 
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
@@ -400,6 +401,9 @@ export default function RoomPage() {
     const text = (finalText || "").trim();
     if (!text) return;
 
+    const lastExact = (sttLastSentRef.current || "").trim();
+    if (lastExtract && lastExact === text) return;
+
     // ✅ Prevent partial spam, but DON'T block real short phrases
     const last = (sttLastSentRef.current || "").trim();
     if (last) {
@@ -411,6 +415,7 @@ export default function RoomPage() {
     }
 
     sttLastSentRef.current = text;
+    sttLastSentAtRef.current = Date.now();
 
     const lang = recLang || "en-US";
     const fromName = displayNameRef.current || "You";
@@ -496,6 +501,15 @@ export default function RoomPage() {
   const flushPendingStt = (why: string) => {
     clearFinalizeTimer();
     clearFlushTimer();
+
+    // ✅ If we already sent something very recently, don't send again from flush.
+    // This prevents "double send" when Android emits final + then we flush onend.
+  const msSinceLastSend = Date.now() - (sttLastSentAtRef.current || 0);
+    if (msSinceLastSend < 900) {
+      log("flushPendingStt: skipped (recent send)", { why, msSinceLastSend });
+      return;
+    }
+
 
     // Prefer pending, then last interim
     const pending = (sttPendingTextRef.current || "").trim();
@@ -1859,4 +1873,5 @@ export default function RoomPage() {
     </div>
   );
         }
+
 
