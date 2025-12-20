@@ -388,10 +388,11 @@ export default function RoomPage() {
         const safeType: RoomType = dbType === "video" ? "video" : "audio";
 
         setRoomInfo({ code: (data?.code ?? null) as any, room_type: safeType });
+        log("room loaded", { safeType });
 
         // ✅ If it's an audio room, auto-join immediately (no popups)
         if (safeType === "audio") {
-          setJoinCamOn(null);
+          setJoinCamOn(false);
         } else {
           // video room: if we haven't asked, default to "ask"
           // you can change this default if you want it auto-join with cam ON:
@@ -1911,3 +1912,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
