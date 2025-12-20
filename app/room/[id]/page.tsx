@@ -238,6 +238,7 @@ export default function RoomPage() {
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [ccOn, setCcOn] = useState(true);
 
   // Hand raise state (remote participants)
   const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
@@ -1784,40 +1785,78 @@ useEffect(() => {
             )}
           </div>
 
-          {/* Subtitle overlay (small + left/right + never touches bottom controls) */}
-{messages.length > 0 && (
-  <div
-    className="pointer-events-none absolute left-0 right-0 flex flex-col gap-2 px-3"
-    style={{ bottom: showTextInput ? 220 : 150 }} // keeps clear of floating bottom controls
-  >
-    {messages.slice(-effectiveCaptionLines).map((m) => (
-      <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
-        <div
-          className="
-            max-w-[78%]
-            bg-black/40
-            backdrop-blur-md
-            border border-white/10
-            rounded-2xl
-            px-3
-            py-2
-            shadow
-          "
-        >
-          <div className="flex justify-between gap-3 text-[10px] text-white/70 mb-1">
-            <span className="truncate">{m.isLocal ? "You" : m.fromName}</span>
-            <span className="shrink-0">{m.originalLang} → {m.translatedLang}</span>
-          </div>
+          {/* Captions overlay (low + can overlap controls) */}
+{ccOn && messages.length > 0 && (
+  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+    {/* Bottom fade so captions stay readable even over video + dock */}
+    <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
 
-          <div className="text-[13px] leading-snug text-white/95">
-            {m.translatedText}
+    <div
+      className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
+      style={{
+        // LOW: sits close to the bottom and may overlap dock/PTT.
+        // When text input is open, lift a bit so captions don't sit under the input.
+        paddingBottom: showTextInput
+          ? "calc(env(safe-area-inset-bottom) + 118px)"
+          : "calc(env(safe-area-inset-bottom) + 64px)",
+      }}
+    >
+      {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
+        const isNewest = idx === arr.length - 1;
+
+        return (
+          <div
+            key={m.id}
+            className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}
+          >
+            <div
+              className={`
+                max-w-[74%]
+                rounded-2xl
+                border border-white/10
+                bg-black/30
+                backdrop-blur-md
+                shadow
+                ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
+              `}
+              style={{
+                // Make older lines less obtrusive
+                opacity: isNewest ? 1 : 0.65,
+                transform: isNewest ? "scale(1)" : "scale(0.98)",
+                transformOrigin: m.isLocal ? "right bottom" : "left bottom",
+              }}
+            >
+              {/* Tiny header; make it basically invisible on older lines */}
+              <div
+                className="flex items-center justify-between gap-2 mb-0.5"
+                style={{ opacity: isNewest ? 0.7 : 0.35 }}
+              >
+                <span className="truncate text-[9px] text-white/70">
+                  {m.isLocal ? "You" : m.fromName}
+                </span>
+                <span className="shrink-0 text-[9px] text-white/60">
+                  {m.originalLang}→{m.translatedLang}
+                </span>
+              </div>
+
+              {/* Translated text (newest can be 3 lines, old lines 2) */}
+              <div
+                className={`${isNewest ? "text-[13px]" : "text-[12px]"} leading-snug text-white/95 overflow-hidden`}
+                style={{
+                  display: "-webkit-box",
+                  WebkitBoxOrient: "vertical",
+                  WebkitLineClamp: isNewest ? 3 : 2,
+                }}
+              >
+                {m.translatedText}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    ))}
+        );
+      })}
+    </div>
   </div>
 )}
-
 
           {/* Manual text input */}
           {showTextInput && (
@@ -1868,20 +1907,35 @@ useEffect(() => {
   </div>
 
   {/* Right controls */}
-  <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
-    <select
-      value={captionLines}
-      onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-      className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
-      title="Caption lines"
-    >
-      <option value={1}>1</option>
-      <option value={2}>2</option>
-      <option value={3}>3</option>
-      <option value={4}>4</option>
-      <option value={5}>5</option>
-    </select>
-  </div>
+<div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+  <button
+    type="button"
+    onClick={() => setCcOn((v) => !v)}
+    className={`
+      px-3 py-1.5 rounded-full text-[11px]
+      bg-black/25 backdrop-blur-md border border-white/10 shadow
+      ${ccOn ? "text-white/95" : "text-white/55"}
+    `}
+    aria-pressed={ccOn}
+    title="Toggle captions"
+  >
+    CC
+  </button>
+
+  <select
+    value={captionLines}
+    onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
+    className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
+    title="Caption lines"
+  >
+    <option value={1}>1</option>
+    <option value={2}>2</option>
+    <option value={3}>3</option>
+    <option value={4}>4</option>
+    <option value={5}>5</option>
+  </select>
+</div>
+
 
   {/* Center PTT (lower, round, floating) */}
   <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
@@ -1996,5 +2050,6 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
