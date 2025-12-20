@@ -478,9 +478,21 @@ export default function RoomPage() {
 
   const flushPendingStt = () => {
   clearFinalizeTimer();
+
   const pending = (sttPendingTextRef.current || "").trim();
   sttPendingTextRef.current = "";
-  if (pending) void sendFinalTranscript(pending, recognitionRef.current?.lang || speakLangRef.current);
+
+  // ✅ If Android never triggered onresult, pending will be empty.
+  // In that case, do nothing, but log so we can see it.
+  if (!pending) {
+    log("flushPendingStt: no pending text", {});
+    return;
+  }
+
+  void sendFinalTranscript(
+    pending,
+    recognitionRef.current?.lang || speakLangRef.current
+  );
 };
 
 
@@ -1792,6 +1804,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
