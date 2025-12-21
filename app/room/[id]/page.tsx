@@ -75,10 +75,17 @@ function pickSupportedLang(preferred?: string) {
 }
 
 // 🔊 Speak text using the device voice
-function speakText(text: string, lang: string, rate = 0.9) {
+function speakText(text: string, lang: string, rate = 0.9, volume = 1) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
   if (!synth) return;
+
+  try {
+    // Some browsers keep speech synthesis "paused" until a user gesture.
+    // This is safe to call even when already running.
+    // @ts-ignore
+    synth.resume?.();
+  } catch {}
 
   const clean = text.trim();
   if (!clean) return;
@@ -91,6 +98,7 @@ function speakText(text: string, lang: string, rate = 0.9) {
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = lang || "en-US";
     utterance.rate = rate;
+    utterance.volume = typeof volume === "number" ? volume : 1;
 
     const voices = synth.getVoices?.() || [];
     const match =
@@ -180,6 +188,9 @@ export default function RoomPage() {
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
+  // TTS unlock (mobile browsers often block speech until a user gesture)
+  const ttsUnlockedRef = useRef(false);
+
   // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
 
@@ -240,10 +251,6 @@ export default function RoomPage() {
   const [textInput, setTextInput] = useState("");
   const [ccOn, setCcOn] = useState(true);
 
-  // Hand raise state (remote participants)
-  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
-  const [myHandUp, setMyHandUp] = useState(false);
-
   // STT status
   const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
@@ -264,6 +271,41 @@ export default function RoomPage() {
       rest.length ? JSON.stringify(rest) : ""
     }`;
     setLogs((l) => [line, ...l].slice(0, 250));
+  };
+
+  const unlockTts = () => {
+    if (ttsUnlockedRef.current) return;
+    if (typeof window === "undefined") return;
+
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    try {
+      // Mark unlocked first to avoid double-fire on multiple gesture events
+      ttsUnlockedRef.current = true;
+
+      // Kick voices + resume; then speak a near-silent dot to satisfy gesture-gated audio.
+      // Using volume ~0 avoids the user hearing anything.
+      // @ts-ignore
+      synth.resume?.();
+
+      const u = new SpeechSynthesisUtterance(".");
+      u.lang = targetLangRef.current || "en-US";
+      u.rate = 1;
+      u.volume = 0.001;
+      u.onend = () => {
+        try {
+          synth.cancel();
+        } catch {}
+      };
+      synth.speak(u);
+
+      log("tts unlocked", {});
+    } catch (e: any) {
+      // If this fails, we'll try again on the next gesture
+      ttsUnlockedRef.current = false;
+      log("tts unlock failed", { message: e?.message || String(e) });
+    }
   };
 
   const clearSttRestartTimer = () => {
@@ -351,6 +393,21 @@ export default function RoomPage() {
     displayNameRef.current = displayName || "You";
   }, [displayName]);
 
+  // One-time attempt to unlock TTS on the first user gesture (helps Android/Chrome play translated audio reliably)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onGesture = () => unlockTts();
+
+    window.addEventListener("pointerdown", onGesture, { once: true, capture: true });
+    window.addEventListener("keydown", onGesture, { once: true, capture: true });
+
+    return () => {
+      window.removeEventListener("pointerdown", onGesture, true);
+      window.removeEventListener("keydown", onGesture, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Keep remote audio tracks in sync with the mute policy
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudioRef.current;
@@ -396,6 +453,7 @@ export default function RoomPage() {
           setJoinCamOn(false);
         } else {
           // video room: if we haven't asked, default to "ask"
+          // you can change this default if you want it auto-join with cam ON:
           // setJoinCamOn(true);
         }
       } catch (err) {
@@ -884,6 +942,8 @@ export default function RoomPage() {
           sawFinal = true;
 
           // ✅ PTT FIX: while holding PTT on mobile, DO NOT send on finals.
+          // Android often emits many "finals" incrementally (4,7,9,14,25,41...)
+          // We only want ONE send: on release (flush).
           if (isMobile && pttHeldRef.current) {
             sttPendingTextRef.current = t;
             continue;
@@ -896,6 +956,7 @@ export default function RoomPage() {
       }
 
       // ✅ While holding PTT on mobile, do NOT run finalize-on-silence timer
+      // (it causes spam/partials while still holding)
       if (isMobile && pttHeldRef.current) {
         if (newestText) sttPendingTextRef.current = newestText;
         return;
@@ -1026,9 +1087,11 @@ export default function RoomPage() {
     (async () => {
       try {
         // ✅ Acquire media only if needed.
+        // - Mobile never grabs mic (Web Speech uses mic)
+        // - Video rooms grab camera; audio rooms do not
         const needVideo = roomType === "video";
         const canAcquire =
-          !(isMobile && roomType === "audio") && (needVideo || !isMobile);
+          !(isMobile && roomType === "audio") && (needVideo || !isMobile); // desktop needs audio track for preview/mic state
 
         if (canAcquire) {
           await acquire();
@@ -1039,7 +1102,7 @@ export default function RoomPage() {
             roomType,
           });
 
-          // ✅ Mobile: free the mic for Web Speech STT
+          // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
           if (isMobile && localStreamRef.current) {
             const ats = localStreamRef.current.getAudioTracks();
             ats.forEach((t) => {
@@ -1125,16 +1188,9 @@ export default function RoomPage() {
           });
 
           if (shouldSpeakTranslatedRef.current) {
+            unlockTts();
             speakText(translatedText, outLang, 0.9);
           }
-        });
-
-        channel.on("broadcast", { event: "hand" }, (message: any) => {
-          const payload = message?.payload as { from: string; up: boolean } | undefined;
-          if (!payload) return;
-          const { from, up } = payload;
-          if (!from || from === clientId) return;
-          setHandsUp((prev) => ({ ...prev, [from]: up }));
         });
 
         channel.on("presence", { event: "sync" }, () => {
@@ -1239,6 +1295,7 @@ export default function RoomPage() {
 
   const toggleMic = async () => {
     userTouchedMicRef.current = true;
+    unlockTts();
 
     if (isMobile) {
       if (sttListening) {
@@ -1274,26 +1331,12 @@ export default function RoomPage() {
     else stopSttNow();
   };
 
-  const toggleHand = () => {
-    const next = !myHandUp;
-    setMyHandUp(next);
-
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "hand",
-        payload: { from: clientId, up: next },
-      });
-    }
-  };
-
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
     if (!text) return;
 
-    const lang =
-      (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
+    const lang = (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
 
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
@@ -1324,14 +1367,15 @@ export default function RoomPage() {
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
   const totalParticipants = peerIds.length + 1;
 
-  // ✅ "Call mode" = 1-on-1 layout where remote is full-screen and self is PiP
-  const isCallMode = peerIds.length === 1 && !!firstRemoteId;
-
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   const online = rtStatus === "SUBSCRIBED";
-  const micClass = micUiOn
+  const connectedClass = online
+    ? "bg-emerald-600/90 text-white border-emerald-500"
+    : "bg-red-900/70 text-red-200 border-red-700";
+
+  const micClass = sttListening
     ? "bg-neutral-800 text-neutral-50 border-neutral-600"
     : "bg-red-900/80 text-red-100 border-red-700";
 
@@ -1341,155 +1385,19 @@ export default function RoomPage() {
 
   const effectiveCaptionLines = Math.max(1, captionLines || 3);
 
-  // ---- PiP: draggable + hide/show + orientation-aware + auto-hide -----------
-  const [isPortrait, setIsPortrait] = useState(true);
-
-  const [pipHidden, setPipHidden] = useState(false);
-  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
-
-  const pipDragRef = useRef<{
-    active: boolean;
-    pointerId: number | null;
-    startX: number;
-    startY: number;
-    startPosX: number;
-    startPosY: number;
-  }>({
-    active: false,
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    startPosX: 0,
-    startPosY: 0,
-  });
-
-  const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
-
-  const getViewport = () => {
-    if (typeof window === "undefined") return { w: 360, h: 640 };
-    return { w: window.innerWidth || 360, h: window.innerHeight || 640 };
-  };
-
-  const getPipSize = () => {
-    // Must match the class sizes below
-    return isPortrait ? { w: 96, h: 160 } : { w: 160, h: 96 }; // w-24/h-40 vs w-40/h-24
-  };
-
-  const getDefaultPipPos = () => {
-    const { w, h } = getViewport();
-    const { w: pw, h: ph } = getPipSize();
-    const bottomReserve = 120; // keeps it out of the dock area
-    return {
-      x: Math.max(8, w - pw - 12),
-      y: Math.max(8, h - ph - bottomReserve),
-    };
-  };
-
-  const PIP_AUTOHIDE_MS = 4500;
-  const PIP_CORNER_SNAP_PX = 22;
-  const pipAutoHideTimerRef = useRef<number | null>(null);
-
-  const clearPipAutoHide = () => {
-    if (pipAutoHideTimerRef.current) {
-      window.clearTimeout(pipAutoHideTimerRef.current);
-      pipAutoHideTimerRef.current = null;
-    }
-  };
-
-  const resetPipAutoHide = () => {
-    clearPipAutoHide();
-    if (!isCallMode) return;
-    if (pipHidden) return;
-
-    pipAutoHideTimerRef.current = window.setTimeout(() => {
-      if (pipDragRef.current.active) return;
-      setPipHidden(true);
-    }, PIP_AUTOHIDE_MS);
-  };
-
-  const maybeSnapToCorner = (pos: { x: number; y: number }) => {
-    const { w, h } = getViewport();
-    const { w: pw, h: ph } = getPipSize();
-    const bottomReserve = 120;
-
-    const minX = 8;
-    const minY = 8;
-    const maxX = Math.max(8, w - pw - 8);
-    const maxY = Math.max(8, h - ph - bottomReserve);
-
-    const nearLeft = Math.abs(pos.x - minX) <= PIP_CORNER_SNAP_PX;
-    const nearRight = Math.abs(pos.x - maxX) <= PIP_CORNER_SNAP_PX;
-    const nearTop = Math.abs(pos.y - minY) <= PIP_CORNER_SNAP_PX;
-    const nearBottom = Math.abs(pos.y - maxY) <= PIP_CORNER_SNAP_PX;
-
-    if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
-      return {
-        x: nearLeft ? minX : maxX,
-        y: nearTop ? minY : maxY,
-      };
-    }
-    return pos;
-  };
-
-  useEffect(() => {
-    const update = () => {
-      if (typeof window === "undefined") return;
-      setIsPortrait((window.innerHeight || 0) >= (window.innerWidth || 0));
-    };
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update as any);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update as any);
-    };
-  }, []);
-
-  // Initialize PiP position when entering call mode
-  useEffect(() => {
-    if (!isCallMode) {
-      clearPipAutoHide();
-      return;
-    }
-
-    if (!pipPos) {
-      setPipPos(getDefaultPipPos());
-    }
-
-    // If user returns to call mode, keep whatever they chose, but clamp it
-    setPipPos((prev) => {
-      const p = prev || getDefaultPipPos();
-      const { w, h } = getViewport();
-      const { w: pw, h: ph } = getPipSize();
-      const bottomReserve = 120;
-
-      return {
-        x: clamp(p.x, 8, Math.max(8, w - pw - 8)),
-        y: clamp(p.y, 8, Math.max(8, h - ph - bottomReserve)),
-      };
-    });
-
-    // When in call mode and PiP is visible, schedule hide
-    if (!pipHidden) {
-      resetPipAutoHide();
-    } else {
-      clearPipAutoHide();
-    }
-
-    return () => clearPipAutoHide();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isCallMode, isPortrait, pipHidden]);
-
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
-        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off. */}
+        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
+            Audio rooms auto-join; joiners no longer choose audio/video. */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
             <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-950 p-4">
               <div className="text-lg font-semibold mb-2">Video room</div>
-              <div className="text-sm text-neutral-300 mb-4">Join with camera on or off.</div>
+              <div className="text-sm text-neutral-300 mb-4">
+                Join with camera on or off.
+              </div>
 
               <div className="grid grid-cols-1 gap-2">
                 <button
@@ -1507,12 +1415,14 @@ export default function RoomPage() {
                 </button>
               </div>
 
-              <div className="mt-3 text-[11px] text-neutral-400">Room type is set by the creator.</div>
+              <div className="mt-3 text-[11px] text-neutral-400">
+                Room type is set by the creator.
+              </div>
             </div>
           </div>
         )}
 
-        {/* Top floating controls */}
+        {/* Top floating controls (no code, no audio/video) */}
         <header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
           <div className="flex items-center justify-end gap-2">
             <button
@@ -1562,7 +1472,10 @@ export default function RoomPage() {
 
               <button
                 type="button"
-                onClick={() => speakText("Teste de voz", "pt-BR", 0.95)}
+                onClick={() => {
+                  unlockTts();
+                  speakText("Teste de voz", "pt-BR", 0.95);
+                }}
                 className="px-3 py-2 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
               >
                 Test Voice
@@ -1618,14 +1531,18 @@ export default function RoomPage() {
                     <span className="text-neutral-200">Speak translated</span>
                   </label>
 
-                  <div className="text-[10px] text-neutral-400">Tip: after changing “I speak”, hold to talk again.</div>
+                  <div className="text-[10px] text-neutral-400">
+                    Tip: after changing “I speak”, hold to talk again.
+                  </div>
                 </div>
               </div>
 
               <div className="mt-2 text-[10px] text-neutral-400">
-                Raw audio muted: <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span> · Speak
-                translated: <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span> · Connected:{" "}
-                <span className="font-mono">{connected ? "true" : "false"}</span>
+                Raw audio muted:{" "}
+                <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
+                · Speak translated:{" "}
+                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
+                · Connected: <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
 
               <div className="mt-3 max-h-40 overflow-auto rounded-lg bg-black/50 border border-neutral-700 p-2">
@@ -1665,13 +1582,11 @@ export default function RoomPage() {
                   className="h-full w-full object-cover"
                 />
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                  {myHandUp && <span>✋</span>}
                   <span>You</span>
                 </div>
               </div>
             )}
 
-            {/* ✅ 1-on-1 "call mode" with draggable/hideable PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
                 <video
@@ -1698,140 +1613,21 @@ export default function RoomPage() {
                 />
 
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                  {handsUp[firstRemoteId] && <span>✋</span>}
                   <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
                 </div>
 
-                {/* Tap-anywhere overlay when PiP is hidden (call mode only) */}
-                {isCallMode && pipHidden && (
-                  <button
-                    type="button"
-                    aria-label="Show self-view"
-                    onClick={() => {
-                      setPipHidden(false);
-                      if (!pipPos) setPipPos(getDefaultPipPos());
-                      setTimeout(() => resetPipAutoHide(), 0);
-                    }}
-                    className="absolute inset-0 z-20 pointer-events-auto bg-transparent"
+                <div className="absolute bottom-4 right-4 w-32 h-20 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg">
+                  <video
+                    data-local="1"
+                    ref={attachLocalVideo}
+                    autoPlay
+                    playsInline
+                    className="h-full w-full object-cover"
                   />
-                )}
-
-                {/* Self-view PiP (call mode only) */}
-                {isCallMode && !pipHidden && pipPos && (
-                  <div
-                    className="absolute z-30 pointer-events-auto"
-                    style={{
-                      left: pipPos.x,
-                      top: pipPos.y,
-                    }}
-                    onPointerDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      resetPipAutoHide();
-
-                      try {
-                        (e.currentTarget as any).setPointerCapture?.(e.pointerId);
-                      } catch {}
-
-                      pipDragRef.current.active = true;
-                      pipDragRef.current.pointerId = e.pointerId;
-                      pipDragRef.current.startX = e.clientX;
-                      pipDragRef.current.startY = e.clientY;
-                      pipDragRef.current.startPosX = pipPos.x;
-                      pipDragRef.current.startPosY = pipPos.y;
-                    }}
-                    onPointerMove={(e) => {
-                      if (!pipDragRef.current.active) return;
-                      if (pipDragRef.current.pointerId !== e.pointerId) return;
-
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      const dx = e.clientX - pipDragRef.current.startX;
-                      const dy = e.clientY - pipDragRef.current.startY;
-
-                      const { w, h } = getViewport();
-                      const { w: pw, h: ph } = getPipSize();
-                      const bottomReserve = 120;
-
-                      const nx = pipDragRef.current.startPosX + dx;
-                      const ny = pipDragRef.current.startPosY + dy;
-
-                      setPipPos({
-                        x: clamp(nx, 8, Math.max(8, w - pw - 8)),
-                        y: clamp(ny, 8, Math.max(8, h - ph - bottomReserve)),
-                      });
-
-                      resetPipAutoHide();
-                    }}
-                    onPointerUp={(e) => {
-                      if (pipDragRef.current.pointerId !== e.pointerId) return;
-                      pipDragRef.current.active = false;
-                      pipDragRef.current.pointerId = null;
-
-                      try {
-                        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-                      } catch {}
-
-                      setPipPos((prev) => (prev ? maybeSnapToCorner(prev) : prev));
-                      resetPipAutoHide();
-                    }}
-                    onPointerCancel={(e) => {
-                      if (pipDragRef.current.pointerId !== e.pointerId) return;
-                      pipDragRef.current.active = false;
-                      pipDragRef.current.pointerId = null;
-
-                      try {
-                        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
-                      } catch {}
-
-                      resetPipAutoHide();
-                    }}
-                  >
-                    <div
-                      className={`
-                        relative overflow-hidden
-                        rounded-2xl border border-white/10
-                        bg-black/25 backdrop-blur-md shadow-lg
-                        ${isPortrait ? "w-24 h-40" : "w-40 h-24"}
-                      `}
-                      style={{ touchAction: "none" }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        resetPipAutoHide();
-                      }}
-                    >
-                      <video
-                        data-local="1"
-                        ref={attachLocalVideo}
-                        autoPlay
-                        playsInline
-                        className="h-full w-full object-cover"
-                      />
-
-                      {/* Hide (X) */}
-                      <button
-                        type="button"
-                        aria-label="Hide self-view"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setPipHidden(true);
-                          clearPipAutoHide();
-                        }}
-                        className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/35 backdrop-blur border border-white/10 text-white/90 flex items-center justify-center"
-                      >
-                        ×
-                      </button>
-
-                      <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/60 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        {myHandUp && <span>✋</span>}
-                        <span>You</span>
-                      </div>
-                    </div>
+                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <span>You</span>
                   </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -1846,7 +1642,6 @@ export default function RoomPage() {
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                    {myHandUp && <span>✋</span>}
                     <span>You</span>
                   </div>
                 </div>
@@ -1879,7 +1674,6 @@ export default function RoomPage() {
                       }}
                     />
                     <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                      {handsUp[pid] && <span>✋</span>}
                       <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
                     </div>
                   </div>
@@ -1900,7 +1694,6 @@ export default function RoomPage() {
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        {myHandUp && <span>✋</span>}
                         <span>You</span>
                       </div>
                     </>
@@ -1927,7 +1720,6 @@ export default function RoomPage() {
                         }}
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        {handsUp[spotlightId] && <span>✋</span>}
                         <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
                       </div>
                     </>
@@ -1949,7 +1741,6 @@ export default function RoomPage() {
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        {myHandUp && <span>✋</span>}
                         <span>You</span>
                       </div>
                     </button>
@@ -1987,7 +1778,6 @@ export default function RoomPage() {
                           }}
                         />
                         <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                          {handsUp[pid] && <span>✋</span>}
                           <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
                         </div>
                       </button>
@@ -2001,11 +1791,14 @@ export default function RoomPage() {
           {/* Captions overlay (low + can overlap controls) */}
           {ccOn && messages.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+              {/* Bottom fade so captions stay readable even over video + dock */}
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
 
               <div
                 className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
                 style={{
+                  // LOW: sits close to the bottom and may overlap dock/PTT.
+                  // When text input is open, lift a bit so captions don't sit under the input.
                   paddingBottom: showTextInput
                     ? "calc(env(safe-area-inset-bottom) + 118px)"
                     : "calc(env(safe-area-inset-bottom) + 64px)",
@@ -2015,7 +1808,10 @@ export default function RoomPage() {
                   const isNewest = idx === arr.length - 1;
 
                   return (
-                    <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
+                    <div
+                      key={m.id}
+                      className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}
+                    >
                       <div
                         className={`
                           max-w-[74%]
@@ -2027,11 +1823,13 @@ export default function RoomPage() {
                           ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
                         `}
                         style={{
+                          // Make older lines less obtrusive
                           opacity: isNewest ? 1 : 0.65,
                           transform: isNewest ? "scale(1)" : "scale(0.98)",
                           transformOrigin: m.isLocal ? "right bottom" : "left bottom",
                         }}
                       >
+                        {/* Tiny header; make it basically invisible on older lines */}
                         <div
                           className="flex items-center justify-between gap-2 mb-0.5"
                           style={{ opacity: isNewest ? 0.7 : 0.35 }}
@@ -2044,6 +1842,7 @@ export default function RoomPage() {
                           </span>
                         </div>
 
+                        {/* Translated text (newest can be 3 lines, old lines 2) */}
                         <div
                           className={`${
                             isNewest ? "text-[13px]" : "text-[12px]"
@@ -2144,7 +1943,7 @@ export default function RoomPage() {
             </select>
           </div>
 
-          {/* Center PTT */}
+          {/* Center PTT (lower, round, floating) */}
           <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
             <button
               className={`
@@ -2155,7 +1954,11 @@ export default function RoomPage() {
                 backdrop-blur-md
                 active:scale-[0.98]
                 transition
-                ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+                ${
+                  micUiOn
+                    ? "bg-emerald-600/65 border-emerald-300/30"
+                    : "bg-red-600/55 border-red-300/30"
+                }
               `}
               style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
               onPointerDown={(e) => {
@@ -2167,6 +1970,7 @@ export default function RoomPage() {
 
                 pttHeldRef.current = true;
                 userTouchedMicRef.current = true;
+                unlockTts();
                 micArmedRef.current = true;
                 setSttArmedNotListening(false);
 
@@ -2229,35 +2033,6 @@ export default function RoomPage() {
             </button>
           </div>
         </div>
-
-        {/* ✅ Hand raise button REMOVED in call mode (and generally only useful in groups) */}
-        {totalParticipants >= 3 && (
-          <button
-            type="button"
-            onClick={toggleHand}
-            className="
-              fixed
-              right-3
-              top-1/2
-              -translate-y-1/2
-              z-30
-              rounded-full
-              w-11
-              h-11
-              flex
-              items-center
-              justify-center
-              bg-amber-400/55
-              hover:bg-amber-400/75
-              text-black
-              shadow-lg
-              backdrop-blur-md
-              border border-white/10
-            "
-          >
-            <span className="text-xl">✋</span>
-          </button>
-        )}
       </div>
     </div>
   );
