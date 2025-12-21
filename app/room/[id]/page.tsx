@@ -396,7 +396,6 @@ export default function RoomPage() {
           setJoinCamOn(false);
         } else {
           // video room: if we haven't asked, default to "ask"
-          // you can change this default if you want it auto-join with cam ON:
           // setJoinCamOn(true);
         }
       } catch (err) {
@@ -587,61 +586,55 @@ export default function RoomPage() {
     setConnected(false);
   }
 
-    // ---- ICE servers (STUN + optional TURN) -------------------
-const {
-  iceServers,
-  turnEnabled,
-  turnUrlsCount,
-  turnMissing,
-} = useMemo(() => {
-  const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // ---- ICE servers (STUN + optional TURN) -------------------
+  const { iceServers, turnEnabled, turnUrlsCount, turnMissing } = useMemo(() => {
+    const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-  const turnUsername = process.env.NEXT_PUBLIC_TURN_USERNAME || "";
-  const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "";
+    const turnUsername = process.env.NEXT_PUBLIC_TURN_USERNAME || "";
+    const turnCredential = process.env.NEXT_PUBLIC_TURN_CREDENTIAL || "";
 
-  const servers: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302"] }];
+    const servers: RTCIceServer[] = [{ urls: ["stun:stun.l.google.com:19302"] }];
 
-  const enabled = !!(turnUrls.length && turnUsername && turnCredential);
+    const enabled = !!(turnUrls.length && turnUsername && turnCredential);
 
-  if (enabled) {
-    servers.push({
-      urls: turnUrls,
-      username: turnUsername,
-      credential: turnCredential,
-    });
-  }
+    if (enabled) {
+      servers.push({
+        urls: turnUrls,
+        username: turnUsername,
+        credential: turnCredential,
+      });
+    }
 
-  return {
-    iceServers: servers,
-    turnEnabled: enabled,
-    turnUrlsCount: turnUrls.length,
-    turnMissing: {
-      urls: turnUrls.length === 0,
-      username: !turnUsername,
-      credential: !turnCredential,
-    },
-  };
-}, []);
+    return {
+      iceServers: servers,
+      turnEnabled: enabled,
+      turnUrlsCount: turnUrls.length,
+      turnMissing: {
+        urls: turnUrls.length === 0,
+        username: !turnUsername,
+        credential: !turnCredential,
+      },
+    };
+  }, []);
 
-// ✅ Log once (NO render-loop)
-useEffect(() => {
-  if (turnEnabled) {
-    log("TURN enabled", { turnUrlsCount });
-  } else {
-    log("TURN not configured", turnMissing);
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
-
+  // ✅ Log once (NO render-loop)
+  useEffect(() => {
+    if (turnEnabled) {
+      log("TURN enabled", { turnUrlsCount });
+    } else {
+      log("TURN not configured", turnMissing);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
     const existing = peersRef.current.get(remoteId);
     if (existing) return existing;
 
-        const pc = new RTCPeerConnection({
+    const pc = new RTCPeerConnection({
       iceServers,
       iceCandidatePoolSize: 4,
     });
@@ -891,8 +884,6 @@ useEffect(() => {
           sawFinal = true;
 
           // ✅ PTT FIX: while holding PTT on mobile, DO NOT send on finals.
-          // Android often emits many "finals" incrementally (4,7,9,14,25,41...)
-          // We only want ONE send: on release (flush).
           if (isMobile && pttHeldRef.current) {
             sttPendingTextRef.current = t;
             continue;
@@ -905,7 +896,6 @@ useEffect(() => {
       }
 
       // ✅ While holding PTT on mobile, do NOT run finalize-on-silence timer
-      // (it causes spam/partials while still holding)
       if (isMobile && pttHeldRef.current) {
         if (newestText) sttPendingTextRef.current = newestText;
         return;
@@ -1036,11 +1026,9 @@ useEffect(() => {
     (async () => {
       try {
         // ✅ Acquire media only if needed.
-        // - Mobile never grabs mic (Web Speech uses mic)
-        // - Video rooms grab camera; audio rooms do not
         const needVideo = roomType === "video";
         const canAcquire =
-          !(isMobile && roomType === "audio") && (needVideo || !isMobile); // desktop needs audio track for preview/mic state
+          !(isMobile && roomType === "audio") && (needVideo || !isMobile);
 
         if (canAcquire) {
           await acquire();
@@ -1051,7 +1039,7 @@ useEffect(() => {
             roomType,
           });
 
-          // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
+          // ✅ Mobile: free the mic for Web Speech STT
           if (isMobile && localStreamRef.current) {
             const ats = localStreamRef.current.getAudioTracks();
             ats.forEach((t) => {
@@ -1062,7 +1050,8 @@ useEffect(() => {
                 localStreamRef.current?.removeTrack(t);
               } catch {}
             });
-            if (ats.length) log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
+            if (ats.length)
+              log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
           }
         } else {
           log("skipping getUserMedia (mobile STT-only audio room)", { roomType });
@@ -1303,7 +1292,8 @@ useEffect(() => {
     const text = textInput.trim();
     if (!text) return;
 
-    const lang = (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
+    const lang =
+      (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
 
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
@@ -1334,14 +1324,13 @@ useEffect(() => {
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
   const totalParticipants = peerIds.length + 1;
 
+  // ✅ "Call mode" = 1-on-1 layout where remote is full-screen and self is PiP
+  const isCallMode = peerIds.length === 1 && !!firstRemoteId;
+
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   const online = rtStatus === "SUBSCRIBED";
-  const connectedClass = online
-    ? "bg-emerald-600/90 text-white border-emerald-500"
-    : "bg-red-900/70 text-red-200 border-red-700";
-
   const micClass = micUiOn
     ? "bg-neutral-800 text-neutral-50 border-neutral-600"
     : "bg-red-900/80 text-red-100 border-red-700";
@@ -1352,42 +1341,155 @@ useEffect(() => {
 
   const effectiveCaptionLines = Math.max(1, captionLines || 3);
 
-  const shareRoomCode = async () => {
-    const code = roomInfo?.code;
-    if (!code) return;
+  // ---- PiP: draggable + hide/show + orientation-aware + auto-hide -----------
+  const [isPortrait, setIsPortrait] = useState(true);
 
-    const shareText = `Any-Speak room code: ${code}`;
+  const [pipHidden, setPipHidden] = useState(false);
+  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
 
-    try {
-      // @ts-ignore
-      if (navigator.share) {
-        // @ts-ignore
-        await navigator.share({ text: shareText });
-      } else {
-        await navigator.clipboard.writeText(code);
-        log("copied room code", { code });
-      }
-    } catch {
-      try {
-        await navigator.clipboard.writeText(code);
-        log("copied room code", { code });
-      } catch {}
+  const pipDragRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    startPosX: number;
+    startPosY: number;
+  }>({
+    active: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    startPosX: 0,
+    startPosY: 0,
+  });
+
+  const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+  const getViewport = () => {
+    if (typeof window === "undefined") return { w: 360, h: 640 };
+    return { w: window.innerWidth || 360, h: window.innerHeight || 640 };
+  };
+
+  const getPipSize = () => {
+    // Must match the class sizes below
+    return isPortrait ? { w: 96, h: 160 } : { w: 160, h: 96 }; // w-24/h-40 vs w-40/h-24
+  };
+
+  const getDefaultPipPos = () => {
+    const { w, h } = getViewport();
+    const { w: pw, h: ph } = getPipSize();
+    const bottomReserve = 120; // keeps it out of the dock area
+    return {
+      x: Math.max(8, w - pw - 12),
+      y: Math.max(8, h - ph - bottomReserve),
+    };
+  };
+
+  const PIP_AUTOHIDE_MS = 4500;
+  const PIP_CORNER_SNAP_PX = 22;
+  const pipAutoHideTimerRef = useRef<number | null>(null);
+
+  const clearPipAutoHide = () => {
+    if (pipAutoHideTimerRef.current) {
+      window.clearTimeout(pipAutoHideTimerRef.current);
+      pipAutoHideTimerRef.current = null;
     }
   };
+
+  const resetPipAutoHide = () => {
+    clearPipAutoHide();
+    if (!isCallMode) return;
+    if (pipHidden) return;
+
+    pipAutoHideTimerRef.current = window.setTimeout(() => {
+      if (pipDragRef.current.active) return;
+      setPipHidden(true);
+    }, PIP_AUTOHIDE_MS);
+  };
+
+  const maybeSnapToCorner = (pos: { x: number; y: number }) => {
+    const { w, h } = getViewport();
+    const { w: pw, h: ph } = getPipSize();
+    const bottomReserve = 120;
+
+    const minX = 8;
+    const minY = 8;
+    const maxX = Math.max(8, w - pw - 8);
+    const maxY = Math.max(8, h - ph - bottomReserve);
+
+    const nearLeft = Math.abs(pos.x - minX) <= PIP_CORNER_SNAP_PX;
+    const nearRight = Math.abs(pos.x - maxX) <= PIP_CORNER_SNAP_PX;
+    const nearTop = Math.abs(pos.y - minY) <= PIP_CORNER_SNAP_PX;
+    const nearBottom = Math.abs(pos.y - maxY) <= PIP_CORNER_SNAP_PX;
+
+    if ((nearLeft || nearRight) && (nearTop || nearBottom)) {
+      return {
+        x: nearLeft ? minX : maxX,
+        y: nearTop ? minY : maxY,
+      };
+    }
+    return pos;
+  };
+
+  useEffect(() => {
+    const update = () => {
+      if (typeof window === "undefined") return;
+      setIsPortrait((window.innerHeight || 0) >= (window.innerWidth || 0));
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update as any);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update as any);
+    };
+  }, []);
+
+  // Initialize PiP position when entering call mode
+  useEffect(() => {
+    if (!isCallMode) {
+      clearPipAutoHide();
+      return;
+    }
+
+    if (!pipPos) {
+      setPipPos(getDefaultPipPos());
+    }
+
+    // If user returns to call mode, keep whatever they chose, but clamp it
+    setPipPos((prev) => {
+      const p = prev || getDefaultPipPos();
+      const { w, h } = getViewport();
+      const { w: pw, h: ph } = getPipSize();
+      const bottomReserve = 120;
+
+      return {
+        x: clamp(p.x, 8, Math.max(8, w - pw - 8)),
+        y: clamp(p.y, 8, Math.max(8, h - ph - bottomReserve)),
+      };
+    });
+
+    // When in call mode and PiP is visible, schedule hide
+    if (!pipHidden) {
+      resetPipAutoHide();
+    } else {
+      clearPipAutoHide();
+    }
+
+    return () => clearPipAutoHide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCallMode, isPortrait, pipHidden]);
 
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
-        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
-            Audio rooms auto-join; joiners no longer choose audio/video. */}
+        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off. */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
             <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-950 p-4">
               <div className="text-lg font-semibold mb-2">Video room</div>
-              <div className="text-sm text-neutral-300 mb-4">
-                Join with camera on or off.
-              </div>
+              <div className="text-sm text-neutral-300 mb-4">Join with camera on or off.</div>
 
               <div className="grid grid-cols-1 gap-2">
                 <button
@@ -1405,52 +1507,49 @@ useEffect(() => {
                 </button>
               </div>
 
-              <div className="mt-3 text-[11px] text-neutral-400">
-                Room type is set by the creator.
-              </div>
+              <div className="mt-3 text-[11px] text-neutral-400">Room type is set by the creator.</div>
             </div>
           </div>
         )}
 
-        {/* Top floating controls (no code, no audio/video) */}
-<header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
-  <div className="flex items-center justify-end gap-2">
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          const url = window.location.href;
-          // @ts-ignore
-          if (navigator.share) {
-            // @ts-ignore
-            await navigator.share({ url, text: "Join my Any-Speak room" });
-          } else {
-            await navigator.clipboard.writeText(url);
-            log("copied room link", { url });
-          }
-        } catch {
-          try {
-            const url = window.location.href;
-            await navigator.clipboard.writeText(url);
-            log("copied room link", { url });
-          } catch {}
-        }
-      }}
-      className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
-    >
-      Share
-    </button>
+        {/* Top floating controls */}
+        <header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const url = window.location.href;
+                  // @ts-ignore
+                  if (navigator.share) {
+                    // @ts-ignore
+                    await navigator.share({ url, text: "Join my Any-Speak room" });
+                  } else {
+                    await navigator.clipboard.writeText(url);
+                    log("copied room link", { url });
+                  }
+                } catch {
+                  try {
+                    const url = window.location.href;
+                    await navigator.clipboard.writeText(url);
+                    log("copied room link", { url });
+                  } catch {}
+                }
+              }}
+              className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
+            >
+              Share
+            </button>
 
-    <span
-      className={`pointer-events-auto px-3 py-1.5 rounded-full text-[11px] shadow backdrop-blur-md border border-white/10 ${
-        online ? "bg-emerald-600/55 text-white" : "bg-red-600/45 text-white"
-      }`}
-    >
-      {online ? "Online" : "Offline"}
-    </span>
-  </div>
-</header>
-
+            <span
+              className={`pointer-events-auto px-3 py-1.5 rounded-full text-[11px] shadow backdrop-blur-md border border-white/10 ${
+                online ? "bg-emerald-600/55 text-white" : "bg-red-600/45 text-white"
+              }`}
+            >
+              {online ? "Online" : "Offline"}
+            </span>
+          </div>
+        </header>
 
         <main className="absolute inset-0 pt-0 md:pt-14">
           {/* Debug Panel */}
@@ -1519,18 +1618,14 @@ useEffect(() => {
                     <span className="text-neutral-200">Speak translated</span>
                   </label>
 
-                  <div className="text-[10px] text-neutral-400">
-                    Tip: after changing “I speak”, hold to talk again.
-                  </div>
+                  <div className="text-[10px] text-neutral-400">Tip: after changing “I speak”, hold to talk again.</div>
                 </div>
               </div>
 
               <div className="mt-2 text-[10px] text-neutral-400">
-                Raw audio muted:{" "}
-                <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
-                · Speak translated:{" "}
-                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
-                · Connected: <span className="font-mono">{connected ? "true" : "false"}</span>
+                Raw audio muted: <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span> · Speak
+                translated: <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span> · Connected:{" "}
+                <span className="font-mono">{connected ? "true" : "false"}</span>
               </div>
 
               <div className="mt-3 max-h-40 overflow-auto rounded-lg bg-black/50 border border-neutral-700 p-2">
@@ -1548,8 +1643,8 @@ useEffect(() => {
               {sttStatus === "unsupported"
                 ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
-                  ? sttErrorMessage || "Live captions mic error. Use Text."
-                  : "Checking live captions mic..."}
+                ? sttErrorMessage || "Live captions mic error. Use Text."
+                : "Checking live captions mic..."}
             </div>
           )}
 
@@ -1576,6 +1671,7 @@ useEffect(() => {
               </div>
             )}
 
+            {/* ✅ 1-on-1 "call mode" with draggable/hideable PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
                 <video
@@ -1606,19 +1702,136 @@ useEffect(() => {
                   <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
                 </div>
 
-                <div className="absolute bottom-4 right-4 w-32 h-20 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg">
-                  <video
-                    data-local="1"
-                    ref={attachLocalVideo}
-                    autoPlay
-                    playsInline
-                    className="h-full w-full object-cover"
+                {/* Tap-anywhere overlay when PiP is hidden (call mode only) */}
+                {isCallMode && pipHidden && (
+                  <button
+                    type="button"
+                    aria-label="Show self-view"
+                    onClick={() => {
+                      setPipHidden(false);
+                      if (!pipPos) setPipPos(getDefaultPipPos());
+                      setTimeout(() => resetPipAutoHide(), 0);
+                    }}
+                    className="absolute inset-0 z-20 pointer-events-auto bg-transparent"
                   />
-                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                    {myHandUp && <span>✋</span>}
-                    <span>You</span>
+                )}
+
+                {/* Self-view PiP (call mode only) */}
+                {isCallMode && !pipHidden && pipPos && (
+                  <div
+                    className="absolute z-30 pointer-events-auto"
+                    style={{
+                      left: pipPos.x,
+                      top: pipPos.y,
+                    }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      resetPipAutoHide();
+
+                      try {
+                        (e.currentTarget as any).setPointerCapture?.(e.pointerId);
+                      } catch {}
+
+                      pipDragRef.current.active = true;
+                      pipDragRef.current.pointerId = e.pointerId;
+                      pipDragRef.current.startX = e.clientX;
+                      pipDragRef.current.startY = e.clientY;
+                      pipDragRef.current.startPosX = pipPos.x;
+                      pipDragRef.current.startPosY = pipPos.y;
+                    }}
+                    onPointerMove={(e) => {
+                      if (!pipDragRef.current.active) return;
+                      if (pipDragRef.current.pointerId !== e.pointerId) return;
+
+                      e.preventDefault();
+                      e.stopPropagation();
+
+                      const dx = e.clientX - pipDragRef.current.startX;
+                      const dy = e.clientY - pipDragRef.current.startY;
+
+                      const { w, h } = getViewport();
+                      const { w: pw, h: ph } = getPipSize();
+                      const bottomReserve = 120;
+
+                      const nx = pipDragRef.current.startPosX + dx;
+                      const ny = pipDragRef.current.startPosY + dy;
+
+                      setPipPos({
+                        x: clamp(nx, 8, Math.max(8, w - pw - 8)),
+                        y: clamp(ny, 8, Math.max(8, h - ph - bottomReserve)),
+                      });
+
+                      resetPipAutoHide();
+                    }}
+                    onPointerUp={(e) => {
+                      if (pipDragRef.current.pointerId !== e.pointerId) return;
+                      pipDragRef.current.active = false;
+                      pipDragRef.current.pointerId = null;
+
+                      try {
+                        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
+                      } catch {}
+
+                      setPipPos((prev) => (prev ? maybeSnapToCorner(prev) : prev));
+                      resetPipAutoHide();
+                    }}
+                    onPointerCancel={(e) => {
+                      if (pipDragRef.current.pointerId !== e.pointerId) return;
+                      pipDragRef.current.active = false;
+                      pipDragRef.current.pointerId = null;
+
+                      try {
+                        (e.currentTarget as any).releasePointerCapture?.(e.pointerId);
+                      } catch {}
+
+                      resetPipAutoHide();
+                    }}
+                  >
+                    <div
+                      className={`
+                        relative overflow-hidden
+                        rounded-2xl border border-white/10
+                        bg-black/25 backdrop-blur-md shadow-lg
+                        ${isPortrait ? "w-24 h-40" : "w-40 h-24"}
+                      `}
+                      style={{ touchAction: "none" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        resetPipAutoHide();
+                      }}
+                    >
+                      <video
+                        data-local="1"
+                        ref={attachLocalVideo}
+                        autoPlay
+                        playsInline
+                        className="h-full w-full object-cover"
+                      />
+
+                      {/* Hide (X) */}
+                      <button
+                        type="button"
+                        aria-label="Hide self-view"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setPipHidden(true);
+                          clearPipAutoHide();
+                        }}
+                        className="absolute top-1 right-1 w-7 h-7 rounded-full bg-black/35 backdrop-blur border border-white/10 text-white/90 flex items-center justify-center"
+                      >
+                        ×
+                      </button>
+
+                      <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/60 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        {myHandUp && <span>✋</span>}
+                        <span>You</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
@@ -1786,77 +1999,70 @@ useEffect(() => {
           </div>
 
           {/* Captions overlay (low + can overlap controls) */}
-{ccOn && messages.length > 0 && (
-  <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
-    {/* Bottom fade so captions stay readable even over video + dock */}
-    <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
+          {ccOn && messages.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+              <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
 
-    <div
-      className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
-      style={{
-        // LOW: sits close to the bottom and may overlap dock/PTT.
-        // When text input is open, lift a bit so captions don't sit under the input.
-        paddingBottom: showTextInput
-          ? "calc(env(safe-area-inset-bottom) + 118px)"
-          : "calc(env(safe-area-inset-bottom) + 64px)",
-      }}
-    >
-      {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
-        const isNewest = idx === arr.length - 1;
-
-        return (
-          <div
-            key={m.id}
-            className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`
-                max-w-[74%]
-                rounded-2xl
-                border border-white/10
-                bg-black/30
-                backdrop-blur-md
-                shadow
-                ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
-              `}
-              style={{
-                // Make older lines less obtrusive
-                opacity: isNewest ? 1 : 0.65,
-                transform: isNewest ? "scale(1)" : "scale(0.98)",
-                transformOrigin: m.isLocal ? "right bottom" : "left bottom",
-              }}
-            >
-              {/* Tiny header; make it basically invisible on older lines */}
               <div
-                className="flex items-center justify-between gap-2 mb-0.5"
-                style={{ opacity: isNewest ? 0.7 : 0.35 }}
-              >
-                <span className="truncate text-[9px] text-white/70">
-                  {m.isLocal ? "You" : m.fromName}
-                </span>
-                <span className="shrink-0 text-[9px] text-white/60">
-                  {m.originalLang}→{m.translatedLang}
-                </span>
-              </div>
-
-              {/* Translated text (newest can be 3 lines, old lines 2) */}
-              <div
-                className={`${isNewest ? "text-[13px]" : "text-[12px]"} leading-snug text-white/95 overflow-hidden`}
+                className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
                 style={{
-                  display: "-webkit-box",
-                  WebkitBoxOrient: "vertical",
-                  WebkitLineClamp: isNewest ? 3 : 2,
+                  paddingBottom: showTextInput
+                    ? "calc(env(safe-area-inset-bottom) + 118px)"
+                    : "calc(env(safe-area-inset-bottom) + 64px)",
                 }}
               >
-                {m.translatedText}
+                {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
+                  const isNewest = idx === arr.length - 1;
+
+                  return (
+                    <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`
+                          max-w-[74%]
+                          rounded-2xl
+                          border border-white/10
+                          bg-black/30
+                          backdrop-blur-md
+                          shadow
+                          ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
+                        `}
+                        style={{
+                          opacity: isNewest ? 1 : 0.65,
+                          transform: isNewest ? "scale(1)" : "scale(0.98)",
+                          transformOrigin: m.isLocal ? "right bottom" : "left bottom",
+                        }}
+                      >
+                        <div
+                          className="flex items-center justify-between gap-2 mb-0.5"
+                          style={{ opacity: isNewest ? 0.7 : 0.35 }}
+                        >
+                          <span className="truncate text-[9px] text-white/70">
+                            {m.isLocal ? "You" : m.fromName}
+                          </span>
+                          <span className="shrink-0 text-[9px] text-white/60">
+                            {m.originalLang}→{m.translatedLang}
+                          </span>
+                        </div>
+
+                        <div
+                          className={`${
+                            isNewest ? "text-[13px]" : "text-[12px]"
+                          } leading-snug text-white/95 overflow-hidden`}
+                          style={{
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: isNewest ? 3 : 2,
+                          }}
+                        >
+                          {m.translatedText}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        );
-      })}
-    </div>
-  </div>
-)}
+          )}
 
           {/* Manual text input */}
           {showTextInput && (
@@ -1880,176 +2086,179 @@ useEffect(() => {
               </div>
             </form>
           )}
-                </main>
+        </main>
 
         {/* Floating bottom controls (like the top) */}
-<div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
-  {/* Left controls */}
-  <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
-    <button
-      onClick={toggleCamera}
-      className={`${pillBase} ${camClass} ${roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""} bg-black/25 backdrop-blur-md border-white/10`}
-      disabled={roomType !== "video"}
-    >
-      {camOn ? "Cam" : "Cam Off"}
-    </button>
+        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+          {/* Left controls */}
+          <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+              } bg-black/25 backdrop-blur-md border-white/10`}
+              disabled={roomType !== "video"}
+            >
+              {camOn ? "Cam" : "Cam Off"}
+            </button>
 
-    <button
-      onClick={() => setShowTextInput((v) => !v)}
-      className={`${pillBase} ${
-        showTextInput
-          ? "bg-emerald-600/60 text-white border-emerald-400/30"
-          : "bg-black/25 text-white border-white/10"
-      } backdrop-blur-md`}
-    >
-      Text
-    </button>
-  </div>
+            <button
+              onClick={() => setShowTextInput((v) => !v)}
+              className={`${pillBase} ${
+                showTextInput
+                  ? "bg-emerald-600/60 text-white border-emerald-400/30"
+                  : "bg-black/25 text-white border-white/10"
+              } backdrop-blur-md`}
+            >
+              Text
+            </button>
+          </div>
 
-  {/* Right controls */}
-<div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
-  <button
-    type="button"
-    onClick={() => setCcOn((v) => !v)}
-    className={`
-      px-3 py-1.5 rounded-full text-[11px]
-      bg-black/25 backdrop-blur-md border border-white/10 shadow
-      ${ccOn ? "text-white/95" : "text-white/55"}
-    `}
-    aria-pressed={ccOn}
-    title="Toggle captions"
-  >
-    CC
-  </button>
+          {/* Right controls */}
+          <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCcOn((v) => !v)}
+              className={`
+                px-3 py-1.5 rounded-full text-[11px]
+                bg-black/25 backdrop-blur-md border border-white/10 shadow
+                ${ccOn ? "text-white/95" : "text-white/55"}
+              `}
+              aria-pressed={ccOn}
+              title="Toggle captions"
+            >
+              CC
+            </button>
 
-  <select
-    value={captionLines}
-    onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-    className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
-    title="Caption lines"
-  >
-    <option value={1}>1</option>
-    <option value={2}>2</option>
-    <option value={3}>3</option>
-    <option value={4}>4</option>
-    <option value={5}>5</option>
-  </select>
-</div>
+            <select
+              value={captionLines}
+              onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
+              className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
+              title="Caption lines"
+            >
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+              <option value={5}>5</option>
+            </select>
+          </div>
 
+          {/* Center PTT */}
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
+            <button
+              className={`
+                w-[76px] h-[76px]
+                rounded-full
+                border
+                shadow-xl
+                backdrop-blur-md
+                active:scale-[0.98]
+                transition
+                ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+              `}
+              style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+              onPointerDown={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                } catch {}
 
-  {/* Center PTT (lower, round, floating) */}
-  <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
-    <button
-      className={`
-        w-[76px] h-[76px]
-        rounded-full
-        border
-        shadow-xl
-        backdrop-blur-md
-        active:scale-[0.98]
-        transition
-        ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
-      `}
-      style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-      onPointerDown={(e) => {
-        if (!isMobile) return;
-        e.preventDefault();
-        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+                pttHeldRef.current = true;
+                userTouchedMicRef.current = true;
+                micArmedRef.current = true;
+                setSttArmedNotListening(false);
 
-        pttHeldRef.current = true;
-        userTouchedMicRef.current = true;
-        micArmedRef.current = true;
-        setSttArmedNotListening(false);
+                sttPendingTextRef.current = "";
+                sttLastInterimRef.current = "";
 
-        sttPendingTextRef.current = "";
-        sttLastInterimRef.current = "";
+                startSttNow();
+                setSttListening(true);
+                log("PTT down", {});
+              }}
+              onPointerUp={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
+                pttHeldRef.current = false;
+                try {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                } catch {}
 
-        startSttNow();
-        setSttListening(true);
-        log("PTT down", {});
-      }}
-      onPointerUp={(e) => {
-        if (!isMobile) return;
-        e.preventDefault();
-        pttHeldRef.current = false;
-        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+                micArmedRef.current = false;
+                stopSttNow();
 
-        micArmedRef.current = false;
-        stopSttNow();
+                clearFlushTimer();
+                sttFlushTimerRef.current = window.setTimeout(() => {
+                  flushPendingStt("PTT up");
+                  setSttListening(false);
+                  log("PTT up", {});
+                }, 650);
+              }}
+              onPointerCancel={(e) => {
+                if (!isMobile) return;
+                e.preventDefault();
+                if (!pttHeldRef.current) return;
+                pttHeldRef.current = false;
 
-        clearFlushTimer();
-        sttFlushTimerRef.current = window.setTimeout(() => {
-          flushPendingStt("PTT up");
-          setSttListening(false);
-          log("PTT up", {});
-        }, 650);
-      }}
-      onPointerCancel={(e) => {
-        if (!isMobile) return;
-        e.preventDefault();
-        if (!pttHeldRef.current) return;
-        pttHeldRef.current = false;
+                micArmedRef.current = false;
+                stopSttNow();
 
-        micArmedRef.current = false;
-        stopSttNow();
-
-        clearFlushTimer();
-        sttFlushTimerRef.current = window.setTimeout(() => {
-          flushPendingStt("PTT cancel");
-          setSttListening(false);
-          log("PTT cancel", {});
-        }, 650);
-      }}
-      onClick={() => {
-        if (isMobile) return;
-        void toggleMic();
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-      aria-label="Push to talk"
-    >
-      <div className="flex flex-col items-center justify-center text-center leading-tight">
-        <div className="text-[11px] text-white/90">
-          {isMobile ? (sttListening ? "Talking" : "Hold") : micOn ? "Mic On" : "Mic Off"}
+                clearFlushTimer();
+                sttFlushTimerRef.current = window.setTimeout(() => {
+                  flushPendingStt("PTT cancel");
+                  setSttListening(false);
+                  log("PTT cancel", {});
+                }, 650);
+              }}
+              onClick={() => {
+                if (isMobile) return;
+                void toggleMic();
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+              aria-label="Push to talk"
+            >
+              <div className="flex flex-col items-center justify-center text-center leading-tight">
+                <div className="text-[11px] text-white/90">
+                  {isMobile ? (sttListening ? "Talking" : "Hold") : micOn ? "Mic On" : "Mic Off"}
+                </div>
+                <div className="text-[10px] text-white/70">
+                  {isMobile ? (sttListening ? "Release" : "to talk") : "Click"}
+                </div>
+              </div>
+            </button>
+          </div>
         </div>
-        <div className="text-[10px] text-white/70">
-          {isMobile ? (sttListening ? "Release" : "to talk") : "Click"}
-        </div>
-      </div>
-    </button>
-  </div>
-</div>
 
-{/* Hand raise (mid-right, floating) */}
-<button
-  type="button"
-  onClick={toggleHand}
-  className="
-    fixed
-    right-3
-    top-1/2
-    -translate-y-1/2
-    z-30
-    rounded-full
-    w-11
-    h-11
-    flex
-    items-center
-    justify-center
-    bg-amber-400/55
-    hover:bg-amber-400/75
-    text-black
-    shadow-lg
-    backdrop-blur-md
-    border border-white/10
-  "
->
-  <span className="text-xl">✋</span>
-</button>
-
+        {/* ✅ Hand raise button REMOVED in call mode (and generally only useful in groups) */}
+        {totalParticipants >= 3 && (
+          <button
+            type="button"
+            onClick={toggleHand}
+            className="
+              fixed
+              right-3
+              top-1/2
+              -translate-y-1/2
+              z-30
+              rounded-full
+              w-11
+              h-11
+              flex
+              items-center
+              justify-center
+              bg-amber-400/55
+              hover:bg-amber-400/75
+              text-black
+              shadow-lg
+              backdrop-blur-md
+              border border-white/10
+            "
+          >
+            <span className="text-xl">✋</span>
+          </button>
+        )}
       </div>
     </div>
   );
 }
-
-
-
