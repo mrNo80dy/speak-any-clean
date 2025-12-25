@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { LANGUAGES } from "@/lib/languages";
 import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
+import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 
 // Types
 type RealtimeSubscribeStatus =
@@ -74,51 +75,7 @@ function pickSupportedLang(preferred?: string) {
   return baseMatch?.code || fallback;
 }
 
-// 🔊 Speak text using the device voice
-function speakText(text: string, lang: string, rate = 0.9, volume = 1) {
-  if (typeof window === "undefined") return;
-  const synth = window.speechSynthesis;
-  if (!synth) return;
-
-  try {
-    // Some browsers keep speech synthesis "paused" until a user gesture.
-    // This is safe to call even when already running.
-    // @ts-ignore
-    synth.resume?.();
-  } catch {}
-
-  const clean = text.trim();
-  if (!clean) return;
-
-  const doSpeak = () => {
-    try {
-      synth.cancel();
-    } catch {}
-
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.lang = lang || "en-US";
-    utterance.rate = rate;
-    utterance.volume = typeof volume === "number" ? volume : 1;
-
-    const voices = synth.getVoices?.() || [];
-    const match =
-      voices.find((v) => v.lang === utterance.lang) ||
-      voices.find((v) => v.lang.startsWith(utterance.lang.slice(0, 2)));
-
-    if (match) utterance.voice = match;
-
-    utterance.onerror = (e) => console.warn("[TTS] error", e);
-    synth.speak(utterance);
-  };
-
-  const voices = synth.getVoices?.() || [];
-  if (voices.length === 0) {
-    setTimeout(doSpeak, 150);
-    return;
-  }
-
-  doSpeak();
-}
+// (TTS moved to useAnySpeakTts hook)
 
 /**
  * Front-end helper: call /api/translate
@@ -187,9 +144,6 @@ export default function RoomPage() {
 
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
-
-  // TTS unlock (mobile browsers often block speech until a user gesture)
-  const ttsUnlockedRef = useRef(false);
 
   // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
@@ -273,40 +227,6 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 250));
   };
 
-  const unlockTts = () => {
-    if (ttsUnlockedRef.current) return;
-    if (typeof window === "undefined") return;
-
-    const synth = window.speechSynthesis;
-    if (!synth) return;
-
-    try {
-      // Mark unlocked first to avoid double-fire on multiple gesture events
-      ttsUnlockedRef.current = true;
-
-      // Kick voices + resume; then speak a near-silent dot to satisfy gesture-gated audio.
-      // Using volume ~0 avoids the user hearing anything.
-      // @ts-ignore
-      synth.resume?.();
-
-      const u = new SpeechSynthesisUtterance(".");
-      u.lang = targetLangRef.current || "en-US";
-      u.rate = 1;
-      u.volume = 0.001;
-      u.onend = () => {
-        try {
-          synth.cancel();
-        } catch {}
-      };
-      synth.speak(u);
-
-      log("tts unlocked", {});
-    } catch (e: any) {
-      // If this fails, we'll try again on the next gesture
-      ttsUnlockedRef.current = false;
-      log("tts unlock failed", { message: e?.message || String(e) });
-    }
-  };
 
   const clearSttRestartTimer = () => {
     if (sttRestartTimerRef.current) {
@@ -353,6 +273,12 @@ export default function RoomPage() {
   const [targetLang, setTargetLang] = useState<string>(initialTarget);
   const targetLangRef = useRef<string>(initialTarget);
 
+  // ✅ Stable translated TTS output + Android/Chrome "gesture unlock"
+  const { speakText, unlockTts } = useAnySpeakTts({
+    getLang: () => targetLangRef.current || "en-US",
+    onLog: (m, data) => log(m, data ?? {}),
+  });
+
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
   const shouldSpeakTranslated =
@@ -393,20 +319,7 @@ export default function RoomPage() {
     displayNameRef.current = displayName || "You";
   }, [displayName]);
 
-  // One-time attempt to unlock TTS on the first user gesture (helps Android/Chrome play translated audio reliably)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onGesture = () => unlockTts();
-
-    window.addEventListener("pointerdown", onGesture, { once: true, capture: true });
-    window.addEventListener("keydown", onGesture, { once: true, capture: true });
-
-    return () => {
-      window.removeEventListener("pointerdown", onGesture, true);
-      window.removeEventListener("keydown", onGesture, true);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // (TTS gesture unlock handled inside useAnySpeakTts)
 
   // Keep remote audio tracks in sync with the mute policy
   useEffect(() => {
