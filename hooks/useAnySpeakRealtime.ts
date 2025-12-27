@@ -19,6 +19,7 @@ type AnySpeakRealtimeArgs = {
   joinCamOn: boolean | null;
 
   displayNameRef: React.MutableRefObject<string>;
+  teardownPeers: (reason: string) => void;
 
   /** Optional logger compatible with your RoomPage log() helper. */
   log?: (msg: string, data?: any) => void;
