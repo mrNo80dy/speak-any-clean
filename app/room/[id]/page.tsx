@@ -8,6 +8,7 @@ import { LANGUAGES } from "@/lib/languages";
 import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
+import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 
 // Types
 type RealtimeSubscribeStatus =
@@ -137,7 +138,6 @@ export default function RoomPage() {
   }, []);
 
   // ---- Refs / state -----------------------------------------
-  const channelRef = useRef<RealtimeChannel | null>(null);
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
@@ -177,14 +177,6 @@ export default function RoomPage() {
 
   const sttStatusRef = useRef<SttStatus>("unknown");
   const displayNameRef = useRef<string>("You");
-
-  const rebuildTimerRef = useRef<number | null>(null);
-  const rebuildScheduledRef = useRef(false);
-
-  const lastRtStatusRef = useRef<string>("INIT");
-
-  const [rtStatus, setRtStatus] = useState<RealtimeSubscribeStatus | "INIT">("INIT");
-  const [rtNonce, setRtNonce] = useState(0);
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -976,226 +968,159 @@ export default function RoomPage() {
       recognitionRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debugKey, speakLang]);
+  }, [debugKey, speakLang]);  // ---- Lifecycle: join room, wire realtime -------------------
+  const { rtStatus, channelRef } = useAnySpeakRealtime({
+    roomId,
+    clientId,
+    prejoinDone,
+    roomType,
+    joinCamOn,
+    debugKey,
+    displayNameRef,
+    log,
+    teardownPeers,
+    // Runs before the channel is created (keeps exact ordering vs previous code)
+    beforeConnect: async () => {
+      // ✅ Acquire media only if needed.
+      // - Mobile never grabs mic (Web Speech uses mic)
+      // - Video rooms grab camera; audio rooms do not
+      const needVideo = roomType === "video";
+      const canAcquire =
+        !(isMobile && roomType === "audio") && (needVideo || !isMobile);
 
-  // ---- Lifecycle: join room, wire realtime -------------------
-  useEffect(() => {
-    if (!roomId || !clientId) return;
-    if (!prejoinDone) return;
-    if (!roomType) return;
+      if (canAcquire) {
+        await acquire();
 
-    let alive = true;
+        log("local media acquired", {
+          audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
+          videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
+          roomType,
+        });
 
-    const scheduleRebuildOnce = (why: any) => {
-      if (rebuildScheduledRef.current) return;
-      rebuildScheduledRef.current = true;
-      log("realtime died; scheduling rebuild", why);
-
-      rebuildTimerRef.current = window.setTimeout(() => {
-        rebuildScheduledRef.current = false;
-        setRtNonce((n) => n + 1);
-      }, 500);
-    };
-
-    (async () => {
-      try {
-        // ✅ Acquire media only if needed.
-        // - Mobile never grabs mic (Web Speech uses mic)
-        // - Video rooms grab camera; audio rooms do not
-        const needVideo = roomType === "video";
-        const canAcquire =
-          !(isMobile && roomType === "audio") && (needVideo || !isMobile); // desktop needs audio track for preview/mic state
-
-        if (canAcquire) {
-          await acquire();
-
-          log("local media acquired", {
-            audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-            videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-            roomType,
+        // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
+        if (isMobile && localStreamRef.current) {
+          const ats = localStreamRef.current.getAudioTracks();
+          ats.forEach((t) => {
+            try {
+              t.stop();
+            } catch {}
+            try {
+              localStreamRef.current?.removeTrack(t);
+            } catch {}
           });
-
-          // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
-          if (isMobile && localStreamRef.current) {
-            const ats = localStreamRef.current.getAudioTracks();
-            ats.forEach((t) => {
-              try {
-                t.stop();
-              } catch {}
-              try {
-                localStreamRef.current?.removeTrack(t);
-              } catch {}
-            });
-            if (ats.length)
-              log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
-          }
-        } else {
-          log("skipping getUserMedia (mobile STT-only audio room)", { roomType });
+          if (ats.length)
+            log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
         }
-
-        // ✅ Enforce camera state based on room type + joiner choice
-        if (roomType === "video") {
-          const wantCam = joinCamOn === null ? true : joinCamOn;
-          setCamEnabled(wantCam);
-          const vt = localStreamRef.current?.getVideoTracks?.()[0];
-          if (vt) vt.enabled = wantCam;
-          log("forced cam state (video room)", { wantCam });
-        } else {
-          setCamEnabled(false);
-          const vt = localStreamRef.current?.getVideoTracks?.()[0];
-          if (vt) vt.enabled = false;
-          log("forced cam OFF (audio room)", {});
-        }
-
-        const channel = supabase.channel(`room:${roomId}`, {
-          config: {
-            broadcast: { self: false },
-            presence: { key: clientId },
-          },
-        });
-
-        channelRef.current = channel;
-
-        channel.on("broadcast", { event: "webrtc" }, async (message: any) => {
-          const payload = message?.payload as WebRTCPayload | undefined;
-          if (!payload) return;
-
-          const { type, from, to } = payload;
-          log("rx webrtc", { type, from, to });
-          if (!type || !from) return;
-          if (from === clientId) return;
-          if (to && to !== clientId) return;
-
-          if (type === "offer" && payload.sdp) {
-            await handleOffer(from, payload.sdp, channel);
-          } else if (type === "answer" && payload.sdp) {
-            await handleAnswer(from, payload.sdp);
-          } else if (type === "ice" && payload.candidate) {
-            await handleIce(from, payload.candidate);
-          }
-        });
-
-        channel.on("broadcast", { event: "transcript" }, async (message: any) => {
-          const payload = message?.payload as TranscriptPayload | undefined;
-          if (!payload) return;
-
-          const { from, text, lang, name } = payload;
-          log("rx transcript", { from, lang, textLen: (text || "").length });
-
-          if (!text || !from || from === clientId) return;
-
-          const fromName =
-            name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
-
-          const target = targetLangRef.current || "en-US";
-          const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
-
-          pushMessage({
-            fromId: from,
-            fromName,
-            originalLang: lang,
-            translatedLang: outLang,
-            originalText: text,
-            translatedText,
-            isLocal: false,
-          });
-
-          if (shouldSpeakTranslatedRef.current) {
-            unlockTts();
-            speakText(translatedText, outLang, 0.9);
-          }
-        });
-
-        channel.on("presence", { event: "sync" }, () => {
-          const state = channel.presenceState() as Record<string, any[]>;
-          const others: string[] = [];
-          const labels: Record<string, string> = {};
-
-          Object.values(state).forEach((arr) => {
-            arr.forEach((m: any) => {
-              if (!m?.clientId) return;
-              if (m.clientId === clientId) return;
-              others.push(m.clientId);
-              labels[m.clientId] = (m.name as string | undefined) || m.clientId.slice(0, 8);
-            });
-          });
-
-          setPeerIds(others);
-          setPeerLabels(labels);
-          peerLabelsRef.current = labels;
-
-          // 3+ users default: mic OFF (unless user already touched mic)
-          const total = others.length + 1;
-          if (total >= 3 && !userTouchedMicRef.current) {
-            if (!isMobile) {
-              setMicEnabled(false);
-            }
-
-            micOnRef.current = false;
-            stopSttNow();
-
-            if (isMobile) {
-              micArmedRef.current = false;
-              setSttListening(false);
-              setSttArmedNotListening(false);
-            }
-
-            log("auto-muted for 3+ participants", { total });
-          }
-
-          others.forEach((id) => {
-            if (!peersRef.current.has(id)) {
-              makeOffer(id, channel).catch(() => {});
-            }
-          });
-        });
-
-        channel.subscribe((status: RealtimeSubscribeStatus) => {
-          if (!alive) return;
-
-          if (lastRtStatusRef.current !== status) {
-            lastRtStatusRef.current = status;
-            log("realtime status", { status });
-          }
-
-          setRtStatus(status);
-
-          if (status === "SUBSCRIBED") {
-            channel.track({ clientId, name: displayNameRef.current });
-            return;
-          }
-
-          if (status === "CLOSED" || status === "TIMED_OUT" || status === "CHANNEL_ERROR") {
-            scheduleRebuildOnce({ status });
-          }
-        });
-      } catch (err) {
-        log("init error", { err: (err as Error).message });
+      } else {
+        log("skipping getUserMedia (mobile STT-only audio room)", { roomType });
       }
-    })();
 
-    return () => {
-      alive = false;
-
-      if (rebuildTimerRef.current) {
-        clearTimeout(rebuildTimerRef.current);
-        rebuildTimerRef.current = null;
+      // ✅ Enforce camera state based on room type + joiner choice
+      if (roomType === "video") {
+        const wantCam = joinCamOn === null ? true : joinCamOn;
+        setCamEnabled(wantCam);
+        const vt = localStreamRef.current?.getVideoTracks?.()[0];
+        if (vt) vt.enabled = wantCam;
+        log("forced cam state (video room)", { wantCam });
+      } else {
+        setCamEnabled(false);
+        const vt = localStreamRef.current?.getVideoTracks?.()[0];
+        if (vt) vt.enabled = false;
+        log("forced cam OFF (audio room)", {});
       }
-      rebuildScheduledRef.current = false;
+    },
+    onWebrtc: async ({ payload, channel }) => {
+      const { type, from, to } = payload;
+      log("rx webrtc", { type, from, to });
+      if (!type || !from) return;
+      if (from === clientId) return;
+      if (to && to !== clientId) return;
 
-      teardownPeers("effect cleanup");
+      if (type === "offer" && payload.sdp) {
+        await handleOffer(from, payload.sdp, channel);
+      } else if (type === "answer" && payload.sdp) {
+        await handleAnswer(from, payload.sdp);
+      } else if (type === "ice" && payload.candidate) {
+        await handleIce(from, payload.candidate);
+      }
+    },
+    onTranscript: async ({ payload }) => {
+      const { from, text, lang, name } = payload;
+      log("rx transcript", { from, lang, textLen: (text || "").length });
 
-      try {
-        const ch = channelRef.current;
-        if (ch) {
-          ch.untrack();
-          ch.unsubscribe();
+      if (!text || !from || from === clientId) return;
+
+      const fromName =
+        name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
+
+      const target = targetLangRef.current || "en-US";
+      const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+      pushMessage({
+        fromId: from,
+        fromName,
+        originalLang: lang,
+        translatedLang: outLang,
+        originalText: text,
+        translatedText,
+        isLocal: false,
+      });
+
+      if (shouldSpeakTranslatedRef.current) {
+        unlockTts();
+        speakText(translatedText, outLang, 0.9);
+      }
+    },
+    onHand: ({ payload }) => {
+      const { from, up } = payload;
+      if (!from || from === clientId) return;
+      setHandsUp((prev) => ({ ...prev, [from]: up }));
+    },
+    onPresenceSync: ({ channel }) => {
+      const state = channel.presenceState() as Record<string, any[]>;
+      const others: string[] = [];
+      const labels: Record<string, string> = {};
+
+      Object.values(state).forEach((arr) => {
+        arr.forEach((m: any) => {
+          if (!m?.clientId) return;
+          if (m.clientId === clientId) return;
+          others.push(m.clientId);
+          labels[m.clientId] = (m.name as string | undefined) || m.clientId.slice(0, 8);
+        });
+      });
+
+      setPeerIds(others);
+      setPeerLabels(labels);
+      peerLabelsRef.current = labels;
+
+      // 3+ users default: mic OFF (unless user already touched mic)
+      const total = others.length + 1;
+      if (total >= 3 && !userTouchedMicRef.current) {
+        if (!isMobile) {
+          setMicEnabled(false);
         }
-      } catch {}
-      channelRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, debugKey, rtNonce, prejoinDone, roomType, joinCamOn]);
+
+        micOnRef.current = false;
+        stopSttNow();
+
+        if (isMobile) {
+          micArmedRef.current = false;
+          setSttListening(false);
+          setSttArmedNotListening(false);
+        }
+
+        log("auto-muted for 3+ participants", { total });
+      }
+
+      others.forEach((id) => {
+        if (!peersRef.current.has(id)) {
+          makeOffer(id, channel).catch(() => {});
+        }
+      });
+    },
+  });
+
 
   // ---- UI controls ------------------------------------------
   const toggleCamera = async () => {
