@@ -18,6 +18,8 @@ type AnySpeakRealtimeArgs = {
   roomType: "audio" | "video" | null;
   joinCamOn: boolean | null;
 
+  displayNameRef: React.MutableRefObject<string>;
+
   /** Optional logger compatible with your RoomPage log() helper. */
   log?: (msg: string, data?: any) => void;
 
