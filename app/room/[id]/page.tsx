@@ -185,8 +185,12 @@ export default function RoomPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
-
   const [spotlightId, setSpotlightId] = useState<string>("local");
+
+  // Hand raise state (remote participants)
+  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
+  const [myHandUp, setMyHandUp] = useState(false);
+
 
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1875,3 +1879,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
