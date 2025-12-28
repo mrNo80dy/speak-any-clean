@@ -9,6 +9,7 @@ import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
+import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
 
 // Types
 type RealtimeSubscribeStatus =
@@ -185,12 +186,8 @@ export default function RoomPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
+
   const [spotlightId, setSpotlightId] = useState<string>("local");
-
-  // Hand raise state (remote participants)
-  const [handsUp, setHandsUp] = useState<Record<string, boolean>>({});
-  const [myHandUp, setMyHandUp] = useState(false);
-
 
   // Captions / text stream
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -275,7 +272,22 @@ export default function RoomPage() {
     onLog: (m, data) => log(m, data ?? {}),
   });
 
-  // ---- ICE candidate queue (pre-SDP safety) -------------------
+  // effective behavior flags
+  const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
+  const shouldSpeakTranslated =
+    FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
+
+  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
+    const full: ChatMessage = {
+      ...msg,
+      id: crypto.randomUUID(),
+      at: Date.now(),
+    };
+    setMessages((prev) => [...prev.slice(-29), full]);
+  }
+
+
+// ---- ICE candidate queue (pre-SDP safety) -------------------
 const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
 const enqueueIce = (fromId: string, candidate: RTCIceCandidateInit) => {
@@ -308,19 +320,6 @@ const flushIce = async (fromId: string) => {
   }
 };
 
-  // effective behavior flags
-  const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
-  const shouldSpeakTranslated =
-    FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
-
-  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
-    const full: ChatMessage = {
-      ...msg,
-      id: crypto.randomUUID(),
-      at: Date.now(),
-    };
-    setMessages((prev) => [...prev.slice(-29), full]);
-  }
 
   // ---- keep refs updated ------------------------------------
   useEffect(() => {
@@ -557,6 +556,18 @@ const flushIce = async (fromId: string) => {
     setCamEnabled,
   } = localMedia;
 
+  // ---- Hook #3: room media (camera + getUserMedia policy) ----
+  const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
+    isMobile,
+    roomType,
+    joinCamOn,
+    acquire,
+    localStreamRef,
+    setCamEnabled,
+    log,
+  });
+
+
   const micUiOn = isMobile ? sttListening : micOn;
 
   // ---- Helpers ----------------------------------------------
@@ -566,7 +577,6 @@ const flushIce = async (fromId: string) => {
 
   function teardownPeers(reason: string) {
     log("teardownPeers", { reason });
-
     pendingIceRef.current.clear();
 
     peersRef.current.forEach(({ pc }) => {
@@ -792,27 +802,27 @@ const flushIce = async (fromId: string) => {
   }
 
   async function handleIce(fromId: string, candidate: RTCIceCandidateInit) {
-  // Ensure peer exists (so we have somewhere to queue against)
-  const peer = peersRef.current.get(fromId);
-  if (!peer) {
-    enqueueIce(fromId, candidate);
-    log("queued ice (no peer yet)", { from: fromId });
-    return;
-  }
+    // If ICE arrives before we have SDP applied, queue it.
+    const peer = peersRef.current.get(fromId);
+    if (!peer) {
+      enqueueIce(fromId, candidate);
+      log("queued ice (no peer yet)", { from: fromId });
+      return;
+    }
 
-  if (!peer.pc.remoteDescription) {
-    enqueueIce(fromId, candidate);
-    log("queued ice (no remoteDescription yet)", { from: fromId });
-    return;
-  }
+    if (!peer.pc.remoteDescription) {
+      enqueueIce(fromId, candidate);
+      log("queued ice (no remoteDescription yet)", { from: fromId });
+      return;
+    }
 
-  try {
-    await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-    log("added ice", { from: fromId });
-  } catch (err) {
-    log("ice error", { err: (err as Error).message });
+    try {
+      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      log("added ice", { from: fromId });
+    } catch (err) {
+      log("ice error", { err: (err as Error).message });
+    }
   }
-}
 
 
   // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
@@ -1034,59 +1044,10 @@ const flushIce = async (fromId: string) => {
     log,
     teardownPeers,
     // Runs before the channel is created (keeps exact ordering vs previous code)
-    beforeConnect: async () => {
-      // ✅ Acquire media only if needed.
-      // - Mobile never grabs mic (Web Speech uses mic)
-      // - Video rooms grab camera; audio rooms do not
-      const needVideo = roomType === "video";
-      const canAcquire =
-        !(isMobile && roomType === "audio") && (needVideo || !isMobile);
-
-      if (canAcquire) {
-        await acquire();
-
-        log("local media acquired", {
-          audioTracks: localStreamRef.current?.getAudioTracks().length ?? 0,
-          videoTracks: localStreamRef.current?.getVideoTracks().length ?? 0,
-          roomType,
-        });
-
-        // ✅ Mobile: free the mic for Web Speech STT (even in video mode, we don't want raw audio track)
-        if (isMobile && localStreamRef.current) {
-          const ats = localStreamRef.current.getAudioTracks();
-          ats.forEach((t) => {
-            try {
-              t.stop();
-            } catch {}
-            try {
-              localStreamRef.current?.removeTrack(t);
-            } catch {}
-          });
-          if (ats.length)
-            log("mobile: removed local audio tracks to unblock STT", { removed: ats.length });
-        }
-      } else {
-        log("skipping getUserMedia (mobile STT-only audio room)", { roomType });
-      }
-
-      // ✅ Enforce camera state based on room type + joiner choice
-      if (roomType === "video") {
-        const wantCam = joinCamOn === null ? true : joinCamOn;
-        setCamEnabled(wantCam);
-        const vt = localStreamRef.current?.getVideoTracks?.()[0];
-        if (vt) vt.enabled = wantCam;
-        log("forced cam state (video room)", { wantCam });
-      } else {
-        setCamEnabled(false);
-        const vt = localStreamRef.current?.getVideoTracks?.()[0];
-        if (vt) vt.enabled = false;
-        log("forced cam OFF (audio room)", {});
-      }
-    },
+    beforeConnect,
     onWebrtc: async (message, channel) => {
       const payload = message?.payload as WebRTCPayload | undefined;
       if (!payload) return;
-
       const { type, from, to } = payload;
       log("rx webrtc", { type, from, to });
       if (!type || !from) return;
@@ -1101,10 +1062,9 @@ const flushIce = async (fromId: string) => {
         await handleIce(from, payload.candidate);
       }
     },
-    onTranscript: async (message, channel) => {
+    onTranscript: async (message) => {
       const payload = message?.payload as TranscriptPayload | undefined;
       if (!payload) return;
-
       const { from, text, lang, name } = payload;
       log("rx transcript", { from, lang, textLen: (text || "").length });
 
@@ -1130,14 +1090,6 @@ const flushIce = async (fromId: string) => {
         unlockTts();
         speakText(translatedText, outLang, 0.9);
       }
-    },
-    onHand: (message, channel) => {
-      const payload = message?.payload as { from: string; up: boolean } | undefined;
-      if (!payload) return;
-
-      const { from, up } = payload;
-      if (!from || from === clientId) return;
-      setHandsUp((prev) => ({ ...prev, [from]: up }));
     },
     onPresenceSync: (channel) => {
       const state = channel.presenceState() as Record<string, any[]>;
@@ -1184,15 +1136,7 @@ const flushIce = async (fromId: string) => {
     },
   });
 
-
   // ---- UI controls ------------------------------------------
-  const toggleCamera = async () => {
-    if (roomType !== "video") return;
-    const s = localStreamRef.current;
-    const vt = s?.getVideoTracks?.()[0] || null;
-    if (!vt) return;
-    setCamEnabled(!vt.enabled);
-  };
 
   const toggleMic = async () => {
     userTouchedMicRef.current = true;
@@ -1938,7 +1882,3 @@ const flushIce = async (fromId: string) => {
     </div>
   );
 }
-
-
-
-
