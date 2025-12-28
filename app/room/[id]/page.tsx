@@ -1083,7 +1083,10 @@ const flushIce = async (fromId: string) => {
         log("forced cam OFF (audio room)", {});
       }
     },
-    onWebrtc: async ({ payload, channel }) => {
+    onWebrtc: async (message, channel) => {
+      const payload = message?.payload as WebRTCPayload | undefined;
+      if (!payload) return;
+
       const { type, from, to } = payload;
       log("rx webrtc", { type, from, to });
       if (!type || !from) return;
@@ -1098,7 +1101,10 @@ const flushIce = async (fromId: string) => {
         await handleIce(from, payload.candidate);
       }
     },
-    onTranscript: async ({ payload }) => {
+    onTranscript: async (message, channel) => {
+      const payload = message?.payload as TranscriptPayload | undefined;
+      if (!payload) return;
+
       const { from, text, lang, name } = payload;
       log("rx transcript", { from, lang, textLen: (text || "").length });
 
@@ -1125,7 +1131,10 @@ const flushIce = async (fromId: string) => {
         speakText(translatedText, outLang, 0.9);
       }
     },
-    onHand: ({ payload }) => {
+    onHand: (message, channel) => {
+      const payload = message?.payload as { from: string; up: boolean } | undefined;
+      if (!payload) return;
+
       const { from, up } = payload;
       if (!from || from === clientId) return;
       setHandsUp((prev) => ({ ...prev, [from]: up }));
@@ -1929,6 +1938,7 @@ const flushIce = async (fromId: string) => {
     </div>
   );
 }
+
 
 
 
