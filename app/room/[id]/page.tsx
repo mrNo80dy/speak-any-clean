@@ -547,21 +547,24 @@ const flushIce = async (fromId: string) => {
   });
 
   const {
-    localStreamRef,
-    micOn,
-    camOn,
-    acquire,
-    attachLocalVideo,
-    setMicEnabled,
-    setCamEnabled,
-  } = localMedia;
+  localStreamRef,
+  micOn,
+  camOn,
+  acquire: acquireLocal,
+  attachLocalVideo,
+  setMicEnabled,
+  setCamEnabled,
+} = localMedia;
+
 
   // ---- Hook #3: room media (camera + getUserMedia policy) ----
   const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     isMobile,
     roomType,
     joinCamOn,
-    acquire,
+    acquire: async () => {
+      await aquireLocal();
+    },
     localStreamRef,
     setCamEnabled,
     log,
@@ -1882,3 +1885,4 @@ const flushIce = async (fromId: string) => {
     </div>
   );
 }
+
