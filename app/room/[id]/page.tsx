@@ -1080,7 +1080,7 @@ export default function RoomPage() {
       if (!from || from === clientId) return;
       setHandsUp((prev) => ({ ...prev, [from]: up }));
     },
-    onPresenceSync: ({ channel }) => {
+    onPresenceSync: (channel) => {
       const state = channel.presenceState() as Record<string, any[]>;
       const others: string[] = [];
       const labels: Record<string, string> = {};
@@ -1879,4 +1879,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
