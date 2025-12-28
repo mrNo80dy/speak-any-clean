@@ -550,7 +550,7 @@ const flushIce = async (fromId: string) => {
   localStreamRef,
   micOn,
   camOn,
-  acquire: acquireLocal,
+  acquire: aquireLocal,
   attachLocalVideo,
   setMicEnabled,
   setCamEnabled,
@@ -1885,4 +1885,5 @@ const flushIce = async (fromId: string) => {
     </div>
   );
 }
+
 
