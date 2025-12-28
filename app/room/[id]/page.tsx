@@ -275,6 +275,39 @@ export default function RoomPage() {
     onLog: (m, data) => log(m, data ?? {}),
   });
 
+  // ---- ICE candidate queue (pre-SDP safety) -------------------
+const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+
+const enqueueIce = (fromId: string, candidate: RTCIceCandidateInit) => {
+  const map = pendingIceRef.current;
+  const list = map.get(fromId) ?? [];
+  list.push(candidate);
+  map.set(fromId, list);
+};
+
+const flushIce = async (fromId: string) => {
+  const peer = peersRef.current.get(fromId);
+  if (!peer) return;
+
+  const pc = peer.pc;
+  if (!pc.remoteDescription) return;
+
+  const map = pendingIceRef.current;
+  const list = map.get(fromId);
+  if (!list || list.length === 0) return;
+
+  map.delete(fromId);
+
+  for (const c of list) {
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(c));
+      log("flushed ice", { from: fromId });
+    } catch (err) {
+      log("flush ice error", { err: (err as Error).message });
+    }
+  }
+};
+
   // effective behavior flags
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
   const shouldSpeakTranslated =
@@ -534,6 +567,8 @@ export default function RoomPage() {
   function teardownPeers(reason: string) {
     log("teardownPeers", { reason });
 
+    pendingIceRef.current.clear();
+
     peersRef.current.forEach(({ pc }) => {
       try {
         pc.onicecandidate = null;
@@ -723,6 +758,7 @@ export default function RoomPage() {
     const { pc } = getOrCreatePeer(fromId, channel);
 
     await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    await flushIce(fromId);
 
     if (localStreamRef.current) {
       const haveKinds = new Set(
@@ -751,19 +787,33 @@ export default function RoomPage() {
     const peer = peersRef.current.get(fromId);
     if (!peer) return;
     await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+    await flushIce(fromId);
     log("applied answer", { from: fromId });
   }
 
   async function handleIce(fromId: string, candidate: RTCIceCandidateInit) {
-    const peer = peersRef.current.get(fromId);
-    if (!peer) return;
-    try {
-      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      log("added ice", { from: fromId });
-    } catch (err) {
-      log("ice error", { err: (err as Error).message });
-    }
+  // Ensure peer exists (so we have somewhere to queue against)
+  const peer = peersRef.current.get(fromId);
+  if (!peer) {
+    enqueueIce(fromId, candidate);
+    log("queued ice (no peer yet)", { from: fromId });
+    return;
   }
+
+  if (!peer.pc.remoteDescription) {
+    enqueueIce(fromId, candidate);
+    log("queued ice (no remoteDescription yet)", { from: fromId });
+    return;
+  }
+
+  try {
+    await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    log("added ice", { from: fromId });
+  } catch (err) {
+    log("ice error", { err: (err as Error).message });
+  }
+}
+
 
   // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
   useEffect(() => {
@@ -1879,5 +1929,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
