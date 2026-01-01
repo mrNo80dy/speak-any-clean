@@ -10,6 +10,7 @@ import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
+import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 
 // Types
 type RealtimeSubscribeStatus =
@@ -33,10 +34,7 @@ type TranscriptPayload = {
   name?: string;
 };
 
-type Peer = {
-  pc: RTCPeerConnection;
-  remoteStream: MediaStream;
-};
+type Peer = AnySpeakPeer;
 
 type PeerStreams = Record<string, MediaStream>;
 
@@ -287,38 +285,7 @@ export default function RoomPage() {
   }
 
 
-// ---- ICE candidate queue (pre-SDP safety) -------------------
-const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
-
-const enqueueIce = (fromId: string, candidate: RTCIceCandidateInit) => {
-  const map = pendingIceRef.current;
-  const list = map.get(fromId) ?? [];
-  list.push(candidate);
-  map.set(fromId, list);
-};
-
-const flushIce = async (fromId: string) => {
-  const peer = peersRef.current.get(fromId);
-  if (!peer) return;
-
-  const pc = peer.pc;
-  if (!pc.remoteDescription) return;
-
-  const map = pendingIceRef.current;
-  const list = map.get(fromId);
-  if (!list || list.length === 0) return;
-
-  map.delete(fromId);
-
-  for (const c of list) {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(c));
-      log("flushed ice", { from: fromId });
-    } catch (err) {
-      log("flush ice error", { err: (err as Error).message });
-    }
-  }
-};
+// (ICE queue moved to useAnySpeakWebRtc hook)
 
 
   // ---- keep refs updated ------------------------------------
@@ -547,24 +514,21 @@ const flushIce = async (fromId: string) => {
   });
 
   const {
-  localStreamRef,
-  micOn,
-  camOn,
-  acquire: aquireLocal,
-  attachLocalVideo,
-  setMicEnabled,
-  setCamEnabled,
-} = localMedia;
-
+    localStreamRef,
+    micOn,
+    camOn,
+    acquire,
+    attachLocalVideo,
+    setMicEnabled,
+    setCamEnabled,
+  } = localMedia;
 
   // ---- Hook #3: room media (camera + getUserMedia policy) ----
   const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     isMobile,
     roomType,
     joinCamOn,
-    acquire: async () => {
-      await aquireLocal();
-    },
+    acquire,
     localStreamRef,
     setCamEnabled,
     log,
@@ -580,7 +544,7 @@ const flushIce = async (fromId: string) => {
 
   function teardownPeers(reason: string) {
     log("teardownPeers", { reason });
-    pendingIceRef.current.clear();
+    clearPendingIce();
 
     peersRef.current.forEach(({ pc }) => {
       try {
@@ -645,187 +609,20 @@ const flushIce = async (fromId: string) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function getOrCreatePeer(remoteId: string, channel: RealtimeChannel) {
-    const existing = peersRef.current.get(remoteId);
-    if (existing) return existing;
-
-    const pc = new RTCPeerConnection({
+  // ---- Hook #4: WebRTC peer + signaling helpers -------------
+  const { makeOffer, handleOffer, handleAnswer, handleIce, clearPendingIce } =
+    useAnySpeakWebRtc({
+      clientId,
+      isMobile,
       iceServers,
-      iceCandidatePoolSize: 4,
+      localStreamRef,
+      peersRef,
+      shouldMuteRawAudioRef,
+      setConnected,
+      log,
+      upsertPeerStream,
     });
 
-    const remoteStream = new MediaStream();
-
-    pc.oniceconnectionstatechange = () => {
-      log(`ice(${remoteId}) state: ${pc.iceConnectionState}`);
-    };
-
-    pc.onicegatheringstatechange = () => {
-      log(`iceGather(${remoteId}) state: ${pc.iceGatheringState}`);
-    };
-
-    pc.onconnectionstatechange = () => {
-      log(`pc(${remoteId}) state: ${pc.connectionState}`);
-
-      if (pc.connectionState === "connected") setConnected(true);
-
-      if (
-        pc.connectionState === "disconnected" ||
-        pc.connectionState === "failed" ||
-        pc.connectionState === "closed"
-      ) {
-        peersRef.current.delete(remoteId);
-        setTimeout(() => {
-          if (peersRef.current.size === 0) setConnected(false);
-        }, 0);
-      }
-    };
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate) {
-        channel.send({
-          type: "broadcast",
-          event: "webrtc",
-          payload: {
-            type: "ice",
-            from: clientId,
-            to: remoteId,
-            candidate: e.candidate.toJSON(),
-          },
-        });
-      }
-    };
-
-    pc.ontrack = (e) => {
-      if (e.track?.kind === "audio") {
-        e.track.enabled = !shouldMuteRawAudioRef.current;
-      }
-
-      if (e.streams && e.streams[0]) {
-        e.streams[0].getTracks().forEach((t) => {
-          if (!remoteStream.getTracks().find((x) => x.id === t.id)) {
-            remoteStream.addTrack(t);
-          }
-        });
-      } else if (e.track) {
-        if (!remoteStream.getTracks().find((x) => x.id === e.track.id)) {
-          remoteStream.addTrack(e.track);
-        }
-      }
-
-      upsertPeerStream(remoteId, remoteStream);
-      log("ontrack", { from: remoteId, kind: e.track?.kind });
-    };
-
-    // Add local tracks
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => {
-        // mobile: keep STT-only policy by not sending audio
-        if (isMobile && t.kind === "audio") return;
-        pc.addTrack(t, localStreamRef.current!);
-      });
-    } else {
-      pc.addTransceiver("video", { direction: "recvonly" });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-    }
-
-    const peer: Peer = { pc, remoteStream };
-    peersRef.current.set(remoteId, peer);
-    return peer;
-  }
-
-  async function makeOffer(toId: string, channel: RealtimeChannel) {
-    const { pc } = getOrCreatePeer(toId, channel);
-
-    if (localStreamRef.current) {
-      const haveKinds = new Set(
-        pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
-      );
-
-      localStreamRef.current.getTracks().forEach((t) => {
-        if (isMobile && t.kind === "audio") return;
-        if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
-      });
-    }
-
-    const offer = await pc.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
-    });
-    await pc.setLocalDescription(offer);
-
-    channel.send({
-      type: "broadcast",
-      event: "webrtc",
-      payload: { type: "offer", from: clientId, to: toId, sdp: offer },
-    });
-
-    log("sent offer", { to: toId });
-  }
-
-  async function handleOffer(
-    fromId: string,
-    sdp: RTCSessionDescriptionInit,
-    channel: RealtimeChannel
-  ) {
-    const { pc } = getOrCreatePeer(fromId, channel);
-
-    await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    await flushIce(fromId);
-
-    if (localStreamRef.current) {
-      const haveKinds = new Set(
-        pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
-      );
-
-      localStreamRef.current.getTracks().forEach((t) => {
-        if (isMobile && t.kind === "audio") return;
-        if (!haveKinds.has(t.kind)) pc.addTrack(t, localStreamRef.current!);
-      });
-    }
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    channel.send({
-      type: "broadcast",
-      event: "webrtc",
-      payload: { type: "answer", from: clientId, to: fromId, sdp: answer },
-    });
-
-    log("sent answer", { to: fromId });
-  }
-
-  async function handleAnswer(fromId: string, sdp: RTCSessionDescriptionInit) {
-    const peer = peersRef.current.get(fromId);
-    if (!peer) return;
-    await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
-    await flushIce(fromId);
-    log("applied answer", { from: fromId });
-  }
-
-  async function handleIce(fromId: string, candidate: RTCIceCandidateInit) {
-    // If ICE arrives before we have SDP applied, queue it.
-    const peer = peersRef.current.get(fromId);
-    if (!peer) {
-      enqueueIce(fromId, candidate);
-      log("queued ice (no peer yet)", { from: fromId });
-      return;
-    }
-
-    if (!peer.pc.remoteDescription) {
-      enqueueIce(fromId, candidate);
-      log("queued ice (no remoteDescription yet)", { from: fromId });
-      return;
-    }
-
-    try {
-      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      log("added ice", { from: fromId });
-    } catch (err) {
-      log("ice error", { err: (err as Error).message });
-    }
-  }
 
 
   // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
@@ -1885,5 +1682,3 @@ const flushIce = async (fromId: string) => {
     </div>
   );
 }
-
-
