@@ -148,34 +148,11 @@ export default function RoomPage() {
   // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
 
-  // STT control refs
-  const sttRunningRef = useRef(false);
-  const sttStopRequestedRef = useRef(false);
-  const sttLastStartAtRef = useRef<number>(0);
-  const [sttArmedNotListening, setSttArmedNotListening] = useState(false);
-  const sttRestartTimerRef = useRef<number | null>(null);
-  const sttLastSentAtRef = useRef<number>(0);
-
-  // Android finalize-on-silence refs
-  const sttPendingTextRef = useRef<string>("");
-  const sttFinalizeTimerRef = useRef<number | null>(null);
-
-  // keep the last interim phrase so PTT up can still send even if onresult arrives late
-  const sttLastInterimRef = useRef<string>("");
-
-  // last sent used for spam prevention
-  const sttLastSentRef = useRef<string>("");
-
-  // flush timer so PTT up waits long enough for Android to emit final/onresult
-  const sttFlushTimerRef = useRef<number | null>(null);
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
-  const [sttListening, setSttListening] = useState(false); // reality (listening)
-
-  const sttStatusRef = useRef<SttStatus>("unknown");
   const displayNameRef = useRef<string>("You");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
@@ -198,7 +175,6 @@ export default function RoomPage() {
   const [ccOn, setCcOn] = useState(true);
 
   // STT status
-  const [sttStatusState, setSttStatusState] = useState<SttStatus>("unknown");
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
   // ✅ Enforced room mode (from DB)
@@ -220,26 +196,6 @@ export default function RoomPage() {
   };
 
 
-  const clearSttRestartTimer = () => {
-    if (sttRestartTimerRef.current) {
-      window.clearTimeout(sttRestartTimerRef.current);
-      sttRestartTimerRef.current = null;
-    }
-  };
-
-  const clearFlushTimer = () => {
-    if (sttFlushTimerRef.current) {
-      window.clearTimeout(sttFlushTimerRef.current);
-      sttFlushTimerRef.current = null;
-    }
-  };
-
-  const clearFinalizeTimer = () => {
-    if (sttFinalizeTimerRef.current) {
-      window.clearTimeout(sttFinalizeTimerRef.current);
-      sttFinalizeTimerRef.current = null;
-    }
-  };
 
   // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
@@ -297,10 +253,6 @@ export default function RoomPage() {
   useEffect(() => {
     targetLangRef.current = targetLang;
   }, [targetLang]);
-
-  useEffect(() => {
-    sttStatusRef.current = sttStatusState;
-  }, [sttStatusState]);
 
   useEffect(() => {
     speakLangRef.current = speakLang;
@@ -372,24 +324,11 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ✅ STT send helper (with duplicate protection)
+
+  // ✅ STT send helper (hook already handles duplicate protection)
   const sendFinalTranscript = async (finalText: string, recLang: string) => {
     const text = (finalText || "").trim();
     if (!text) return;
-
-    const lastExact = (sttLastSentRef.current || "").trim();
-    if (lastExact && lastExact === text) return;
-
-    // Prevent partial spam, but DON'T block real short phrases
-    const last = (sttLastSentRef.current || "").trim();
-    if (last) {
-      if (last.startsWith(text) && last.length - text.length >= 2) return;
-
-      if (text.startsWith(last) && last.length >= 10 && text.length - last.length < 4) return;
-    }
-
-    sttLastSentRef.current = text;
-    sttLastSentAtRef.current = Date.now();
 
     const lang = recLang || "en-US";
     const fromName = displayNameRef.current || "You";
@@ -421,6 +360,7 @@ export default function RoomPage() {
 
     log("stt sent transcript", { lang, textLen: text.length });
   };
+
 
   
   // ---- Hooks you built ---------------------------------------
@@ -687,7 +627,7 @@ export default function RoomPage() {
         if (isMobile) {
           stopAllStt("auto-muted-3plus");
         } else {
-          stopSttNow();
+          stopAllStt();
         }
 
         log("auto-muted for 3+ participants", { total });
