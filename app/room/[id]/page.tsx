@@ -198,7 +198,7 @@ export default function RoomPage() {
   const [ccOn, setCcOn] = useState(true);
 
   // STT status
-  const [sttStatus, setSttStatus] = useState<SttStatus>("unknown");
+  const [sttStatusState, setSttStatusState] = useState<SttStatus>("unknown");
   const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
   // ✅ Enforced room mode (from DB)
@@ -299,8 +299,8 @@ export default function RoomPage() {
   }, [targetLang]);
 
   useEffect(() => {
-    sttStatusRef.current = sttStatus;
-  }, [sttStatus]);
+    sttStatusRef.current = sttStatusState;
+  }, [sttStatusState]);
 
   useEffect(() => {
     speakLangRef.current = speakLang;
