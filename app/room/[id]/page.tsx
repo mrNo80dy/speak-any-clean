@@ -10,6 +10,7 @@ import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
+import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 
 // Types
@@ -421,83 +422,7 @@ export default function RoomPage() {
     log("stt sent transcript", { lang, textLen: text.length });
   };
 
-  const startSttNow = () => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-
-    clearSttRestartTimer();
-    clearFlushTimer();
-
-    rec.lang =
-      speakLangRef.current ||
-      (typeof navigator !== "undefined" ? (navigator.language as string) : "en-US") ||
-      "en-US";
-
-    if (sttRunningRef.current) {
-      log("stt start skipped (already running)", { lang: rec.lang });
-      return;
-    }
-
-    sttStopRequestedRef.current = false;
-
-    try {
-      rec.start();
-      log("stt start() called (gesture)", { lang: rec.lang });
-    } catch (e: any) {
-      const msg = e?.message || String(e);
-      if (msg.includes("already started")) {
-        sttRunningRef.current = true;
-        log("stt start() already running (ignored)", { lang: rec.lang });
-      } else {
-        log("stt start() FAILED", { message: msg, lang: rec.lang });
-      }
-    }
-  };
-
-  const stopSttNow = () => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-
-    clearSttRestartTimer();
-
-    sttStopRequestedRef.current = true;
-    sttRunningRef.current = false;
-
-    try {
-      rec.stop();
-      log("stt stop() called (gesture)");
-    } catch (e: any) {
-      log("stt stop() FAILED", { message: e?.message || String(e) });
-    }
-  };
-
-  const flushPendingStt = (why: string) => {
-    clearFinalizeTimer();
-    clearFlushTimer();
-
-    // If we already sent something very recently, don't send again from flush.
-    const msSinceLastSend = Date.now() - (sttLastSentAtRef.current || 0);
-    if (msSinceLastSend < 900) {
-      log("flushPendingStt: skipped (recent send)", { why, msSinceLastSend });
-      return;
-    }
-
-    const pending = (sttPendingTextRef.current || "").trim();
-    const interim = (sttLastInterimRef.current || "").trim();
-
-    sttPendingTextRef.current = "";
-    const chosen = pending || interim;
-
-    if (!chosen) {
-      log("flushPendingStt: no text", { why });
-      return;
-    }
-
-    sttLastInterimRef.current = "";
-    void sendFinalTranscript(chosen, recognitionRef.current?.lang || speakLangRef.current);
-    log("flushPendingStt: sent", { why, len: chosen.length });
-  };
-
+  
   // ---- Hooks you built ---------------------------------------
   // ✅ Enforce modeParam from room_type (creator decides)
   const enforcedModeParam: "audio" | "video" = roomType === "video" ? "video" : "audio";
@@ -528,13 +453,42 @@ export default function RoomPage() {
     isMobile,
     roomType,
     joinCamOn,
-    acquire: async () => {
-      await acquire();
-    },
+    acquire,
     localStreamRef,
     setCamEnabled,
     log,
   });
+
+  // ---- Hook #5: STT (Web Speech API + PTT) ------------------
+  const {
+    sttListening,
+    sttArmedNotListening,
+    sttStatus,
+    sttErrorMessage,
+    toggleMic,
+    pttDown,
+    pttUp,
+    pttCancel,
+    startSttNow,
+    stopSttNow,
+    stopAllStt,
+  } = useAnySpeakStt({
+    isMobile,
+    debugKey,
+    speakLang,
+    userTouchedMicRef,
+    micOnRef,
+    micArmedRef,
+    pttHeldRef,
+    micOn,
+    setMicEnabled,
+    unlockTts,
+    log: (m, data) => log(m, data ?? {}),
+    onFinalTranscript: (text, recLang) => {
+      void sendFinalTranscript(text, recLang);
+    },
+  });
+
 
 
   const micUiOn = isMobile ? sttListening : micOn;
@@ -645,196 +599,7 @@ export default function RoomPage() {
     });
   }, [shouldMuteRawAudio, peerStreams, peerIds]);
 
-  // ---- STT setup: Web Speech API -----------------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const w = window as any;
-    const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
-
-    if (!SpeechRecognitionCtor) {
-      log("speech recognition not supported");
-      setSttStatus("unsupported");
-      setSttErrorMessage("Device browser does not support live captions.");
-      return;
-    }
-
-    const prev = recognitionRef.current;
-    if (prev) {
-      try {
-        prev.onend = null;
-        prev.onresult = null;
-        prev.onerror = null;
-        prev.onstart = null;
-        prev.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
-
-    const rec = new SpeechRecognitionCtor();
-    rec.continuous = true;
-    rec.interimResults = true;
-    if (speakLangRef.current) rec.lang = speakLangRef.current;
-
-    rec.onstart = () => {
-      setSttArmedNotListening(false);
-      setSttListening(true);
-
-      sttLastStartAtRef.current = Date.now();
-      sttRunningRef.current = true;
-      sttStopRequestedRef.current = false;
-
-      sttPendingTextRef.current = "";
-      sttLastInterimRef.current = "";
-
-      log("stt onstart", { lang: rec.lang });
-      setSttStatus("ok");
-      setSttErrorMessage(null);
-    };
-
-    rec.onresult = (event: any) => {
-      const results = event.results;
-      if (!results || results.length === 0) return;
-
-      if (speakLangRef.current) rec.lang = speakLangRef.current;
-
-      let sawFinal = false;
-      let newestText = "";
-
-      for (let i = event.resultIndex ?? 0; i < results.length; i++) {
-        const r = results[i];
-        const t = (r?.[0]?.transcript || "").trim();
-        if (!t) continue;
-
-        newestText = t;
-        sttLastInterimRef.current = t;
-
-        if (r.isFinal) {
-          sawFinal = true;
-
-          // ✅ PTT FIX: while holding PTT on mobile, DO NOT send on finals.
-          // Android often emits many "finals" incrementally (4,7,9,14,25,41...)
-          // We only want ONE send: on release (flush).
-          if (isMobile && pttHeldRef.current) {
-            sttPendingTextRef.current = t;
-            continue;
-          }
-
-          sttPendingTextRef.current = "";
-          clearFinalizeTimer();
-          void sendFinalTranscript(t, rec.lang);
-        }
-      }
-
-      // ✅ While holding PTT on mobile, do NOT run finalize-on-silence timer
-      // (it causes spam/partials while still holding)
-      if (isMobile && pttHeldRef.current) {
-        if (newestText) sttPendingTextRef.current = newestText;
-        return;
-      }
-
-      // Desktop / non-PTT behavior: finalize on silence
-      if (!sawFinal && newestText) {
-        sttPendingTextRef.current = newestText;
-        clearFinalizeTimer();
-
-        sttFinalizeTimerRef.current = window.setTimeout(() => {
-          const pending = sttPendingTextRef.current.trim();
-          sttPendingTextRef.current = "";
-          if (pending) void sendFinalTranscript(pending, rec.lang);
-        }, 1400);
-      }
-    };
-
-    rec.onerror = (event: any) => {
-      log("stt error", { error: event?.error, message: event?.message, event });
-      setSttStatus("error");
-      setSttErrorMessage(event?.error || event?.message || "Speech recognition error.");
-
-      if (
-        event?.error === "audio-capture" ||
-        event?.error === "not-allowed" ||
-        event?.error === "service-not-allowed"
-      ) {
-        sttStopRequestedRef.current = true;
-        clearSttRestartTimer();
-        clearFlushTimer();
-        try {
-          rec.stop();
-        } catch {}
-      }
-    };
-
-    rec.onend = () => {
-      sttRunningRef.current = false;
-
-      const ranForMs = Date.now() - (sttLastStartAtRef.current || Date.now());
-      log("stt onend", { stopRequested: sttStopRequestedRef.current, ranForMs });
-
-      if (!sttStopRequestedRef.current && ranForMs < 800) {
-        log("stt ended too fast; disabling auto-restart", { ranForMs });
-        setSttStatus("error");
-        setSttErrorMessage(
-          "Android Chrome ended captions mic instantly. Check mic permission, close other apps using mic, and reload the page."
-        );
-        sttStopRequestedRef.current = true;
-        clearSttRestartTimer();
-        clearFlushTimer();
-        return;
-      }
-
-      // If we requested stop (PTT up), Android often emits late results.
-      // So: schedule one last flush shortly after onend.
-      if (sttStopRequestedRef.current) {
-        clearFlushTimer();
-        sttFlushTimerRef.current = window.setTimeout(() => {
-          flushPendingStt("onend-after-stop");
-          setSttListening(false);
-        }, 300);
-      }
-
-      // Android: don't auto-restart
-      if (isMobile) {
-        setSttListening(false);
-
-        if (micArmedRef.current && !sttStopRequestedRef.current) {
-          setSttArmedNotListening(true);
-          log("stt ended (mobile) — needs manual resume", { ranForMs });
-        }
-        return;
-      }
-
-      // Desktop: keep auto-restart
-      if (micOnRef.current && !sttStopRequestedRef.current) {
-        clearSttRestartTimer();
-        sttRestartTimerRef.current = window.setTimeout(() => {
-          try {
-            if (!sttRunningRef.current) {
-              rec.start();
-              log("stt auto-restart start() called", { lang: rec.lang });
-            }
-          } catch (e: any) {
-            log("stt auto-restart FAILED", { message: e?.message || String(e) });
-          }
-        }, 400);
-      }
-    };
-
-    recognitionRef.current = rec;
-
-    return () => {
-      clearFinalizeTimer();
-      clearSttRestartTimer();
-      clearFlushTimer();
-      sttPendingTextRef.current = "";
-      sttLastInterimRef.current = "";
-      try {
-        rec.stop();
-      } catch {}
-      recognitionRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debugKey, speakLang]);  // ---- Lifecycle: join room, wire realtime -------------------
+  // ---- Lifecycle: join room, wire realtime -------------------
   const { rtStatus, channelRef } = useAnySpeakRealtime({
     roomId,
     clientId,
@@ -919,12 +684,10 @@ export default function RoomPage() {
         }
 
         micOnRef.current = false;
-        stopSttNow();
-
         if (isMobile) {
-          micArmedRef.current = false;
-          setSttListening(false);
-          setSttArmedNotListening(false);
+          stopAllStt("auto-muted-3plus");
+        } else {
+          stopSttNow();
         }
 
         log("auto-muted for 3+ participants", { total });
@@ -939,44 +702,6 @@ export default function RoomPage() {
   });
 
   // ---- UI controls ------------------------------------------
-
-  const toggleMic = async () => {
-    userTouchedMicRef.current = true;
-    unlockTts();
-
-    if (isMobile) {
-      if (sttListening) {
-        micArmedRef.current = false;
-        setSttArmedNotListening(false);
-        stopSttNow();
-        setSttListening(false);
-
-        clearFlushTimer();
-        sttFlushTimerRef.current = window.setTimeout(() => {
-          flushPendingStt("toggleMic-off");
-        }, 650);
-
-        log("mobile mic OFF (stt)", {});
-        return;
-      } else {
-        micArmedRef.current = true;
-        setSttArmedNotListening(false);
-        startSttNow();
-        log("mobile mic ON (stt)", {});
-        return;
-      }
-    }
-
-    const next = !micOn;
-    micOnRef.current = next;
-
-    if (!next) setSttArmedNotListening(false);
-
-    setMicEnabled(next);
-
-    if (next && sttStatusRef.current !== "unsupported") startSttNow();
-    else stopSttNow();
-  };
 
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -1614,53 +1339,20 @@ export default function RoomPage() {
                 try {
                   e.currentTarget.setPointerCapture(e.pointerId);
                 } catch {}
-
-                pttHeldRef.current = true;
-                userTouchedMicRef.current = true;
-                unlockTts();
-                micArmedRef.current = true;
-                setSttArmedNotListening(false);
-
-                sttPendingTextRef.current = "";
-                sttLastInterimRef.current = "";
-
-                startSttNow();
-                setSttListening(true);
-                log("PTT down", {});
+                pttDown();
               }}
               onPointerUp={(e) => {
                 if (!isMobile) return;
                 e.preventDefault();
-                pttHeldRef.current = false;
                 try {
                   e.currentTarget.releasePointerCapture(e.pointerId);
                 } catch {}
-
-                micArmedRef.current = false;
-                stopSttNow();
-
-                clearFlushTimer();
-                sttFlushTimerRef.current = window.setTimeout(() => {
-                  flushPendingStt("PTT up");
-                  setSttListening(false);
-                  log("PTT up", {});
-                }, 650);
+                pttUp();
               }}
               onPointerCancel={(e) => {
                 if (!isMobile) return;
                 e.preventDefault();
-                if (!pttHeldRef.current) return;
-                pttHeldRef.current = false;
-
-                micArmedRef.current = false;
-                stopSttNow();
-
-                clearFlushTimer();
-                sttFlushTimerRef.current = window.setTimeout(() => {
-                  flushPendingStt("PTT cancel");
-                  setSttListening(false);
-                  log("PTT cancel", {});
-                }, 650);
+                pttCancel();
               }}
               onClick={() => {
                 if (isMobile) return;
@@ -1684,4 +1376,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
