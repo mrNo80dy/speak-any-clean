@@ -528,7 +528,9 @@ export default function RoomPage() {
     isMobile,
     roomType,
     joinCamOn,
-    acquire,
+    acquire: async () => {
+      await acquire();
+    },
     localStreamRef,
     setCamEnabled,
     log,
@@ -1682,3 +1684,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
