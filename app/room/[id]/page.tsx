@@ -175,7 +175,6 @@ export default function RoomPage() {
   const [ccOn, setCcOn] = useState(true);
 
   // STT status
-  const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
 
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
