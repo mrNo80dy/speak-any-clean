@@ -896,6 +896,7 @@ if (total >= 3 && !userTouchedMicRef.current) {
                   ref={attachLocalVideo}
                   autoPlay
                   playsInline
+                  muted
                   className="h-full w-full object-cover"
                 />
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -939,6 +940,7 @@ if (total >= 3 && !userTouchedMicRef.current) {
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
+                    muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -956,6 +958,7 @@ if (total >= 3 && !userTouchedMicRef.current) {
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
+                    muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -1008,6 +1011,7 @@ if (total >= 3 && !userTouchedMicRef.current) {
                         ref={attachLocalVideo}
                         autoPlay
                         playsInline
+                        muted
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -1321,6 +1325,7 @@ if (total >= 3 && !userTouchedMicRef.current) {
     </div>
   );
 }
+
 
 
 
