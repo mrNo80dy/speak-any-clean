@@ -622,19 +622,23 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
       // 3+ users default: mic OFF (unless user already touched mic)
       const total = others.length + 1;
       if (total >= 3 && !userTouchedMicRef.current) {
-        if (!isMobile) {
-          setMicEnabled(false);
-        }
+  if (!isMobile) {
+    setMicEnabled(false);
+  }
 
-        micOnRef.current = false;
-        if (isMobile) {
-          stopAllStt("auto-muted-3plus");
-        } else {
-          stopAllStt();
-        }
+  micOnRef.current = false;
 
-        log("auto-muted for 3+ participants", { total });
-      }
+  if (isMobile) {
+    micArmedRef.current = false;
+    setSttListening(false);
+    setSttArmedNotListening(false);
+    stopAllStt("auto-muted-3plus");
+  } else {
+    stopAllStt("auto-muted");
+  }
+
+  log("auto-muted for 3+ participants", { total });
+}
 
       others.forEach((id) => {
         if (!peersRef.current.has(id)) {
@@ -1319,4 +1323,5 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
