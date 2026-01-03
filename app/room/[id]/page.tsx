@@ -611,7 +611,7 @@ export default function RoomPage() {
         if (isMobile) {
           stopAllStt("auto-muted-3plus");
         } else {
-          stopAllStt();
+          stopAllStt("auto-muted");
         }
 
         log("auto-muted for 3+ participants", { total });
@@ -1300,4 +1300,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
