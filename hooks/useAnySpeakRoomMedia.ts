@@ -8,7 +8,7 @@ export type AnySpeakRoomMediaArgs = {
   isMobile: boolean;
   roomType: RoomType | null;
   joinCamOn: boolean | null;
-  acquire: () => Promise<void>;
+  acquire: () => Promise<MediaStream | null>;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
   setCamEnabled: (enabled: boolean) => void;
   log: (msg: string, data?: any) => void;
