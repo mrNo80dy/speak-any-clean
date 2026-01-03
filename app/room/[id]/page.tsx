@@ -1552,11 +1552,9 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   )}
 </div>
-
-</div>
-</div>
 );
 }
+
 
 
 
