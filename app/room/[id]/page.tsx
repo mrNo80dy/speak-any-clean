@@ -1097,7 +1097,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   autoPlay
                   playsInline
                   muted
-                  className="h-full w-full object-contain bg-blanck"
+                  className="h-full w-full object-contain bg-black"
                 />
 </div>
             )}
@@ -1362,9 +1362,9 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
               </div>
             </form>
           )}
-        </main>
+                </main>
 
-                {/* In-call controls (minimal) */}
+        {/* In-call controls (minimal) */}
         <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
           {/* End Call (bottom center) */}
           <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
@@ -1388,180 +1388,170 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
               📴
             </button>
           </div>
-
-          {/* Controls overlay (camera + PTT) */}
-<div className="fixed inset-0 z-50 pointer-events-none">
-  {/* Camera toggle (bottom right) */}
-  <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-    <button
-      onClick={toggleCamera}
-      className={`${pillBase} ${camClass} ${roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""} bg-black/25 backdrop-blur-md border-white/10`}
-      disabled={roomType !== "video"}
-      title="Camera"
-    >
-      {camOn ? "📷" : "📷✕"}
-    </button>
-  </div>
-
-  {/* PTT (mobile, draggable) */}
-  {isMobile && (
-    <div className="fixed pointer-events-auto" style={{ left: pttPos.x, top: pttPos.y }}>
-      <button
-        className={`
-          w-[76px] h-[76px]
-          rounded-full
-          border
-          shadow-xl
-          backdrop-blur-md
-          active:scale-[0.98]
-          transition
-          ${
-            micUiOn
-              ? "bg-emerald-600/65 border-emerald-300/30"
-              : "bg-red-600/55 border-red-300/30"
-          }
-        `}
-        style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-        onPointerDown={(e) => {
-          if (!isMobile) return;
-          e.preventDefault();
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {}
-          const d = pttDragRef.current;
-          d.pointerId = e.pointerId;
-          d.startX = e.clientX;
-          d.startY = e.clientY;
-          d.originX = pttPos.x;
-          d.originY = pttPos.y;
-          d.moved = false;
-          d.dragging = false;
-          d.startedPtt = false;
-          if (d.holdTimer) {
-            clearTimeout(d.holdTimer);
-            d.holdTimer = null;
-          }
-          // Delay PTT start slightly so a drag gesture can be detected.
-          d.holdTimer = setTimeout(() => {
-            if (!pttDragRef.current.moved) {
-              pttDown();
-              pttDragRef.current.startedPtt = true;
-            }
-          }, 140);
-        }}
-        onPointerMove={(e) => {
-          if (!isMobile) return;
-          const d = pttDragRef.current;
-          if (d.pointerId !== e.pointerId) return;
-
-          const dx = e.clientX - d.startX;
-          const dy = e.clientY - d.startY;
-          const dist = Math.hypot(dx, dy);
-
-          if (!d.moved && dist > 8) {
-            d.moved = true;
-            d.dragging = true;
-            if (d.holdTimer) {
-              clearTimeout(d.holdTimer);
-              d.holdTimer = null;
-            }
-            if (d.startedPtt) {
-              // If user started talking but then drags, cancel capture and move instead.
-              pttCancel();
-              d.startedPtt = false;
-            }
-          }
-
-          if (d.dragging) {
-            const w = window.innerWidth || 360;
-            const h = window.innerHeight || 640;
-            const size = 76;
-            const margin = 12;
-
-            const maxX = Math.max(margin, w - size - margin);
-            const maxY = Math.max(margin + 40, h - size - (margin + 90)); // keep above bottom buttons
-            const nx = Math.min(maxX, Math.max(margin, d.originX + dx));
-            const ny = Math.min(maxY, Math.max(margin + 40, d.originY + dy));
-
-            setPttPos({ x: nx, y: ny });
-          }
-        }}
-        onPointerUp={(e) => {
-          if (!isMobile) return;
-          e.preventDefault();
-          try {
-            e.currentTarget.releasePointerCapture(e.pointerId);
-          } catch {}
-          const d = pttDragRef.current;
-          if (d.holdTimer) {
-            clearTimeout(d.holdTimer);
-            d.holdTimer = null;
-          }
-
-          if (d.dragging) {
-            // Snap to nearest side and persist.
-            const w = window.innerWidth || 360;
-            const size = 76;
-            const margin = 12;
-            const maxX = Math.max(margin, w - size - margin);
-            const snappedX = pttPos.x < w / 2 ? margin : maxX;
-
-            const next = { x: snappedX, y: pttPos.y };
-            setPttPos(next);
-            try {
-              localStorage.setItem("anyspeak_ptt_pos_v1", JSON.stringify(next));
-            } catch {}
-          } else if (d.startedPtt) {
-            pttUp();
-          }
-
-          d.pointerId = null;
-          d.dragging = false;
-          d.moved = false;
-          d.startedPtt = false;
-        }}
-        onPointerCancel={(e) => {
-          if (!isMobile) return;
-          e.preventDefault();
-          const d = pttDragRef.current;
-          if (d.holdTimer) {
-            clearTimeout(d.holdTimer);
-            d.holdTimer = null;
-          }
-          if (d.startedPtt) {
-            pttCancel();
-          }
-          d.pointerId = null;
-          d.dragging = false;
-          d.moved = false;
-          d.startedPtt = false;
-        }}
-        onClick={() => {
-          // Desktop behavior: click toggles mic
-          if (isMobile) return;
-          void toggleMic();
-        }}
-        onContextMenu={(e) => e.preventDefault()}
-        aria-label="Push to talk"
-        title="Push to talk"
-      >
-        <div className="flex items-center justify-center text-center leading-tight">
-          <div className="text-2xl">🎙️</div>
         </div>
-      </button>
+
+        {/* Controls overlay (camera + PTT) */}
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          {/* Camera toggle (bottom right) */}
+          <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+              } bg-black/25 backdrop-blur-md border-white/10`}
+              disabled={roomType !== "video"}
+              title="Camera"
+            >
+              {camOn ? "📷" : "📷✕"}
+            </button>
+          </div>
+
+          {/* PTT (mobile, draggable) */}
+          {isMobile && (
+            <div className="fixed pointer-events-auto" style={{ left: pttPos.x, top: pttPos.y }}>
+              <button
+                className={`
+                  w-[76px] h-[76px]
+                  rounded-full
+                  border
+                  shadow-xl
+                  backdrop-blur-md
+                  active:scale-[0.98]
+                  transition
+                  ${
+                    micUiOn
+                      ? "bg-emerald-600/65 border-emerald-300/30"
+                      : "bg-red-600/55 border-red-300/30"
+                  }
+                `}
+                style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+                onPointerDown={(e) => {
+                  if (!isMobile) return;
+                  e.preventDefault();
+                  try {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                  } catch {}
+                  const d = pttDragRef.current;
+                  d.pointerId = e.pointerId;
+                  d.startX = e.clientX;
+                  d.startY = e.clientY;
+                  d.originX = pttPos.x;
+                  d.originY = pttPos.y;
+                  d.moved = false;
+                  d.dragging = false;
+                  d.startedPtt = false;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
+                  d.holdTimer = setTimeout(() => {
+                    if (!pttDragRef.current.moved) {
+                      pttDown();
+                      pttDragRef.current.startedPtt = true;
+                    }
+                  }, 140);
+                }}
+                onPointerMove={(e) => {
+                  if (!isMobile) return;
+                  const d = pttDragRef.current;
+                  if (d.pointerId !== e.pointerId) return;
+
+                  const dx = e.clientX - d.startX;
+                  const dy = e.clientY - d.startY;
+                  const dist = Math.hypot(dx, dy);
+
+                  if (!d.moved && dist > 8) {
+                    d.moved = true;
+                    d.dragging = true;
+                    if (d.holdTimer) {
+                      clearTimeout(d.holdTimer);
+                      d.holdTimer = null;
+                    }
+                    if (d.startedPtt) {
+                      pttCancel();
+                      d.startedPtt = false;
+                    }
+                  }
+
+                  if (d.dragging) {
+                    const w = window.innerWidth || 360;
+                    const h = window.innerHeight || 640;
+                    const size = 76;
+                    const margin = 12;
+
+                    const maxX = Math.max(margin, w - size - margin);
+                    const maxY = Math.max(margin + 40, h - size - (margin + 90));
+                    const nx = Math.min(maxX, Math.max(margin, d.originX + dx));
+                    const ny = Math.min(maxY, Math.max(margin + 40, d.originY + dy));
+
+                    setPttPos({ x: nx, y: ny });
+                  }
+                }}
+                onPointerUp={(e) => {
+                  if (!isMobile) return;
+                  e.preventDefault();
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {}
+                  const d = pttDragRef.current;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
+
+                  if (d.dragging) {
+                    const w = window.innerWidth || 360;
+                    const size = 76;
+                    const margin = 12;
+                    const maxX = Math.max(margin, w - size - margin);
+                    const snappedX = pttPos.x < w / 2 ? margin : maxX;
+
+                    const next = { x: snappedX, y: pttPos.y };
+                    setPttPos(next);
+                    try {
+                      localStorage.setItem("anyspeak_ptt_pos_v1", JSON.stringify(next));
+                    } catch {}
+                  } else if (d.startedPtt) {
+                    pttUp();
+                  }
+
+                  d.pointerId = null;
+                  d.dragging = false;
+                  d.moved = false;
+                  d.startedPtt = false;
+                }}
+                onPointerCancel={(e) => {
+                  if (!isMobile) return;
+                  e.preventDefault();
+                  const d = pttDragRef.current;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
+                  if (d.startedPtt) {
+                    pttCancel();
+                  }
+                  d.pointerId = null;
+                  d.dragging = false;
+                  d.moved = false;
+                  d.startedPtt = false;
+                }}
+                onClick={() => {
+                  if (isMobile) return;
+                  void toggleMic();
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                aria-label="Push to talk"
+                title="Push to talk"
+              >
+                <div className="flex items-center justify-center text-center leading-tight">
+                  <div className="text-2xl">🎙️</div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
-  )}
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
