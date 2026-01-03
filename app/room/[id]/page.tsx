@@ -1150,9 +1150,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
-
+            
             {totalParticipants >= 5 && (
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
@@ -1546,5 +1544,6 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
