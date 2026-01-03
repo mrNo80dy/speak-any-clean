@@ -155,6 +155,151 @@ export default function RoomPage() {
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
+  // ---- Local preview (PiP) behavior -------------------------
+  // Draggable + auto-fade after a few seconds (tap brings it back)
+  const pipRef = useRef<HTMLDivElement | null>(null);
+  const pipHideTimerRef = useRef<number | null>(null);
+  const pipDraggingRef = useRef(false);
+  const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+
+  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
+  const [pipVisible, setPipVisible] = useState(true);
+
+  const clearPipTimer = () => {
+    if (pipHideTimerRef.current) {
+      window.clearTimeout(pipHideTimerRef.current);
+      pipHideTimerRef.current = null;
+    }
+  };
+
+  const schedulePipHide = () => {
+    clearPipTimer();
+    pipHideTimerRef.current = window.setTimeout(() => {
+      setPipVisible(false);
+    }, 2500);
+  };
+
+  // Set an initial position (bottom-right-ish) once we know the PiP size.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pipPos) return;
+    // Only relevant in 1:1 view (remote full + local PiP)
+    if (peerIds.length !== 1) return;
+
+    const el = pipRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const w = rect.width || 160;
+    const h = rect.height || 96;
+
+    // Keep above the bottom dock.
+    const pad = 16;
+    const dock = 120;
+    const x = Math.max(pad, window.innerWidth - w - pad);
+    const y = Math.max(pad, window.innerHeight - h - dock);
+
+    setPipPos({ x, y });
+    setPipVisible(true);
+    schedulePipHide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerIds.length]);
+
+  // Keep PiP inside viewport on resize.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!pipPos) return;
+    const onResize = () => {
+      const el = pipRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const pad = 8;
+      const dock = 120;
+      const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+      const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
+      setPipPos((p) => (p ? { x: Math.min(Math.max(p.x, pad), maxX), y: Math.min(Math.max(p.y, pad), maxY) } : p));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pipPos]);
+
+  const pipShowNow = () => {
+    setPipVisible(true);
+    schedulePipHide();
+  };
+
+  const pipOnPointerDown = (e: React.PointerEvent) => {
+    // Tap brings it back even if it was faded.
+    pipShowNow();
+
+    if (!pipPos) return;
+    pipDraggingRef.current = true;
+    clearPipTimer();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+
+    pipDragOffsetRef.current = {
+      dx: e.clientX - pipPos.x,
+      dy: e.clientY - pipPos.y,
+    };
+  };
+
+  const pipOnPointerMove = (e: React.PointerEvent) => {
+    if (!pipDraggingRef.current) return;
+    const el = pipRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    const dock = 120;
+
+    const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+    const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
+
+    const x = e.clientX - pipDragOffsetRef.current.dx;
+    const y = e.clientY - pipDragOffsetRef.current.dy;
+
+    setPipPos({
+      x: Math.min(Math.max(x, pad), maxX),
+      y: Math.min(Math.max(y, pad), maxY),
+    });
+  };
+
+  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
+    if (!pipDraggingRef.current) {
+      // It was just a tap.
+      pipShowNow();
+      return;
+    }
+    pipDraggingRef.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    schedulePipHide();
+  };
+
+  // Default PiP position: bottom-right, above the dock
+  useEffect(() => {
+    if (pipPos) return;
+    if (typeof window === "undefined") return;
+    const el = pipRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 16;
+    const dockPad = 120;
+    const x = Math.max(margin, window.innerWidth - rect.width - margin);
+    const y = Math.max(margin, window.innerHeight - rect.height - dockPad);
+    setPipPos({ x, y });
+    schedulePipHide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipRef.current]);
+
+  // Clean up timer
+  useEffect(() => {
+    return () => clearPipTimer();
+  }, []);
+
   // Captions / text stream
   const { messages, pushMessage, clearMessages } = useAnySpeakMessages({ max: 30 });
   const [captionLines, setCaptionLines] = useState<number>(3);
@@ -875,6 +1020,7 @@ export default function RoomPage() {
                   ref={attachLocalVideo}
                   autoPlay
                   playsInline
+                  muted
                   className="h-full w-full object-cover"
                 />
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -912,12 +1058,43 @@ export default function RoomPage() {
                   <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
                 </div>
 
-                <div className="absolute bottom-4 right-4 w-32 h-20 md:w-48 md:h-28 rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg">
+                {/* Local preview (draggable PiP) */}
+                <div
+                  ref={pipRef}
+                  className={
+                    "absolute rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg transition-opacity duration-500 " +
+                    (pipVisible ? "opacity-100" : "opacity-15")
+                  }
+                  style={
+                    pipPos
+                      ? {
+                          left: pipPos.x,
+                          top: pipPos.y,
+                          width: "12rem", // ~w-48
+                          height: "7rem", // ~h-28
+                        }
+                      : {
+                          right: "1rem",
+                          bottom: "4rem",
+                          width: "12rem",
+                          height: "7rem",
+                        }
+                  }
+                  onPointerDown={pipOnPointerDown}
+                  onPointerMove={pipOnPointerMove}
+                  onPointerUp={pipOnPointerUpOrCancel}
+                  onPointerCancel={pipOnPointerUpOrCancel}
+                  onDoubleClick={() => {
+                    setPipPos(null);
+                    pipShowNow();
+                  }}
+                >
                   <video
                     data-local="1"
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
+                    muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -935,6 +1112,7 @@ export default function RoomPage() {
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
+                  muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -987,6 +1165,7 @@ export default function RoomPage() {
                         ref={attachLocalVideo}
                         autoPlay
                         playsInline
+                  muted
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -1034,6 +1213,7 @@ export default function RoomPage() {
                         ref={attachLocalVideo}
                         autoPlay
                         playsInline
+                  muted
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
