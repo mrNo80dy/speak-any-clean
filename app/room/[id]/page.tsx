@@ -11,7 +11,7 @@ import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
 import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
-import { useAnySpeakMessages, type AnySpeakAnySpeakChatMessage } from "@/hooks/useAnySpeakMessages";
+import { useAnySpeakMessages, type AnySpeakChatMessage } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 
 // Types
@@ -1300,3 +1300,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
