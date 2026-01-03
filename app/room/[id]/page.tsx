@@ -514,19 +514,21 @@ export default function RoomPage() {
   } = localMedia;
 
   // ---- Hook #3: room media (camera + getUserMedia policy) ----
-  const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
-    isMobile,
-    roomType,
-    joinCamOn,
-    // useAnySpeakRoomMedia expects acquire(): Promise<void>
-    // useLocalMedia.acquire returns Promise<MediaStream|null>
-    acquire: async () => {
-      await acquire();
-    },
-    localStreamRef,
-    setCamEnabled,
-    log,
-  });
+const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
+  isMobile,
+  roomType,
+  joinCamOn,
+
+  // ✅ return the MediaStream so the hook matches the type
+  acquire: async () => {
+    return await acquire();
+  },
+
+  localStreamRef,
+  setCamEnabled,
+  log,
+});
+
 
   // ---- Hook #5: STT (Web Speech API + PTT) ------------------
   const {
@@ -1480,5 +1482,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
