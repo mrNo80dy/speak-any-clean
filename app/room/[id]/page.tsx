@@ -141,6 +141,7 @@ export default function RoomPage() {
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
+  const pttHeldRef = useRef(false);
   
   // ---- Mobile PTT positioning (draggable) ----
   const [pttPos, setPttPos] = useState<{ x: number; y: number }>({ x: 12, y: 120 });
@@ -1544,6 +1545,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
