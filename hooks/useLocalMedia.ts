@@ -32,11 +32,29 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     if (typeof navigator === "undefined") return null;
     if (localStreamRef.current) return localStreamRef.current;
 
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+
+    // Favor smaller, more reliable capture settings to reduce bandwidth/relay usage.
+    // Mobile: prefer portrait-ish capture.
+    const videoConstraints: MediaTrackConstraints | false = opts.wantVideo
+      ? isMobile
+        ? {
+            width: { ideal: 720 },
+            height: { ideal: 1280 },
+            frameRate: { ideal: 24, max: 30 },
+            facingMode: "user",
+          }
+        : {
+            width: { ideal: 960 },
+            height: { ideal: 540 },
+            frameRate: { ideal: 24, max: 30 },
+          }
+      : false;
+
     const constraints: MediaStreamConstraints = {
       audio: wantAudio,
-      video: opts.wantVideo
-        ? { width: { ideal: 1280 }, height: { ideal: 720 } }
-        : false,
+      video: videoConstraints,
     };
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
