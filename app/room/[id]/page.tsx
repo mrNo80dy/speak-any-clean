@@ -571,7 +571,6 @@ const displayNameRef = useRef<string>("You");
     camOn,
     acquire,
     attachLocalVideo,
-    release,
     setMicEnabled,
     setCamEnabled,
   } = localMedia;
@@ -1544,6 +1543,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
