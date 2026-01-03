@@ -271,7 +271,7 @@ const displayNameRef = useRef<string>("You");
       teardownPeers("end_call");
     } catch {}
     try {
-      release();
+      stop();
     } catch {}
     try {
       router.push("/");
@@ -573,6 +573,7 @@ const displayNameRef = useRef<string>("You");
     attachLocalVideo,
     setMicEnabled,
     setCamEnabled,
+    stop,
   } = localMedia;
 
   // ---- Hook #3: room media (camera + getUserMedia policy) ----
@@ -1543,6 +1544,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
