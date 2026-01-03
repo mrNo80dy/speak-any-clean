@@ -891,6 +891,16 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     : "bg-red-900/80 text-red-100 border-red-700";
 
   const effectiveCaptionLines = Math.max(1, captionLines || 3);
+  const handleEndCall = async () => {
+  try { stopAllStt("end_call"); } catch {}
+  try { teardownPeers("end_call"); } catch {}
+  try { stop(); } catch {}
+  try {
+    // If you already navigate somewhere else on end-call, keep your existing behavior.
+    // Otherwise this is a safe default:
+    router.push("/");
+  } catch {}
+};
 
   // ---- Render -----------------------------------------------
   return (
@@ -1360,7 +1370,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
           <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
             <button
               type="button"
-              onClick={endCallNow}
+              onClick={handleEndCall}
               className="
                 w-[56px] h-[56px]
                 rounded-full
@@ -1545,6 +1555,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
