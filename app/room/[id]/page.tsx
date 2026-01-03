@@ -141,9 +141,51 @@ export default function RoomPage() {
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
-  const pttHeldRef = useRef(false);
+  \1
+  // ---- Mobile PTT positioning (draggable) ----
+  const [pttPos, setPttPos] = useState<{ x: number; y: number }>({ x: 12, y: 120 });
+  const pttDragRef = useRef<{
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+    dragging: boolean;
+    startedPtt: boolean;
+    holdTimer: any;
+  }>({
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    originX: 12,
+    originY: 120,
+    moved: false,
+    dragging: false,
+    startedPtt: false,
+    holdTimer: null,
+  });
 
-  const displayNameRef = useRef<string>("You");
+  useEffect(() => {
+    if (!isMobile) return;
+    try {
+      const saved = localStorage.getItem("anyspeak_ptt_pos_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed?.x === "number" && typeof parsed?.y === "number") {
+          setPttPos({ x: parsed.x, y: parsed.y });
+          return;
+        }
+      }
+    } catch {}
+    // Default: lower-right, above the bottom controls
+    try {
+      const w = window.innerWidth || 360;
+      const h = window.innerHeight || 640;
+      setPttPos({ x: Math.max(12, w - 92), y: Math.max(80, h - 240) });
+    } catch {}
+  }, [isMobile]);
+const displayNameRef = useRef<string>("You");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
@@ -220,6 +262,26 @@ export default function RoomPage() {
       setPipPos((p) => (p ? { x: Math.min(Math.max(p.x, pad), maxX), y: Math.min(Math.max(p.y, pad), maxY) } : p));
     };
     window.addEventListener("resize", onResize);
+
+  async function endCallNow() {
+    try {
+      stopAllStt();
+    } catch {}
+    try {
+      teardownPeers("end_call");
+    } catch {}
+    try {
+      release();
+    } catch {}
+    try {
+      router.push("/");
+    } catch {
+      try {
+        window.location.href = "/";
+      } catch {}
+    }
+  }
+
     return () => window.removeEventListener("resize", onResize);
   }, [pipPos]);
 
@@ -509,6 +571,7 @@ export default function RoomPage() {
     camOn,
     acquire,
     attachLocalVideo,
+    release,
     setMicEnabled,
     setCamEnabled,
   } = localMedia;
@@ -1025,10 +1088,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   muted
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                  <span>You</span>
-                </div>
-              </div>
+</div>
             )}
 
             {peerIds.length === 1 && firstRemoteId && (
@@ -1055,72 +1115,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     if (el.srcObject !== stream) el.srcObject = stream;
                   }}
                 />
-
-                <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                  <span>{peerLabels[firstRemoteId] ?? firstRemoteId.slice(0, 8)}</span>
-                </div>
-
-                {/* Local preview (draggable PiP) */}
-                <div
-                  ref={pipRef}
-                  className={
-                    "absolute rounded-xl overflow-hidden border border-neutral-700 bg-black/70 shadow-lg transition-opacity duration-500 " +
-                    (pipVisible ? "opacity-100" : "opacity-15")
-                  }
-                  style={
-                    pipPos
-                      ? {
-                          left: pipPos.x,
-                          top: pipPos.y,
-                          width: "12rem", // ~w-48
-                          height: "7rem", // ~h-28
-                        }
-                      : {
-                          right: "1rem",
-                          bottom: "4rem",
-                          width: "12rem",
-                          height: "7rem",
-                        }
-                  }
-                  onPointerDown={pipOnPointerDown}
-                  onPointerMove={pipOnPointerMove}
-                  onPointerUp={pipOnPointerUpOrCancel}
-                  onPointerCancel={pipOnPointerUpOrCancel}
-                  onDoubleClick={() => {
-                    setPipPos(null);
-                    pipShowNow();
-                  }}
-                >
-                  <video
-                    data-local="1"
-                    ref={attachLocalVideo}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="h-full w-full object-cover"
-                  />
-                  <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                    <span>You</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {peerIds.length > 1 && totalParticipants <= 4 && (
-              <div className="grid h-full w-full gap-2 p-2 md:p-4 grid-cols-1 sm:grid-cols-2 auto-rows-fr">
-                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
-                  <video
-                    data-local="1"
-                    ref={attachLocalVideo}
-                    autoPlay
-                    playsInline
-                  muted
-                    className="h-full w-full object-cover"
-                  />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                    <span>You</span>
-                  </div>
-                </div>
+</div>
 
                 {peerIds.map((pid) => (
                   <div
@@ -1170,10 +1165,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   muted
                         className="h-full w-full object-cover"
                       />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        <span>You</span>
-                      </div>
-                    </>
+</>
                   ) : (
                     <>
                       <video
@@ -1218,10 +1210,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   muted
                         className="h-full w-full object-cover"
                       />
-                      <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <span>You</span>
-                      </div>
-                    </button>
+</button>
                   )}
 
                   {peerIds.map((pid) => {
@@ -1365,64 +1354,47 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
           )}
         </main>
 
-        {/* Floating bottom controls (like the top) */}
+                {/* In-call controls (minimal) */}
         <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
-          {/* Left controls */}
-          <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
-            <button
-              onClick={toggleCamera}
-              className={`${pillBase} ${camClass} ${
-                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-              } bg-black/25 backdrop-blur-md border-white/10`}
-              disabled={roomType !== "video"}
-            >
-              {camOn ? "Cam" : "Cam Off"}
-            </button>
-
-            <button
-              onClick={() => setShowTextInput((v) => !v)}
-              className={`${pillBase} ${
-                showTextInput
-                  ? "bg-emerald-600/60 text-white border-emerald-400/30"
-                  : "bg-black/25 text-white border-white/10"
-              } backdrop-blur-md`}
-            >
-              Text
-            </button>
-          </div>
-
-          {/* Right controls */}
-          <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
+          {/* End Call (bottom center) */}
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
             <button
               type="button"
-              onClick={() => setCcOn((v) => !v)}
-              className={`
-                px-3 py-1.5 rounded-full text-[11px]
-                bg-black/25 backdrop-blur-md border border-white/10 shadow
-                ${ccOn ? "text-white/95" : "text-white/55"}
-              `}
-              aria-pressed={ccOn}
-              title="Toggle captions"
+              onClick={endCallNow}
+              className="
+                w-[56px] h-[56px]
+                rounded-full
+                border border-red-300/30
+                bg-red-600/60
+                shadow-xl
+                backdrop-blur-md
+                active:scale-[0.98]
+                transition
+                flex items-center justify-center
+                text-white text-xl
+              "
+              title="End call"
             >
-              CC
+              📴
             </button>
-
-            <select
-              value={captionLines}
-              onChange={(e) => setCaptionLines(Number(e.target.value) || 3)}
-              className="bg-black/25 backdrop-blur-md text-xs border border-white/10 rounded-full px-2 py-1 text-white/90 shadow"
-              title="Caption lines"
-            >
-              <option value={1}>1</option>
-              <option value={2}>2</option>
-              <option value={3}>3</option>
-              <option value={4}>4</option>
-              <option value={5}>5</option>
-            </select>
           </div>
 
-          {/* Center PTT (lower, round, floating) */}
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+6px)] pointer-events-auto">
+          {/* Camera toggle (bottom right) */}
+          <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""} bg-black/25 backdrop-blur-md border-white/10`}
+              disabled={roomType !== "video"}
+              title="Camera"
+            >
+              {camOn ? "📷" : "📷✕"}
+            </button>
+          </div>
+        </div>
+
+        {/* PTT (mobile, draggable) */}
+        {isMobile && (
+          <div className="fixed z-50 pointer-events-auto" style={{ left: pttPos.x, top: pttPos.y }}>
             <button
               className={`
                 w-[76px] h-[76px]
@@ -1445,7 +1417,63 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                 try {
                   e.currentTarget.setPointerCapture(e.pointerId);
                 } catch {}
-                pttDown();
+                const d = pttDragRef.current;
+                d.pointerId = e.pointerId;
+                d.startX = e.clientX;
+                d.startY = e.clientY;
+                d.originX = pttPos.x;
+                d.originY = pttPos.y;
+                d.moved = false;
+                d.dragging = false;
+                d.startedPtt = false;
+                if (d.holdTimer) {
+                  clearTimeout(d.holdTimer);
+                  d.holdTimer = null;
+                }
+                // Delay PTT start slightly so a drag gesture can be detected.
+                d.holdTimer = setTimeout(() => {
+                  if (!pttDragRef.current.moved) {
+                    pttDown();
+                    pttDragRef.current.startedPtt = true;
+                  }
+                }, 140);
+              }}
+              onPointerMove={(e) => {
+                if (!isMobile) return;
+                const d = pttDragRef.current;
+                if (d.pointerId !== e.pointerId) return;
+
+                const dx = e.clientX - d.startX;
+                const dy = e.clientY - d.startY;
+                const dist = Math.hypot(dx, dy);
+
+                if (!d.moved && dist > 8) {
+                  d.moved = true;
+                  d.dragging = true;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
+                  if (d.startedPtt) {
+                    // If user started talking but then drags, cancel capture and move instead.
+                    pttCancel();
+                    d.startedPtt = false;
+                  }
+                }
+
+                if (d.dragging) {
+                  const w = window.innerWidth || 360;
+                  const h = window.innerHeight || 640;
+                  const size = 76;
+                  const margin = 12;
+
+                  const maxX = Math.max(margin, w - size - margin);
+                  const maxY = Math.max(margin + 40, h - size - (margin + 90)); // keep above bottom buttons
+                  const nx = Math.min(maxX, Math.max(margin, d.originX + dx));
+                  const ny = Math.min(maxY, Math.max(margin + 40, d.originY + dy));
+
+                  setPttPos({ x: nx, y: ny });
+                }
               }}
               onPointerUp={(e) => {
                 if (!isMobile) return;
@@ -1453,35 +1481,67 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                 try {
                   e.currentTarget.releasePointerCapture(e.pointerId);
                 } catch {}
-                pttUp();
+                const d = pttDragRef.current;
+                if (d.holdTimer) {
+                  clearTimeout(d.holdTimer);
+                  d.holdTimer = null;
+                }
+
+                if (d.dragging) {
+                  // Snap to nearest side and persist.
+                  const w = window.innerWidth || 360;
+                  const size = 76;
+                  const margin = 12;
+                  const maxX = Math.max(margin, w - size - margin);
+                  const snappedX = pttPos.x < w / 2 ? margin : maxX;
+
+                  const next = { x: snappedX, y: pttPos.y };
+                  setPttPos(next);
+                  try {
+                    localStorage.setItem("anyspeak_ptt_pos_v1", JSON.stringify(next));
+                  } catch {}
+                } else if (d.startedPtt) {
+                  pttUp();
+                }
+
+                d.pointerId = null;
+                d.dragging = false;
+                d.moved = false;
+                d.startedPtt = false;
               }}
               onPointerCancel={(e) => {
                 if (!isMobile) return;
                 e.preventDefault();
-                pttCancel();
+                const d = pttDragRef.current;
+                if (d.holdTimer) {
+                  clearTimeout(d.holdTimer);
+                  d.holdTimer = null;
+                }
+                if (d.startedPtt) {
+                  pttCancel();
+                }
+                d.pointerId = null;
+                d.dragging = false;
+                d.moved = false;
+                d.startedPtt = false;
               }}
               onClick={() => {
+                // Desktop behavior: click toggles mic
                 if (isMobile) return;
                 void toggleMic();
               }}
               onContextMenu={(e) => e.preventDefault()}
               aria-label="Push to talk"
+              title="Push to talk"
             >
-              <div className="flex flex-col items-center justify-center text-center leading-tight">
-                <div className="text-[11px] text-white/90">
-                  {isMobile ? (sttListening ? "Talking" : "Hold") : micOn ? "Mic On" : "Mic Off"}
-                </div>
-                <div className="text-[10px] text-white/70">
-                  {isMobile ? (sttListening ? "Release" : "to talk") : "Click"}
-                </div>
+              <div className="flex items-center justify-center text-center leading-tight">
+                <div className="text-2xl">🎙️</div>
               </div>
             </button>
           </div>
-        </div>
+        )}
+
       </div>
     </div>
   );
 }
-
-
-
