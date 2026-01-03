@@ -265,7 +265,7 @@ const displayNameRef = useRef<string>("You");
 
   async function endCallNow() {
     try {
-      stopAllStt();
+      stopAllStt("end_call");
     } catch {}
     try {
       teardownPeers("end_call");
@@ -1544,6 +1544,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
