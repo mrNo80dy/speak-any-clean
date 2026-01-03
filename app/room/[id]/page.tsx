@@ -11,6 +11,7 @@ import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
 import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
+import { useAnySpeakMessages, type AnySpeakAnySpeakChatMessage } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 
 // Types
@@ -46,17 +47,6 @@ type RoomInfo = {
   room_type: RoomType;
 };
 
-type ChatMessage = {
-  id: string;
-  fromId: string;
-  fromName: string;
-  originalLang: string;
-  translatedLang: string;
-  originalText: string;
-  translatedText: string;
-  isLocal: boolean;
-  at: number;
-};
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
@@ -166,7 +156,7 @@ export default function RoomPage() {
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
   // Captions / text stream
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const { messages, pushMessage, clearMessages } = useAnySpeakMessages({ max: 30 });
   const [captionLines, setCaptionLines] = useState<number>(3);
 
   // Manual text captions
@@ -230,15 +220,6 @@ export default function RoomPage() {
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
   const shouldSpeakTranslated =
     FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
-
-  function pushMessage(msg: Omit<ChatMessage, "id" | "at">) {
-    const full: ChatMessage = {
-      ...msg,
-      id: crypto.randomUUID(),
-      at: Date.now(),
-    };
-    setMessages((prev) => [...prev.slice(-29), full]);
-  }
 
 
 // (ICE queue moved to useAnySpeakWebRtc hook)
@@ -373,34 +354,34 @@ export default function RoomPage() {
   });
 
   const localMedia = useLocalMedia({
-  wantVideo: mode === "video",
-  wantAudio: !isMobile, // mobile: DO NOT grab mic via getUserMedia (STT uses mic)
-});
+    wantVideo: mode === "video",
+    wantAudio: !isMobile, // mobile: DO NOT grab mic via getUserMedia (STT uses mic)
+  });
 
-const {
-  localStreamRef,
-  micOn,
-  camOn,
-  acquire,
-  attachLocalVideo,
-  setMicEnabled,
-  setCamEnabled,
-} = localMedia;
+  const {
+    localStreamRef,
+    micOn,
+    camOn,
+    acquire,
+    attachLocalVideo,
+    setMicEnabled,
+    setCamEnabled,
+  } = localMedia;
 
-// ---- Hook #3: room media (camera + getUserMedia policy) ----
-// NOTE: wrap acquire() so it matches Promise<void> (useAnySpeakRoomMedia expects void)
-const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
-  isMobile,
-  roomType,
-  joinCamOn,
-  acquire: async () => {
-    await acquire(); // acquire returns MediaStream | null, but we ignore the return
-  },
-  localStreamRef,
-  setCamEnabled,
-  log,
-});
-
+  // ---- Hook #3: room media (camera + getUserMedia policy) ----
+  const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
+    isMobile,
+    roomType,
+    joinCamOn,
+    // useAnySpeakRoomMedia expects acquire(): Promise<void>
+    // useLocalMedia.acquire returns Promise<MediaStream|null>
+    acquire: async () => {
+      await acquire();
+    },
+    localStreamRef,
+    setCamEnabled,
+    log,
+  });
 
   // ---- Hook #5: STT (Web Speech API + PTT) ------------------
   const {
@@ -620,24 +601,22 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
       peerLabelsRef.current = labels;
 
       // 3+ users default: mic OFF (unless user already touched mic)
-      // 3+ users default: mic OFF (unless user already touched mic)
-const total = others.length + 1;
-if (total >= 3 && !userTouchedMicRef.current) {
-  if (!isMobile) {
-    setMicEnabled(false);
-  }
+      const total = others.length + 1;
+      if (total >= 3 && !userTouchedMicRef.current) {
+        if (!isMobile) {
+          setMicEnabled(false);
+        }
 
-  micOnRef.current = false;
+        micOnRef.current = false;
+        if (isMobile) {
+          stopAllStt("auto-muted-3plus");
+        } else {
+          stopAllStt();
+        }
 
-  if (isMobile) {
-    micArmedRef.current = false;
-    stopAllStt("auto-muted-3plus");
-  } else {
-    stopAllStt("auto-muted");
-  }
+        log("auto-muted for 3+ participants", { total });
+      }
 
-  log("auto-muted for 3+ participants", { total });
-}
       others.forEach((id) => {
         if (!peersRef.current.has(id)) {
           makeOffer(id, channel).catch(() => {});
@@ -896,7 +875,6 @@ if (total >= 3 && !userTouchedMicRef.current) {
                   ref={attachLocalVideo}
                   autoPlay
                   playsInline
-                  muted
                   className="h-full w-full object-cover"
                 />
                 <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -940,7 +918,6 @@ if (total >= 3 && !userTouchedMicRef.current) {
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
-                    muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -958,7 +935,6 @@ if (total >= 3 && !userTouchedMicRef.current) {
                     ref={attachLocalVideo}
                     autoPlay
                     playsInline
-                    muted
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -1011,7 +987,6 @@ if (total >= 3 && !userTouchedMicRef.current) {
                         ref={attachLocalVideo}
                         autoPlay
                         playsInline
-                        muted
                         className="h-full w-full object-cover"
                       />
                       <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
@@ -1325,7 +1300,3 @@ if (total >= 3 && !userTouchedMicRef.current) {
     </div>
   );
 }
-
-
-
-
