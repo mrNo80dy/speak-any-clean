@@ -1115,7 +1115,8 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     if (el.srcObject !== stream) el.srcObject = stream;
                   }}
                 />
-</div>
+              </div>
+            )}
 
                 {peerIds.map((pid) => (
                   <div
@@ -1545,4 +1546,5 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
