@@ -40,8 +40,7 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     const videoConstraints: MediaTrackConstraints | false = opts.wantVideo
       ? isMobile
         ? {
-            width: { ideal: 720 },
-            height: { ideal: 1280 },
+            width: { ideal: 1280 },
             frameRate: { ideal: 24, max: 30 },
             facingMode: "user",
           }
