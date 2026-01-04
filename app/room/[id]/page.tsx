@@ -143,15 +143,27 @@ export default function RoomPage() {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
   
-  // ---- Mobile PTT positioning (side-to-side only) ----
-  // PTT lives on a bottom rail (Y is fixed). Users can slide it left/center/right.
-  const [pttPos, setPttPos] = useState<{ x: number }>({ x: 12 });
+  // ---- Mobile PTT positioning (dockable) ----
+  // PTT can dock to: bottom (slides left/right) or left/right edges (slides up/down).
+  // We store a dock + a normalized position t (0..1) along the active rail.
+  type PttDock = "bottom" | "left" | "right";
+  const [pttDock, setPttDock] = useState<PttDock>("bottom");
+  const [pttT, setPttT] = useState<number>(0); // 0..1
+
+  const pttDockRef = useRef<PttDock>("bottom");
+  const pttTRef = useRef<number>(0);
+
+  useEffect(() => {
+    pttDockRef.current = pttDock;
+  }, [pttDock]);
+  useEffect(() => {
+    pttTRef.current = pttT;
+  }, [pttT]);
+
   const pttDragRef = useRef<{
     pointerId: number | null;
     startX: number;
     startY: number;
-    originX: number;
-    originY: number;
     moved: boolean;
     dragging: boolean;
     startedPtt: boolean;
@@ -160,8 +172,6 @@ export default function RoomPage() {
     pointerId: null,
     startX: 0,
     startY: 0,
-    originX: 12,
-    originY: 120,
     moved: false,
     dragging: false,
     startedPtt: false,
@@ -171,18 +181,25 @@ export default function RoomPage() {
   useEffect(() => {
     if (!isMobile) return;
     try {
-      const saved = localStorage.getItem("anyspeak_ptt_pos_v2");
+      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed?.x === "number") {
-          setPttPos({ x: parsed.x });
+        const d = parsed?.dock as PttDock | undefined;
+        const t = parsed?.t as number | undefined;
+        const okDock = d === "bottom" || d === "left" || d === "right";
+        if (okDock && typeof t === "number") {
+          setPttDock(d as PttDock);
+          setPttT(Math.min(1, Math.max(0, t)));
           return;
         }
       }
     } catch {}
-    // Default: bottom-left
-    setPttPos({ x: 12 });
+
+    // Default: bottom-left-ish
+    setPttDock("bottom");
+    setPttT(0);
   }, [isMobile]);
+
 const displayNameRef = useRef<string>("You");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
@@ -900,7 +917,43 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
   } catch {}
 };
 
-  // ---- Render -----------------------------------------------
+  
+  // ---- PTT dock layout helpers (mobile) ----------------------
+  const getPttLayout = () => {
+    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
+    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
+    const size = 76;
+    const margin = 12;
+    const edgeZone = 56;
+
+    const xLeft = margin;
+    const xCenter = Math.round((w - size) / 2);
+    const xRight = Math.max(margin, w - size - margin);
+
+    // Keep side-docked PTT out of the top bar and out of the bottom control zone.
+    const topPad = 92; // clears top pills + safe area
+    const bottomPad = showTextInput ? 210 : 150; // clears bottom controls + optional text input
+    const minY = topPad;
+    const maxY = Math.max(minY, h - bottomPad - size);
+
+    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
+  };
+
+  const pttPx = useMemo(() => {
+    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+    const { xLeft, xRight, minY, maxY } = getPttLayout();
+
+    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+    const t = clamp01(pttT);
+
+    if (pttDock === "bottom") {
+      const left = Math.round(xLeft + (xRight - xLeft) * t);
+      return { dock: "bottom" as const, left, top: 0 };
+    }
+    const top = Math.round(minY + (maxY - minY) * t);
+    return { dock: pttDock as "left" | "right", left: 0, top };
+  }, [isMobile, pttDock, pttT, showTextInput]);
+// ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
@@ -1109,31 +1162,13 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
           <div className="h-full w-full">
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <video
-                  data-local="1"
-                  ref={attachLocalVideo}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="h-full w-full object-cover bg-black"
-                />
+                <FullBleedVideo stream={localStreamRef.current} isLocal />
 </div>
             )}
 
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <video
-                  autoPlay
-                  playsInline
-                  className="h-full w-full object-cover bg-black"
-                  ref={(el) => {
-                    if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
-                      el.srcObject = firstRemoteStream;
-                      el.playsInline = true as any;
-                      el.play().catch(() => {});
-                    }
-                  }}
-                />
+                <FullBleedVideo stream={firstRemoteStream} />
                 <audio
                   data-remote
                   autoPlay
@@ -1170,14 +1205,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <video
-                        data-local="1"
-                        ref={attachLocalVideo}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="h-full w-full object-cover"
-                      />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1226,28 +1254,11 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
                     <>
-                      <video
-                        data-local="1"
-                        ref={attachLocalVideo}
-                        autoPlay
-                        playsInline
-                  muted
-                        className="h-full w-full object-cover"
-                      />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal />
 </>
                   ) : (
                     <>
-                      <video
-                        autoPlay
-                        playsInline
-                        className="h-full w-full object-cover"
-                        ref={(el) => {
-                          const stream = peerStreams[spotlightId];
-                          if (el && stream && el.srcObject !== stream) {
-                            el.srcObject = stream;
-                          }
-                        }}
-                      />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} />
                       <audio
                         data-remote
                         autoPlay
@@ -1441,11 +1452,17 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
             </button>
           </div>
 
-          {/* PTT (mobile, draggable) */}
+          {/* PTT (mobile, dockable) */}
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
-              style={{ left: pttPos.x, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+              style={
+                pttPx.dock === "bottom"
+                  ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
+                  : pttPx.dock === "left"
+                  ? { left: 12, top: pttPx.top }
+                  : { right: 12, top: pttPx.top }
+              }
             >
               <button
                 className={`
@@ -1473,14 +1490,15 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   d.pointerId = e.pointerId;
                   d.startX = e.clientX;
                   d.startY = e.clientY;
-                  d.originX = pttPos.x;
                   d.moved = false;
                   d.dragging = false;
                   d.startedPtt = false;
+
                   if (d.holdTimer) {
                     clearTimeout(d.holdTimer);
                     d.holdTimer = null;
                   }
+
                   d.holdTimer = setTimeout(() => {
                     if (!pttDragRef.current.moved) {
                       pttDown();
@@ -1510,16 +1528,32 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     }
                   }
 
-                  if (d.dragging) {
-                    const w = window.innerWidth || 360;
-                    const size = 76;
-                    const margin = 12;
+                  if (!d.dragging) return;
 
-                    const maxX = Math.max(margin, w - size - margin);
-                    const nx = Math.min(maxX, Math.max(margin, d.originX + dx));
+                  const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
 
-                    // Side-to-side only (Y is fixed by the rail)
-                    setPttPos({ x: nx });
+                  // Magnetize dock based on proximity to edges
+                  const nextDock =
+                    e.clientX <= edgeZone
+                      ? "left"
+                      : e.clientX >= w - size - edgeZone
+                      ? "right"
+                      : "bottom";
+
+                  if (nextDock !== pttDockRef.current) {
+                    setPttDock(nextDock as any);
+                    pttDockRef.current = nextDock as any;
+                  }
+
+                  // Update normalized position along the current rail
+                  if (nextDock === "bottom") {
+                    const centerX = e.clientX - size / 2;
+                    const t = (centerX - xLeft) / (xRight - xLeft || 1);
+                    setPttT(Math.min(1, Math.max(0, t)));
+                  } else {
+                    const centerY = e.clientY - size / 2;
+                    const t = (centerY - minY) / (maxY - minY || 1);
+                    setPttT(Math.min(1, Math.max(0, t)));
                   }
                 }}
                 onPointerUp={(e) => {
@@ -1528,6 +1562,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   try {
                     e.currentTarget.releasePointerCapture(e.pointerId);
                   } catch {}
+
                   const d = pttDragRef.current;
                   if (d.holdTimer) {
                     clearTimeout(d.holdTimer);
@@ -1535,30 +1570,41 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   }
 
                   if (d.dragging) {
-                    const w = window.innerWidth || 360;
-                    const size = 76;
-                    const margin = 12;
-                    const leftX = margin;
-                    const rightX = Math.max(margin, w - size - margin);
-                    const centerX = Math.round((w - size) / 2);
+                    const { xLeft, xCenter, xRight } = getPttLayout();
 
-                    // Snap to left / center / right
-                    const candidates = [leftX, centerX, rightX];
-                    let best = candidates[0];
-                    let bestDist = Math.abs(pttPos.x - best);
-                    for (const c of candidates.slice(1)) {
-                      const dist = Math.abs(pttPos.x - c);
-                      if (dist < bestDist) {
-                        bestDist = dist;
-                        best = c;
+                    // Snap bottom dock to left / center / right for uniform feel
+                    if (pttDockRef.current === "bottom") {
+                      const x = pttPx.left;
+                      const candidates = [xLeft, xCenter, xRight];
+                      let best = candidates[0];
+                      let bestDist = Math.abs(x - best);
+                      for (const c of candidates.slice(1)) {
+                        const dd = Math.abs(x - c);
+                        if (dd < bestDist) {
+                          bestDist = dd;
+                          best = c;
+                        }
                       }
-                    }
 
-                    const next = { x: best };
-                    setPttPos(next);
-                    try {
-                      localStorage.setItem("anyspeak_ptt_pos_v2", JSON.stringify(next));
-                    } catch {}
+                      const newT =
+                        best === xLeft ? 0 : best === xRight ? 1 : (xCenter - xLeft) / (xRight - xLeft || 1);
+
+                      setPttT(newT);
+                      try {
+                        localStorage.setItem(
+                          "anyspeak_ptt_dock_v1",
+                          JSON.stringify({ dock: "bottom", t: newT })
+                        );
+                      } catch {}
+                    } else {
+                      // Side docks keep continuous (more natural)
+                      try {
+                        localStorage.setItem(
+                          "anyspeak_ptt_dock_v1",
+                          JSON.stringify({ dock: pttDockRef.current, t: pttTRef.current })
+                        );
+                      } catch {}
+                    }
                   } else if (d.startedPtt) {
                     pttUp();
                   }
@@ -1598,8 +1644,76 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
               </button>
             </div>
           )}
-        </div>
       </div>
+    </div>
+  );
+}
+
+
+function FullBleedVideo({
+  stream,
+  isLocal = false,
+}: {
+  stream: MediaStream | null;
+  isLocal?: boolean;
+}) {
+  const bgRef = useRef<HTMLVideoElement | null>(null);
+  const fgRef = useRef<HTMLVideoElement | null>(null);
+  const cloneRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    const s = stream || null;
+
+    const fg = fgRef.current;
+    const bg = bgRef.current;
+
+    if (!s) {
+      if (fg) fg.srcObject = null;
+      if (bg) bg.srcObject = null;
+      return;
+    }
+
+    // Create (or refresh) a lightweight clone for the blurred background layer.
+    // This prevents the “zoomed-in cover” feeling while still visually filling the screen.
+    const tracks = s.getTracks();
+    if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
+      cloneRef.current = new MediaStream(tracks);
+    }
+
+    if (bg && bg.srcObject !== cloneRef.current) {
+      bg.srcObject = cloneRef.current;
+      bg.playsInline = true as any;
+      bg.muted = true;
+      bg.play().catch(() => {});
+    }
+
+    if (fg && fg.srcObject !== s) {
+      fg.srcObject = s;
+      fg.playsInline = true as any;
+      fg.muted = true;
+      fg.play().catch(() => {});
+    }
+  }, [stream]);
+
+  return (
+    <div className="absolute inset-0 bg-black overflow-hidden">
+      {/* Blurred fill background */}
+      <video
+        ref={bgRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
+      />
+      {/* True camera framing (no aggressive crop) */}
+      <video
+        ref={fgRef}
+        autoPlay
+        playsInline
+        muted
+        data-local={isLocal ? "1" : undefined}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
     </div>
   );
 }
