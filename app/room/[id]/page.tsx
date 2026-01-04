@@ -1030,35 +1030,52 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
             Audio rooms auto-join; joiners no longer choose audio/video. */}
         {roomType === "video" && joinCamOn === null && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-            <div className="w-full max-w-sm rounded-2xl border border-neutral-700 bg-neutral-950 p-4">
-              <div className="text-lg font-semibold mb-2">Video room</div>
-              <div className="text-sm text-neutral-300 mb-4">
-                Join with camera on or off.
-              </div>
+          <div className="absolute inset-0 z-50">
+            {/* Background: subtle live preview if available, otherwise dark */}
+            <div className="absolute inset-0">
+              {localStreamRef.current ? (
+                <div className="absolute inset-0 opacity-60">
+                  <FullBleedVideo stream={localStreamRef.current} isLocal />
+                </div>
+              ) : (
+                <div className="absolute inset-0 bg-black" />
+              )}
+              {/* Dark veil for readability */}
+              <div className="absolute inset-0 bg-black/70" />
+            </div>
 
-              <div className="grid grid-cols-1 gap-2">
-                <button
-                  className="rounded-xl border border-neutral-700 bg-emerald-600 px-3 py-3 text-sm text-white"
-                  onClick={() => setJoinCamOn(true)}
-                >
-                  Join with Camera ON
-                </button>
+            <div className="relative h-full w-full flex items-center justify-center p-4">
+              <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-black/35 backdrop-blur-xl shadow-2xl overflow-hidden">
+                <div className="p-5">
+                  <div className="text-xl font-semibold">Video room</div>
+                  <div className="mt-1 text-sm text-white/75">
+                    Join with camera on or off.
+                  </div>
 
-                <button
-                  className="rounded-xl border border-neutral-700 bg-neutral-900 px-3 py-3 text-sm"
-                  onClick={() => setJoinCamOn(false)}
-                >
-                  Join with Camera OFF
-                </button>
-              </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3">
+                    <button
+                      className="w-full rounded-full border border-white/10 bg-emerald-600/70 px-4 py-3 text-sm font-medium text-white shadow active:scale-[0.99] transition"
+                      onClick={() => setJoinCamOn(true)}
+                    >
+                      📷 Join with Camera ON
+                    </button>
 
-              <div className="mt-3 text-[11px] text-neutral-400">
-                Room type is set by the creator.
+                    <button
+                      className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white/90 shadow active:scale-[0.99] transition"
+                      onClick={() => setJoinCamOn(false)}
+                    >
+                      🚫 Join with Camera OFF
+                    </button>
+                  </div>
+
+                  <div className="mt-4 text-[11px] text-white/55">
+                    Room type is set by the creator.
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        )}
+        )})}
 
         {/* Top floating controls (no code, no audio/video) */}
         <header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
