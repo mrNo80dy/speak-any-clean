@@ -1030,76 +1030,76 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off.
             Audio rooms auto-join; joiners no longer choose audio/video. */}
         {roomType === "video" && joinCamOn === null && (
-          <div className="absolute inset-0 z-50">
-            {/* Background: subtle live preview if available, otherwise dark */}
-            <div className="absolute inset-0">
-              {localStreamRef.current ? (
-                <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal />
-                </div>
-              ) : (
-                <div className="absolute inset-0 bg-black" />
-              )}
-              {/* Dark veil for readability */}
-              <div className="absolute inset-0 bg-black/70" />
-            </div>
+  <div className="absolute inset-0 z-50">
+    {/* Background: subtle live preview if available, otherwise dark */}
+    <div className="absolute inset-0">
+      {localStreamRef.current ? (
+        <div className="absolute inset-0 opacity-60">
+          <FullBleedVideo stream={localStreamRef.current} isLocal />
+        </div>
+      ) : (
+        <div className="absolute inset-0 bg-black" />
+      )}
+      {/* Dark veil for readability */}
+      <div className="absolute inset-0 bg-black/70" />
+    </div>
 
-            <div
-  className="relative z-10 flex h-full w-full items-center justify-center"
-  onClick={() => setJoinCamOn(false)} // tap outside = camera OFF
->
-  <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
-    {/* Camera ON */}
-    <button
-      type="button"
-      onClick={() => setJoinCamOn(true)}
-      className="
-        w-[96px] h-[96px]
-        rounded-full
-        flex items-center justify-center
-        border border-white/10
-        bg-emerald-600/75
-        hover:bg-emerald-600
-        active:scale-[0.97]
-        shadow-2xl
-        backdrop-blur-md
-        text-white text-3xl
-        transition
-      "
-      title="Camera on"
-      aria-label="Camera on"
+    {/* Foreground: icon-only camera choice */}
+    <div
+      className="relative z-10 flex h-full w-full items-center justify-center"
+      onClick={() => setJoinCamOn(false)} // tap outside = camera OFF
     >
-      📷
-    </button>
+      <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
+        {/* Camera ON */}
+        <button
+          type="button"
+          onClick={() => setJoinCamOn(true)}
+          className="
+            w-[96px] h-[96px]
+            rounded-full
+            flex items-center justify-center
+            border border-white/10
+            bg-emerald-600/75
+            hover:bg-emerald-600
+            active:scale-[0.97]
+            shadow-2xl
+            backdrop-blur-md
+            text-white text-3xl
+            transition
+          "
+          title="Camera on"
+          aria-label="Camera on"
+        >
+          📷
+        </button>
 
-    {/* Camera OFF */}
-    <button
-      type="button"
-      onClick={() => setJoinCamOn(false)}
-      className="
-        w-[96px] h-[96px]
-        rounded-full
-        flex items-center justify-center
-        border border-white/10
-        bg-white/10
-        hover:bg-white/15
-        active:scale-[0.97]
-        shadow-2xl
-        backdrop-blur-md
-        text-white text-3xl
-        transition
-      "
-      title="Camera off"
-      aria-label="Camera off"
-    >
-      📷✕
-    </button>
+        {/* Camera OFF */}
+        <button
+          type="button"
+          onClick={() => setJoinCamOn(false)}
+          className="
+            w-[96px] h-[96px]
+            rounded-full
+            flex items-center justify-center
+            border border-white/10
+            bg-white/10
+            hover:bg-white/15
+            active:scale-[0.97]
+            shadow-2xl
+            backdrop-blur-md
+            text-white text-3xl
+            transition
+          "
+          title="Camera off"
+          aria-label="Camera off"
+        >
+          📷✕
+        </button>
+      </div>
+    </div>
   </div>
-</div>
+)}
 
-              </div>
-                      </div>
-        )}
         
 
         {/* Top floating controls (no code, no audio/video) */}
@@ -1761,6 +1761,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
