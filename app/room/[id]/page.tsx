@@ -13,6 +13,7 @@ import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
 import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
+import FullBleedVideo from "@/components/FullBleedVideo";
 
 // Types
 type WebRTCPayload = {
@@ -101,117 +102,6 @@ async function translateText(
  *   - landscape stream -> contain (reduces “zoomed in / chopped head” when PC->phone)
  * - Mobile landscape: behave like desktop (contain).
  */
-function FullBleedVideo({
-  stream,
-  isLocal = false,
-}: {
-  stream: MediaStream | null;
-  isLocal?: boolean;
-}) {
-  const bgRef = useRef<HTMLVideoElement | null>(null);
-  const fgRef = useRef<HTMLVideoElement | null>(null);
-  const cloneRef = useRef<MediaStream | null>(null);
-
-  const [fit, setFit] = useState<"cover" | "contain">("contain");
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof navigator === "undefined") return;
-
-    const isMobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-    const computeFit = (videoW?: number, videoH?: number) => {
-      // Desktop: contain only
-      if (!isMobileUa) return "contain" as const;
-
-      const portrait = window.matchMedia?.("(orientation: portrait)")?.matches ?? true;
-      if (!portrait) return "contain" as const;
-
-      // Mobile portrait + unknown stream size: play it safe (contain)
-      if (!videoW || !videoH) return "contain" as const;
-
-      const streamPortrait = videoH >= videoW;
-      return streamPortrait ? ("cover" as const) : ("contain" as const);
-    };
-
-    const update = () => {
-      const v = fgRef.current;
-      const vw = v?.videoWidth;
-      const vh = v?.videoHeight;
-      setFit(computeFit(vw, vh));
-    };
-
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-
-    const v = fgRef.current;
-    const onMeta = () => update();
-    if (v) v.addEventListener("loadedmetadata", onMeta);
-
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-      if (v) v.removeEventListener("loadedmetadata", onMeta);
-    };
-  }, [stream]);
-
-  useEffect(() => {
-    const s = stream || null;
-
-    const fg = fgRef.current;
-    const bg = bgRef.current;
-
-    if (!s) {
-      if (fg) fg.srcObject = null;
-      if (bg) bg.srcObject = null;
-      return;
-    }
-
-    // Clone for blurred background layer
-    const tracks = s.getTracks();
-    if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
-      cloneRef.current = new MediaStream(tracks);
-    }
-
-    if (bg && bg.srcObject !== cloneRef.current) {
-      bg.srcObject = cloneRef.current;
-      bg.playsInline = true as any;
-      bg.muted = true;
-      bg.play().catch(() => {});
-    }
-
-    if (fg && fg.srcObject !== s) {
-      fg.srcObject = s;
-      fg.playsInline = true as any;
-      fg.muted = true;
-      fg.play().catch(() => {});
-    }
-  }, [stream]);
-
-  return (
-    <div className="absolute inset-0 bg-black overflow-hidden">
-      {/* Blurred fill background */}
-      <video
-        ref={bgRef}
-        autoPlay
-        playsInline
-        muted
-        className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
-      />
-
-      {/* Foreground */}
-      <video
-        ref={fgRef}
-        autoPlay
-        playsInline
-        muted
-        data-local={isLocal ? "1" : undefined}
-        className={`absolute inset-0 h-full w-full ${fit === "cover" ? "object-cover" : "object-contain"}`}
-      />
-    </div>
-  );
-}
-
 export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -327,6 +217,74 @@ export default function RoomPage() {
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipVisible, setPipVisible] = useState(true);
 
+  const [pipAspect, setPipAspect] = useState<number>(16 / 9);
+  const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  // Track viewport (for PiP sizing/positioning)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const update = () => setVp({ w: window.innerWidth || 0, h: window.innerHeight || 0 });
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
+  // Track local camera aspect ratio (so PiP can match what the device is actually sending)
+  useEffect(() => {
+    const s = localStreamRef.current;
+    const vt = s?.getVideoTracks?.()?.[0];
+    if (!vt) return;
+
+    const apply = () => {
+      try {
+        const st: any = vt.getSettings ? vt.getSettings() : {};
+        const w = Number(st.width || 0);
+        const h = Number(st.height || 0);
+        if (w > 0 && h > 0) {
+          setPipAspect(w / h);
+        }
+      } catch {}
+    };
+
+    apply();
+    // Some browsers update settings after a short delay.
+    const t = window.setTimeout(apply, 350);
+    return () => window.clearTimeout(t);
+  }, [camOn, joinCamOn]);
+
+  const pipDims = useMemo(() => {
+    const w = vp.w || (typeof window !== "undefined" ? window.innerWidth || 360 : 360);
+    const h = vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640);
+    const ar = pipAspect && pipAspect > 0 ? pipAspect : 16 / 9; // width / height
+
+    // Size caps
+    const maxW = isMobile ? Math.min(w * 0.42, 200) : 220;
+    const maxH = isMobile ? Math.min(h * 0.28, 220) : 140;
+    const minW = isMobile ? 110 : 160;
+
+    let outW = maxW;
+    let outH = outW / ar;
+
+    if (outH > maxH) {
+      outH = maxH;
+      outW = outH * ar;
+    }
+    if (outW < minW) {
+      outW = minW;
+      outH = outW / ar;
+      if (outH > maxH) {
+        outH = maxH;
+        outW = outH * ar;
+      }
+    }
+
+    return { w: Math.round(outW), h: Math.round(outH) };
+  }, [vp.w, vp.h, pipAspect, isMobile]);
+
   const clearPipTimer = () => {
     if (pipHideTimerRef.current) {
       window.clearTimeout(pipHideTimerRef.current);
@@ -341,29 +299,38 @@ export default function RoomPage() {
     }, 2500);
   };
 
-  // Set an initial position (bottom-right-ish) once we know the PiP size.
+    // Set an initial position once we have a peer (1:1 view).
+  // Mobile: start top-left (selfie-like preview area).
+  // Desktop: start bottom-right, above the bottom dock.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (pipPos) return;
+    // Only relevant in 1:1 view (remote full + local PiP)
     if (peerIds.length !== 1) return;
 
-    const el = pipRef.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    const w = rect.width || 160;
-    const h = rect.height || 96;
-
-    const pad = 16;
+    const pad = 12;
     const dock = 120;
-    const x = Math.max(pad, window.innerWidth - w - pad);
-    const y = Math.max(pad, window.innerHeight - h - dock);
 
-    setPipPos({ x, y });
+    const w = window.innerWidth || 360;
+    const h = window.innerHeight || 640;
+
+    if (isMobile) {
+      // Clear the top controls/safe area.
+      const topPad = 76;
+      const x = pad;
+      const y = Math.max(pad, topPad);
+      setPipPos({ x, y });
+    } else {
+      const x = Math.max(pad, w - pipDims.w - pad);
+      const y = Math.max(pad, h - pipDims.h - dock);
+      setPipPos({ x, y });
+    }
+
     setPipVisible(true);
     schedulePipHide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peerIds.length]);
+  }, [peerIds.length, isMobile, pipDims.w, pipDims.h]);
+
 
   // Keep PiP inside viewport on resize.
   useEffect(() => {
@@ -446,21 +413,8 @@ export default function RoomPage() {
     schedulePipHide();
   };
 
-  // Default PiP position: bottom-right, above the dock
-  useEffect(() => {
-    if (pipPos) return;
-    if (typeof window === "undefined") return;
-    const el = pipRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const margin = 16;
-    const dockPad = 120;
-    const x = Math.max(margin, window.innerWidth - rect.width - margin);
-    const y = Math.max(margin, window.innerHeight - rect.height - dockPad);
-    setPipPos({ x, y });
-    schedulePipHide();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pipRef.current]);
+  // (PiP initial position handled above)
+
 
   useEffect(() => {
     return () => clearPipTimer();
@@ -997,7 +951,7 @@ export default function RoomPage() {
             <div className="absolute inset-0">
               {localStreamRef.current ? (
                 <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-black" />
@@ -1230,14 +1184,14 @@ export default function RoomPage() {
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal />
+                <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
               </div>
             )}
 
             {/* 1 peer: remote full + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} />
+                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
                 <audio
                   data-remote
                   autoPlay
@@ -1274,7 +1228,7 @@ export default function RoomPage() {
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1290,7 +1244,7 @@ export default function RoomPage() {
               <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
                 {/* local tile */}
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     <span>You</span>
                   </div>
@@ -1324,10 +1278,10 @@ export default function RoomPage() {
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal />
+                    <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
                       <audio
                         data-remote
                         autoPlay
