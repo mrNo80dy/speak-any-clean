@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { LANGUAGES } from "@/lib/languages";
 import { useCallMode } from "@/hooks/useCallMode";
@@ -11,12 +10,10 @@ import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useAnySpeakRoomMedia } from "@/hooks/useAnySpeakRoomMedia";
 import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
-import { useAnySpeakMessages, type AnySpeakChatMessage } from "@/hooks/useAnySpeakMessages";
+import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 
 // Types
-type RealtimeSubscribeStatus = "SUBSCRIBED" | "CLOSED" | "TIMED_OUT" | "CHANNEL_ERROR";
-
 type WebRTCPayload = {
   type: "offer" | "answer" | "ice";
   from: string;
@@ -33,9 +30,7 @@ type TranscriptPayload = {
 };
 
 type Peer = AnySpeakPeer;
-
 type PeerStreams = Record<string, MediaStream>;
-
 type RoomType = "audio" | "video";
 
 type RoomInfo = {
@@ -45,7 +40,6 @@ type RoomInfo = {
 
 type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
-// Pick a safe default that actually exists in LANGUAGES
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
   const pref = (preferred || "").trim();
@@ -95,27 +89,49 @@ async function translateText(
   }
 }
 
+/**
+ * Video framing logic
+ * - Always show a blurred background fill (cover)
+ * - Foreground switches between cover/contain depending on aspect mismatch
+ *   so PC->Phone doesn't look "zoomed in" and Phone->PC doesn't look weird.
+ */
 function FullBleedVideo({
   stream,
   isLocal = false,
+  preferContain = false,
+  containerAspectOverride,
 }: {
   stream: MediaStream | null;
   isLocal?: boolean;
+  preferContain?: boolean;
+  containerAspectOverride?: number; // optional (PiP uses its own aspect)
 }) {
   const bgRef = useRef<HTMLVideoElement | null>(null);
   const fgRef = useRef<HTMLVideoElement | null>(null);
   const cloneRef = useRef<MediaStream | null>(null);
 
-  // ✅ Stream aspect ratio (w/h) so we can adapt crop for PC↔Mobile cases
-  const [streamAspect, setStreamAspect] = useState<number | null>(null);
+  const [videoAspect, setVideoAspect] = useState<number>(16 / 9);
+  const [screenAspect, setScreenAspect] = useState<number>(() => {
+    if (typeof window === "undefined") return 16 / 9;
+    return (window.innerWidth || 1) / (window.innerHeight || 1);
+  });
 
-  // ✅ Final decision: foreground uses cover or contain
-  const [fit, setFit] = useState<"cover" | "contain">("contain");
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => {
+      setScreenAspect((window.innerWidth || 1) / (window.innerHeight || 1));
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, []);
 
-  // Attach streams
   useEffect(() => {
     const s = stream || null;
-
     const fg = fgRef.current;
     const bg = bgRef.current;
 
@@ -142,65 +158,36 @@ function FullBleedVideo({
       fg.srcObject = s;
       fg.playsInline = true as any;
       fg.muted = true;
+      fg.onloadedmetadata = () => {
+        const w = fg.videoWidth || 0;
+        const h = fg.videoHeight || 0;
+        if (w > 0 && h > 0) setVideoAspect(w / h);
+      };
       fg.play().catch(() => {});
+    }
+
+    // Fallback: try track settings (helps before metadata)
+    const vTrack = s.getVideoTracks?.()[0];
+    const ar = (vTrack?.getSettings?.() as any)?.aspectRatio;
+    if (typeof ar === "number" && ar > 0.1 && ar < 10) {
+      setVideoAspect(ar);
     }
   }, [stream]);
 
-  // Measure actual video dimensions once metadata arrives
-  useEffect(() => {
-    const fg = fgRef.current;
-    if (!fg) return;
+  const containerAspect = containerAspectOverride ?? screenAspect;
 
-    const onMeta = () => {
-      const w = fg.videoWidth || 0;
-      const h = fg.videoHeight || 0;
-      if (w > 0 && h > 0) setStreamAspect(w / h);
-    };
+  // mismatch ratio: how different the shapes are
+  const mismatch =
+    containerAspect > 0 && videoAspect > 0
+      ? Math.max(containerAspect, videoAspect) / Math.min(containerAspect, videoAspect)
+      : 1;
 
-    fg.addEventListener("loadedmetadata", onMeta);
-    // Some browsers fire resize when dimensions settle
-    fg.addEventListener("resize", onMeta as any);
-
-    return () => {
-      fg.removeEventListener("loadedmetadata", onMeta);
-      fg.removeEventListener("resize", onMeta as any);
-    };
-  }, []);
-
-  // ✅ Fit policy:
-  // - Mobile portrait viewer + landscape stream (PC camera) => CONTAIN (less crop)
-  // - Mobile portrait viewer + portrait stream (mobile camera) => COVER (fills nicely)
-  // - Everything else => CONTAIN (clean framing)
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof navigator === "undefined") return;
-
-    const isMobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-    const update = () => {
-      const vw = window.innerWidth || 360;
-      const vh = window.innerHeight || 640;
-      const viewerAspect = vw / vh;
-      const portraitViewer = viewerAspect < 1;
-
-      const sA = streamAspect ?? 1;
-      const landscapeStream = sA > 1.1;
-
-      if (isMobileUa && portraitViewer) {
-        setFit(landscapeStream ? "contain" : "cover");
-        return;
-      }
-
-      setFit("contain");
-    };
-
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
-  }, [streamAspect]);
+  // Rule:
+  // - If mismatch is big, use contain (prevents zoom-crop)
+  // - If mismatch is small, use cover (nice fill)
+  // - preferContain forces contain (useful for PiP)
+  const foregroundFit =
+    preferContain || mismatch >= 1.25 ? "object-contain" : "object-cover";
 
   return (
     <div className="absolute inset-0 bg-black overflow-hidden">
@@ -213,16 +200,14 @@ function FullBleedVideo({
         className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
       />
 
-      {/* Foreground: adaptive fit */}
+      {/* Foreground: dynamically cover/contain */}
       <video
         ref={fgRef}
         autoPlay
         playsInline
         muted
         data-local={isLocal ? "1" : undefined}
-        className={`absolute inset-0 h-full w-full ${
-          fit === "cover" ? "object-cover" : "object-contain"
-        }`}
+        className={`absolute inset-0 h-full w-full ${foregroundFit}`}
       />
     </div>
   );
@@ -233,7 +218,6 @@ export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
-  // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
   const debugKey = debugEnabled ? "debug" : "normal";
@@ -243,7 +227,6 @@ export default function RoomPage() {
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }, []);
 
-  // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const existing = sessionStorage.getItem("clientId");
@@ -253,7 +236,6 @@ export default function RoomPage() {
     return id;
   }, []);
 
-  // ---- Refs / state -----------------------------------------
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const recognitionRef = useRef<any>(null);
@@ -261,17 +243,16 @@ export default function RoomPage() {
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
-  // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
 
   const micOnRef = useRef(false);
-  const micArmedRef = useRef(false); // user intent (armed)
+  const micArmedRef = useRef(false);
   const pttHeldRef = useRef(false);
 
   // ---- Mobile PTT positioning (dockable) ----
   type PttDock = "bottom" | "left" | "right";
   const [pttDock, setPttDock] = useState<PttDock>("bottom");
-  const [pttT, setPttT] = useState<number>(0); // 0..1
+  const [pttT, setPttT] = useState<number>(0);
 
   const pttDockRef = useRef<PttDock>("bottom");
   const pttTRef = useRef<number>(0);
@@ -317,14 +298,11 @@ export default function RoomPage() {
         }
       }
     } catch {}
-
-    // Default: bottom-left-ish
     setPttDock("bottom");
     setPttT(0);
   }, [isMobile]);
 
   const displayNameRef = useRef<string>("You");
-
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
@@ -344,6 +322,11 @@ export default function RoomPage() {
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipVisible, setPipVisible] = useState(true);
 
+  // PiP size matches camera orientation on mobile
+  const [pipSize, setPipSize] = useState<{ w: number; h: number }>(() =>
+    isMobile ? { w: 120, h: 160 } : { w: 160, h: 96 }
+  );
+
   const clearPipTimer = () => {
     if (pipHideTimerRef.current) {
       window.clearTimeout(pipHideTimerRef.current);
@@ -358,53 +341,69 @@ export default function RoomPage() {
     }, 2500);
   };
 
-  // Set an initial position once we know the PiP size.
-  // ✅ Mobile: start top-left (below the top pills).
-  // ✅ Desktop: bottom-right-ish.
+  const pipShowNow = () => {
+    setPipVisible(true);
+    schedulePipHide();
+  };
+
+  // Update PiP size based on local video aspect (mobile only)
+  useEffect(() => {
+    if (!isMobile) {
+      setPipSize({ w: 160, h: 96 });
+      return;
+    }
+
+    const s = localStreamRef.current;
+    const vTrack = s?.getVideoTracks?.()?.[0];
+    const ar = (vTrack?.getSettings?.() as any)?.aspectRatio as number | undefined;
+
+    if (typeof ar === "number" && ar > 0.1 && ar < 10) {
+      if (ar < 1) setPipSize({ w: 120, h: 160 }); // portrait
+      else setPipSize({ w: 160, h: 96 }); // landscape
+    } else {
+      // Safe default: portrait-ish on mobile
+      setPipSize({ w: 120, h: 160 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, roomInfo?.room_type]);
+
+  // Set initial PiP position
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (pipPos) return;
     if (peerIds.length !== 1) return;
 
-    const el = pipRef.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    const w = rect.width || 160;
-    const h = rect.height || 96;
-
     const pad = 16;
 
+    // On mobile: start top-left (below the top pills)
     if (isMobile) {
-      const topPad = 70; // clears top pills + safe area-ish
-      const x = pad;
-      const y = Math.max(pad, topPad);
-      setPipPos({ x, y });
-    } else {
-      const dock = 120;
-      const x = Math.max(pad, window.innerWidth - w - pad);
-      const y = Math.max(pad, window.innerHeight - h - dock);
-      setPipPos({ x, y });
+      const y = 92; // clears top pills area + safe-ish
+      setPipPos({ x: pad, y });
+      setPipVisible(true);
+      schedulePipHide();
+      return;
     }
 
+    // Desktop: bottom-right above dock
+    const dock = 120;
+    const x = Math.max(pad, window.innerWidth - pipSize.w - pad);
+    const y = Math.max(pad, window.innerHeight - pipSize.h - dock);
+    setPipPos({ x, y });
     setPipVisible(true);
     schedulePipHide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peerIds.length, isMobile]);
+  }, [peerIds.length, isMobile, pipSize.w, pipSize.h]);
 
-  // Keep PiP inside viewport on resize.
+  // Keep PiP inside viewport on resize
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!pipPos) return;
 
     const onResize = () => {
-      const el = pipRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
       const pad = 8;
       const dock = 120;
-      const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
-      const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
+      const maxX = Math.max(pad, window.innerWidth - pipSize.w - pad);
+      const maxY = Math.max(pad, window.innerHeight - pipSize.h - dock);
       setPipPos((p) =>
         p
           ? {
@@ -416,13 +415,12 @@ export default function RoomPage() {
     };
 
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [pipPos]);
-
-  const pipShowNow = () => {
-    setPipVisible(true);
-    schedulePipHide();
-  };
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [pipPos, pipSize.w, pipSize.h]);
 
   const pipOnPointerDown = (e: React.PointerEvent) => {
     pipShowNow();
@@ -434,23 +432,16 @@ export default function RoomPage() {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {}
 
-    pipDragOffsetRef.current = {
-      dx: e.clientX - pipPos.x,
-      dy: e.clientY - pipPos.y,
-    };
+    pipDragOffsetRef.current = { dx: e.clientX - pipPos.x, dy: e.clientY - pipPos.y };
   };
 
   const pipOnPointerMove = (e: React.PointerEvent) => {
     if (!pipDraggingRef.current) return;
-    const el = pipRef.current;
-    if (!el) return;
 
-    const rect = el.getBoundingClientRect();
     const pad = 8;
     const dock = 120;
-
-    const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
-    const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
+    const maxX = Math.max(pad, window.innerWidth - pipSize.w - pad);
+    const maxY = Math.max(pad, window.innerHeight - pipSize.h - dock);
 
     const x = e.clientX - pipDragOffsetRef.current.dx;
     const y = e.clientY - pipDragOffsetRef.current.dy;
@@ -473,7 +464,6 @@ export default function RoomPage() {
     schedulePipHide();
   };
 
-  // Clean up timer
   useEffect(() => {
     return () => clearPipTimer();
   }, []);
@@ -493,7 +483,8 @@ export default function RoomPage() {
   // ✅ Joiner camera choice for VIDEO rooms
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
 
-  const prejoinDone = roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
+  const prejoinDone =
+    roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
 
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
@@ -502,7 +493,6 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 250));
   };
 
-  // ---------- FINAL vs DEBUG behavior ----------
   const FINAL_MUTE_RAW_AUDIO = true;
   const FINAL_AUTOSPEAK_TRANSLATED = true;
 
@@ -529,7 +519,8 @@ export default function RoomPage() {
   });
 
   const shouldMuteRawAudio = FINAL_MUTE_RAW_AUDIO && !debugHearRawAudio;
-  const shouldSpeakTranslated = FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
+  const shouldSpeakTranslated =
+    FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
 
   useEffect(() => {
     shouldMuteRawAudioRef.current = shouldMuteRawAudio;
@@ -544,14 +535,14 @@ export default function RoomPage() {
   }, [speakLang]);
 
   useEffect(() => {
-    shouldSpeakTranslatedRef.current = FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
+    shouldSpeakTranslatedRef.current =
+      FINAL_AUTOSPEAK_TRANSLATED || (debugEnabled && debugSpeakTranslated);
   }, [debugEnabled, debugSpeakTranslated]);
 
   useEffect(() => {
     displayNameRef.current = displayName || "You";
   }, [displayName]);
 
-  // Keep remote audio tracks in sync with the mute policy
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudioRef.current;
     Object.values(peerStreams).forEach((stream) => {
@@ -561,20 +552,22 @@ export default function RoomPage() {
     });
   }, [peerStreams, shouldMuteRawAudio]);
 
-  // ---- Load display name from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem("displayName");
     if (saved) setDisplayName(saved);
   }, []);
 
-  // ---- Load room info (code + room_type) from Supabase -------
   useEffect(() => {
     if (!roomId) return;
 
     (async () => {
       try {
-        const { data, error } = await supabase.from("rooms").select("code, room_type").eq("id", roomId).maybeSingle();
+        const { data, error } = await supabase
+          .from("rooms")
+          .select("code, room_type")
+          .eq("id", roomId)
+          .maybeSingle();
 
         if (error) {
           log("room load error", { message: error.message });
@@ -597,7 +590,6 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ✅ STT send helper
   const sendFinalTranscript = async (finalText: string, recLang: string) => {
     const text = (finalText || "").trim();
     if (!text) return;
@@ -633,8 +625,8 @@ export default function RoomPage() {
 
   // ---- Hooks you built ---------------------------------------
   const enforcedModeParam: "audio" | "video" = roomType === "video" ? "video" : "audio";
-
   const participantCount = peerIds.length + 1;
+
   const { mode } = useCallMode({
     modeParam: enforcedModeParam,
     participantCount,
@@ -642,10 +634,19 @@ export default function RoomPage() {
 
   const localMedia = useLocalMedia({
     wantVideo: mode === "video",
-    wantAudio: !isMobile, // mobile: DO NOT grab mic via getUserMedia (STT uses mic)
+    wantAudio: !isMobile,
   });
 
-  const { localStreamRef, micOn, camOn, acquire, attachLocalVideo, setMicEnabled, setCamEnabled, stop } = localMedia;
+  const {
+    localStreamRef,
+    micOn,
+    camOn,
+    acquire,
+    attachLocalVideo,
+    setMicEnabled,
+    setCamEnabled,
+    stop,
+  } = localMedia;
 
   const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     isMobile,
@@ -690,7 +691,6 @@ export default function RoomPage() {
 
   const micUiOn = isMobile ? sttListening : micOn;
 
-  // ---- Helpers ----------------------------------------------
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
   }
@@ -718,7 +718,6 @@ export default function RoomPage() {
     setConnected(false);
   }
 
-  // ---- ICE servers (STUN + optional TURN) -------------------
   const { iceServers, turnEnabled, turnUrlsCount, turnMissing } = useMemo(() => {
     const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
       .split(",")
@@ -761,19 +760,19 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { makeOffer, handleOffer, handleAnswer, handleIce, clearPendingIce } = useAnySpeakWebRtc({
-    clientId,
-    isMobile,
-    iceServers,
-    localStreamRef,
-    peersRef,
-    shouldMuteRawAudioRef,
-    setConnected,
-    log,
-    upsertPeerStream,
-  });
+  const { makeOffer, handleOffer, handleAnswer, handleIce, clearPendingIce } =
+    useAnySpeakWebRtc({
+      clientId,
+      isMobile,
+      iceServers,
+      localStreamRef,
+      peersRef,
+      shouldMuteRawAudioRef,
+      setConnected,
+      log,
+      upsertPeerStream,
+    });
 
-  // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudio;
 
@@ -827,7 +826,8 @@ export default function RoomPage() {
 
       if (!text || !from || from === clientId) return;
 
-      const fromName = name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
+      const fromName =
+        name ?? peerLabelsRef.current[from] ?? from.slice(0, 8) ?? "Guest";
 
       const target = targetLangRef.current || "en-US";
       const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
@@ -870,14 +870,8 @@ export default function RoomPage() {
         if (!isMobile) {
           setMicEnabled(false);
         }
-
         micOnRef.current = false;
-        if (isMobile) {
-          stopAllStt("auto-muted-3plus");
-        } else {
-          stopAllStt("auto-muted");
-        }
-
+        stopAllStt(isMobile ? "auto-muted-3plus" : "auto-muted");
         log("auto-muted for 3+ participants", { total });
       }
 
@@ -889,13 +883,13 @@ export default function RoomPage() {
     },
   });
 
-  // ---- UI controls ------------------------------------------
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
     if (!text) return;
 
-    const lang = (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
+    const lang =
+      (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
 
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
@@ -949,7 +943,11 @@ export default function RoomPage() {
     } catch {}
     try {
       router.push("/");
-    } catch {}
+    } catch {
+      try {
+        window.location.href = "/";
+      } catch {}
+    }
   };
 
   // ---- PTT dock layout helpers (mobile) ----------------------
@@ -991,7 +989,7 @@ export default function RoomPage() {
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
-        {/* ✅ Joiner overlay */}
+        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
             <div className="absolute inset-0">
@@ -1013,19 +1011,7 @@ export default function RoomPage() {
                 <button
                   type="button"
                   onClick={() => setJoinCamOn(true)}
-                  className="
-                    w-[96px] h-[96px]
-                    rounded-full
-                    flex items-center justify-center
-                    border border-white/10
-                    bg-emerald-600/75
-                    hover:bg-emerald-600
-                    active:scale-[0.97]
-                    shadow-2xl
-                    backdrop-blur-md
-                    text-white text-3xl
-                    transition
-                  "
+                  className="w-[96px] h-[96px] rounded-full flex items-center justify-center border border-white/10 bg-emerald-600/75 hover:bg-emerald-600 active:scale-[0.97] shadow-2xl backdrop-blur-md text-white text-3xl transition"
                   title="Camera on"
                   aria-label="Camera on"
                 >
@@ -1035,19 +1021,7 @@ export default function RoomPage() {
                 <button
                   type="button"
                   onClick={() => setJoinCamOn(false)}
-                  className="
-                    w-[96px] h-[96px]
-                    rounded-full
-                    flex items-center justify-center
-                    border border-white/10
-                    bg-white/10
-                    hover:bg-white/15
-                    active:scale-[0.97]
-                    shadow-2xl
-                    backdrop-blur-md
-                    text-white text-3xl
-                    transition
-                  "
+                  className="w-[96px] h-[96px] rounded-full flex items-center justify-center border border-white/10 bg-white/10 hover:bg-white/15 active:scale-[0.97] shadow-2xl backdrop-blur-md text-white text-3xl transition"
                   title="Camera off"
                   aria-label="Camera off"
                 >
@@ -1136,15 +1110,18 @@ export default function RoomPage() {
           )}
 
           <div className="h-full w-full">
+            {/* 0 peers: show local full screen */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
                 <FullBleedVideo stream={localStreamRef.current} isLocal />
               </div>
             )}
 
+            {/* 1 peer: remote full screen + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
                 <FullBleedVideo stream={firstRemoteStream} />
+
                 <audio
                   data-remote
                   autoPlay
@@ -1156,16 +1133,15 @@ export default function RoomPage() {
                   }}
                 />
 
-                {/* Local self-view (PiP): movable + auto-fade */}
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
                     className="pointer-events-auto absolute z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
                     style={{
                       left: pipPos?.x ?? 16,
-                      top: pipPos?.y ?? 70,
-                      width: 160,
-                      height: 96,
+                      top: pipPos?.y ?? 92,
+                      width: pipSize.w,
+                      height: pipSize.h,
                       opacity: pipVisible ? 1 : 0.25,
                       transition: "opacity 250ms ease",
                       touchAction: "none",
@@ -1181,7 +1157,12 @@ export default function RoomPage() {
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal />
+                      <FullBleedVideo
+                        stream={localStreamRef.current}
+                        isLocal
+                        preferContain
+                        containerAspectOverride={pipSize.w / pipSize.h}
+                      />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1192,9 +1173,42 @@ export default function RoomPage() {
               </div>
             )}
 
-            {/* NOTE: your 2–4 participant layout was not included in what you pasted,
-                so I did NOT invent a new grid here. Keeping exactly what you gave. */}
+            {/* 2–4 participants: grid (use FullBleedVideo for better framing) */}
+            {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length > 0 && (
+              <div className="h-full w-full grid grid-cols-1 md:grid-cols-2 gap-2 p-2">
+                {/* Local tile */}
+                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-0">
+                  <FullBleedVideo stream={localStreamRef.current} isLocal />
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                    You
+                  </div>
+                </div>
 
+                {/* Remote tiles */}
+                {peerIds.map((pid) => (
+                  <div
+                    key={pid}
+                    className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-0"
+                  >
+                    <FullBleedVideo stream={peerStreams[pid] ?? null} />
+                    <audio
+                      data-remote
+                      autoPlay
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (!el || !stream) return;
+                        if (el.srcObject !== stream) el.srcObject = stream;
+                      }}
+                    />
+                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                      {peerLabels[pid] ?? pid.slice(0, 8)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 5+ participants: spotlight mode */}
             {totalParticipants >= 5 && (
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
@@ -1212,8 +1226,8 @@ export default function RoomPage() {
                           if (el.srcObject !== stream) el.srcObject = stream;
                         }}
                       />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
+                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                        {peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}
                       </div>
                     </>
                   )}
@@ -1268,8 +1282,8 @@ export default function RoomPage() {
                             if (el.srcObject !== stream) el.srcObject = stream;
                           }}
                         />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                          <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
+                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded">
+                          {peerLabels[pid] ?? pid.slice(0, 8)}
                         </div>
                       </button>
                     );
@@ -1283,9 +1297,8 @@ export default function RoomPage() {
           {ccOn && messages.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
-
               <div
-                className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
+                className="relative flex flex-col gap-1.5 px-3"
                 style={{
                   paddingBottom: showTextInput
                     ? "calc(env(safe-area-inset-bottom) + 148px)"
@@ -1294,19 +1307,15 @@ export default function RoomPage() {
               >
                 {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
                   const isNewest = idx === arr.length - 1;
-
                   return (
-                    <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
+                    <div
+                      key={m.id}
+                      className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}
+                    >
                       <div
-                        className={`
-                          max-w-[74%]
-                          rounded-2xl
-                          border border-white/10
-                          bg-black/30
-                          backdrop-blur-md
-                          shadow
-                          ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
-                        `}
+                        className={`max-w-[74%] rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md shadow ${
+                          isNewest ? "px-3 py-2.5" : "px-2.5 py-2"
+                        }`}
                         style={{
                           opacity: isNewest ? 1 : 0.65,
                           transform: isNewest ? "scale(1)" : "scale(0.98)",
@@ -1317,7 +1326,9 @@ export default function RoomPage() {
                           className="flex items-center justify-between gap-2 mb-0.5"
                           style={{ opacity: isNewest ? 0.7 : 0.35 }}
                         >
-                          <span className="truncate text-[9px] text-white/70">{m.isLocal ? "You" : m.fromName}</span>
+                          <span className="truncate text-[9px] text-white/70">
+                            {m.isLocal ? "You" : m.fromName}
+                          </span>
                           <span className="shrink-0 text-[9px] text-white/60">
                             {m.originalLang}→{m.translatedLang}
                           </span>
@@ -1343,7 +1354,10 @@ export default function RoomPage() {
 
           {/* Manual text input */}
           {showTextInput && (
-            <form onSubmit={handleTextSubmit} className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center">
+            <form
+              onSubmit={handleTextSubmit}
+              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
+            >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
                   value={textInput}
@@ -1351,7 +1365,10 @@ export default function RoomPage() {
                   placeholder="Type a quick caption…"
                   className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
                 />
-                <button type="submit" className="px-3 py-2 rounded-full text-sm bg-emerald-600 hover:bg-emerald-500 text-white">
+                <button
+                  type="submit"
+                  className="px-3 py-2 rounded-full text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
                   Send
                 </button>
               </div>
@@ -1359,13 +1376,15 @@ export default function RoomPage() {
           )}
         </main>
 
-        {/* Controls overlay (camera + PTT) */}
+        {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Camera toggle (bottom right) */}
           <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
             <button
               onClick={toggleCamera}
-              className={`${pillBase} ${camClass} ${roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""} bg-black/25 backdrop-blur-md border-white/10`}
+              className={`${pillBase} ${camClass} ${
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+              } bg-black/25 backdrop-blur-md border-white/10`}
               disabled={roomType !== "video"}
               title="Camera"
             >
@@ -1398,7 +1417,6 @@ export default function RoomPage() {
                 `}
                 style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
                 onPointerDown={(e) => {
-                  if (!isMobile) return;
                   e.preventDefault();
                   try {
                     e.currentTarget.setPointerCapture(e.pointerId);
@@ -1424,7 +1442,6 @@ export default function RoomPage() {
                   }, 140);
                 }}
                 onPointerMove={(e) => {
-                  if (!isMobile) return;
                   const d = pttDragRef.current;
                   if (d.pointerId !== e.pointerId) return;
 
@@ -1450,7 +1467,11 @@ export default function RoomPage() {
                   const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
 
                   const nextDock =
-                    e.clientX <= edgeZone ? "left" : e.clientX >= w - size - edgeZone ? "right" : "bottom";
+                    e.clientX <= edgeZone
+                      ? "left"
+                      : e.clientX >= w - size - edgeZone
+                      ? "right"
+                      : "bottom";
 
                   if (nextDock !== pttDockRef.current) {
                     setPttDock(nextDock as any);
@@ -1468,7 +1489,6 @@ export default function RoomPage() {
                   }
                 }}
                 onPointerUp={(e) => {
-                  if (!isMobile) return;
                   e.preventDefault();
                   try {
                     e.currentTarget.releasePointerCapture(e.pointerId);
@@ -1505,7 +1525,10 @@ export default function RoomPage() {
 
                       setPttT(newT);
                       try {
-                        localStorage.setItem("anyspeak_ptt_dock_v1", JSON.stringify({ dock: "bottom", t: newT }));
+                        localStorage.setItem(
+                          "anyspeak_ptt_dock_v1",
+                          JSON.stringify({ dock: "bottom", t: newT })
+                        );
                       } catch {}
                     } else {
                       try {
@@ -1525,7 +1548,6 @@ export default function RoomPage() {
                   d.startedPtt = false;
                 }}
                 onPointerCancel={(e) => {
-                  if (!isMobile) return;
                   e.preventDefault();
                   const d = pttDragRef.current;
                   if (d.holdTimer) {
@@ -1541,6 +1563,7 @@ export default function RoomPage() {
                   d.startedPtt = false;
                 }}
                 onClick={() => {
+                  // desktop only
                   if (isMobile) return;
                   void toggleMic();
                 }}
