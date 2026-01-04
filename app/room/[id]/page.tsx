@@ -953,7 +953,7 @@ export default function RoomPage() {
             <div className="absolute inset-0">
               {localStreamRef.current ? (
                 <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-black" />
@@ -1186,7 +1186,7 @@ export default function RoomPage() {
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
+                <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
               </div>
             )}
 
@@ -1230,7 +1230,7 @@ export default function RoomPage() {
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1246,7 +1246,7 @@ export default function RoomPage() {
               <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
                 {/* local tile */}
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     <span>You</span>
                   </div>
@@ -1280,7 +1280,7 @@ export default function RoomPage() {
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal variant="pip" />
+                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   ) : (
                     <>
                       <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
