@@ -115,6 +115,29 @@ function FullBleedVideo({
   const fgRef = useRef<HTMLVideoElement | null>(null);
   const cloneRef = useRef<MediaStream | null>(null);
 
+  const [fgCover, setFgCover] = useState(false);
+
+  // Decide framing: on MOBILE + PORTRAIT -> foreground uses cover (fills screen).
+  // Otherwise -> contain (keeps nice framing on desktop/wide layouts).
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof navigator === "undefined") return;
+
+    const isMobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    const update = () => {
+      const portrait = window.matchMedia?.("(orientation: portrait)")?.matches ?? true;
+      setFgCover(isMobileUa && portrait);
+    };
+
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
   useEffect(() => {
     const s = stream || null;
 
@@ -127,8 +150,7 @@ function FullBleedVideo({
       return;
     }
 
-    // Create (or refresh) a lightweight clone for the blurred background layer.
-    // This prevents the “zoomed-in cover” feeling while still visually filling the screen.
+    // Clone for blurred background layer
     const tracks = s.getTracks();
     if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
       cloneRef.current = new MediaStream(tracks);
@@ -159,18 +181,20 @@ function FullBleedVideo({
         muted
         className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
       />
-      {/* True camera framing (no aggressive crop) */}
+
+      {/* Foreground: mobile portrait fills screen; desktop keeps framing */}
       <video
         ref={fgRef}
         autoPlay
         playsInline
         muted
         data-local={isLocal ? "1" : undefined}
-        className="absolute inset-0 h-full w-full object-contain"
+        className={`absolute inset-0 h-full w-full ${fgCover ? "object-cover" : "object-contain"}`}
       />
     </div>
   );
 }
+
 
 export default function RoomPage() {
   const router = useRouter();
@@ -1761,6 +1785,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
 
 
