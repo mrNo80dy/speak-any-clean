@@ -1044,34 +1044,59 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
               <div className="absolute inset-0 bg-black/70" />
             </div>
 
-            <div className="relative h-full w-full flex items-center justify-center p-4">
-              <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-black/35 backdrop-blur-xl shadow-2xl overflow-hidden">
-                <div className="p-5">
-                  <div className="text-xl font-semibold">Video room</div>
-                  <div className="mt-1 text-sm text-white/75">
-                    Join with camera on or off.
-                  </div>
+            <div
+  className="relative z-10 flex h-full w-full items-center justify-center"
+  onClick={() => setJoinCamOn(false)} // tap outside = camera OFF
+>
+  <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
+    {/* Camera ON */}
+    <button
+      type="button"
+      onClick={() => setJoinCamOn(true)}
+      className="
+        w-[96px] h-[96px]
+        rounded-full
+        flex items-center justify-center
+        border border-white/10
+        bg-emerald-600/75
+        hover:bg-emerald-600
+        active:scale-[0.97]
+        shadow-2xl
+        backdrop-blur-md
+        text-white text-3xl
+        transition
+      "
+      title="Camera on"
+      aria-label="Camera on"
+    >
+      📷
+    </button>
 
-                  <div className="mt-4 grid grid-cols-1 gap-3">
-                    <button
-                      className="w-full rounded-full border border-white/10 bg-emerald-600/70 px-4 py-3 text-sm font-medium text-white shadow active:scale-[0.99] transition"
-                      onClick={() => setJoinCamOn(true)}
-                    >
-                      📷 Join with Camera ON
-                    </button>
+    {/* Camera OFF */}
+    <button
+      type="button"
+      onClick={() => setJoinCamOn(false)}
+      className="
+        w-[96px] h-[96px]
+        rounded-full
+        flex items-center justify-center
+        border border-white/10
+        bg-white/10
+        hover:bg-white/15
+        active:scale-[0.97]
+        shadow-2xl
+        backdrop-blur-md
+        text-white text-3xl
+        transition
+      "
+      title="Camera off"
+      aria-label="Camera off"
+    >
+      📷✕
+    </button>
+  </div>
+</div>
 
-                    <button
-                      className="w-full rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white/90 shadow active:scale-[0.99] transition"
-                      onClick={() => setJoinCamOn(false)}
-                    >
-                      🚫 Join with Camera OFF
-                    </button>
-                  </div>
-
-                  <div className="mt-4 text-[11px] text-white/55">
-                    Room type is set by the creator.
-                  </div>
-                </div>
               </div>
             </div>
           </div>
@@ -1737,4 +1762,5 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
 
