@@ -273,6 +273,11 @@ export default function RoomPage() {
   const schedulePipHide = () => {
     clearPipTimer();
     pipHideTimerRef.current = window.setTimeout(() => {
+
+  // Fit rules: phones in portrait should fill the screen like a native selfie preview
+  const isPortraitScreen = (vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640)) > (vp.w || (typeof window !== "undefined" ? window.innerWidth || 360 : 360));
+  const mainFit = (isMobile && isPortraitScreen) ? "cover" : "contain";
+
       setPipVisible(false);
     }, 2500);
   };
@@ -1186,14 +1191,14 @@ export default function RoomPage() {
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
               </div>
             )}
 
             {/* 1 peer: remote full + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
+                <FullBleedVideo stream={firstRemoteStream} fit={mainFit} />
                 <audio
                   data-remote
                   autoPlay
@@ -1230,7 +1235,7 @@ export default function RoomPage() {
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1246,7 +1251,7 @@ export default function RoomPage() {
               <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
                 {/* local tile */}
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     <span>You</span>
                   </div>
@@ -1280,10 +1285,10 @@ export default function RoomPage() {
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                    <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit={mainFit} />
                       <audio
                         data-remote
                         autoPlay
