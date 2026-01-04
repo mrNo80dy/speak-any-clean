@@ -102,6 +102,76 @@ async function translateText(
   }
 }
 
+
+
+function FullBleedVideo({
+  stream,
+  isLocal = false,
+}: {
+  stream: MediaStream | null;
+  isLocal?: boolean;
+}) {
+  const bgRef = useRef<HTMLVideoElement | null>(null);
+  const fgRef = useRef<HTMLVideoElement | null>(null);
+  const cloneRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    const s = stream || null;
+
+    const fg = fgRef.current;
+    const bg = bgRef.current;
+
+    if (!s) {
+      if (fg) fg.srcObject = null;
+      if (bg) bg.srcObject = null;
+      return;
+    }
+
+    // Create (or refresh) a lightweight clone for the blurred background layer.
+    // This prevents the “zoomed-in cover” feeling while still visually filling the screen.
+    const tracks = s.getTracks();
+    if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
+      cloneRef.current = new MediaStream(tracks);
+    }
+
+    if (bg && bg.srcObject !== cloneRef.current) {
+      bg.srcObject = cloneRef.current;
+      bg.playsInline = true as any;
+      bg.muted = true;
+      bg.play().catch(() => {});
+    }
+
+    if (fg && fg.srcObject !== s) {
+      fg.srcObject = s;
+      fg.playsInline = true as any;
+      fg.muted = true;
+      fg.play().catch(() => {});
+    }
+  }, [stream]);
+
+  return (
+    <div className="absolute inset-0 bg-black overflow-hidden">
+      {/* Blurred fill background */}
+      <video
+        ref={bgRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
+      />
+      {/* True camera framing (no aggressive crop) */}
+      <video
+        ref={fgRef}
+        autoPlay
+        playsInline
+        muted
+        data-local={isLocal ? "1" : undefined}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+    </div>
+  );
+}
+
 export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -1649,71 +1719,3 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
   );
 }
 
-
-function FullBleedVideo({
-  stream,
-  isLocal = false,
-}: {
-  stream: MediaStream | null;
-  isLocal?: boolean;
-}) {
-  const bgRef = useRef<HTMLVideoElement | null>(null);
-  const fgRef = useRef<HTMLVideoElement | null>(null);
-  const cloneRef = useRef<MediaStream | null>(null);
-
-  useEffect(() => {
-    const s = stream || null;
-
-    const fg = fgRef.current;
-    const bg = bgRef.current;
-
-    if (!s) {
-      if (fg) fg.srcObject = null;
-      if (bg) bg.srcObject = null;
-      return;
-    }
-
-    // Create (or refresh) a lightweight clone for the blurred background layer.
-    // This prevents the “zoomed-in cover” feeling while still visually filling the screen.
-    const tracks = s.getTracks();
-    if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
-      cloneRef.current = new MediaStream(tracks);
-    }
-
-    if (bg && bg.srcObject !== cloneRef.current) {
-      bg.srcObject = cloneRef.current;
-      bg.playsInline = true as any;
-      bg.muted = true;
-      bg.play().catch(() => {});
-    }
-
-    if (fg && fg.srcObject !== s) {
-      fg.srcObject = s;
-      fg.playsInline = true as any;
-      fg.muted = true;
-      fg.play().catch(() => {});
-    }
-  }, [stream]);
-
-  return (
-    <div className="absolute inset-0 bg-black overflow-hidden">
-      {/* Blurred fill background */}
-      <video
-        ref={bgRef}
-        autoPlay
-        playsInline
-        muted
-        className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
-      />
-      {/* True camera framing (no aggressive crop) */}
-      <video
-        ref={fgRef}
-        autoPlay
-        playsInline
-        muted
-        data-local={isLocal ? "1" : undefined}
-        className="absolute inset-0 h-full w-full object-contain"
-      />
-    </div>
-  );
-}
