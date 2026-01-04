@@ -143,8 +143,9 @@ export default function RoomPage() {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
   
-  // ---- Mobile PTT positioning (draggable) ----
-  const [pttPos, setPttPos] = useState<{ x: number; y: number }>({ x: 12, y: 120 });
+  // ---- Mobile PTT positioning (side-to-side only) ----
+  // PTT lives on a bottom rail (Y is fixed). Users can slide it left/center/right.
+  const [pttPos, setPttPos] = useState<{ x: number }>({ x: 12 });
   const pttDragRef = useRef<{
     pointerId: number | null;
     startX: number;
@@ -170,21 +171,17 @@ export default function RoomPage() {
   useEffect(() => {
     if (!isMobile) return;
     try {
-      const saved = localStorage.getItem("anyspeak_ptt_pos_v1");
+      const saved = localStorage.getItem("anyspeak_ptt_pos_v2");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed?.x === "number" && typeof parsed?.y === "number") {
-          setPttPos({ x: parsed.x, y: parsed.y });
+        if (typeof parsed?.x === "number") {
+          setPttPos({ x: parsed.x });
           return;
         }
       }
     } catch {}
-    // Default: lower-right, above the bottom controls
-    try {
-      const w = window.innerWidth || 360;
-      const h = window.innerHeight || 640;
-      setPttPos({ x: Math.max(12, w - 92), y: Math.max(80, h - 240) });
-    } catch {}
+    // Default: bottom-left
+    setPttPos({ x: 12 });
   }, [isMobile]);
 const displayNameRef = useRef<string>("You");
 
@@ -370,7 +367,8 @@ const displayNameRef = useRef<string>("You");
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [ccOn, setCcOn] = useState(true);
+  // CC off by default (per UI preference)
+  const [ccOn, setCcOn] = useState(false);
 
   // STT status
 
@@ -944,6 +942,17 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
+              onClick={() => setCcOn((v) => !v)}
+              className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow ${
+                ccOn ? "ring-1 ring-white/20" : "opacity-80"
+              }`}
+              title="Closed Captions"
+            >
+              CC
+            </button>
+
+            <button
+              type="button"
               onClick={async () => {
                 try {
                   const url = window.location.href;
@@ -975,6 +984,15 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
             >
               {online ? "Online" : "Offline"}
             </span>
+
+            <button
+              type="button"
+              onClick={handleEndCall}
+              className="pointer-events-auto px-3 py-1.5 rounded-full bg-red-600/45 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
+              title="End call"
+            >
+              📴
+            </button>
           </div>
         </header>
 
@@ -1097,7 +1115,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   autoPlay
                   playsInline
                   muted
-                  className="h-full w-full object-contain bg-black"
+                  className="h-full w-full object-cover bg-black"
                 />
 </div>
             )}
@@ -1107,7 +1125,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                 <video
                   autoPlay
                   playsInline
-                  className="h-full w-full object-contain bg-black"
+                  className="h-full w-full object-cover bg-black"
                   ref={(el) => {
                     if (el && firstRemoteStream && el.srcObject !== firstRemoteStream) {
                       el.srcObject = firstRemoteStream;
@@ -1126,6 +1144,47 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     if (el.srcObject !== stream) el.srcObject = stream;
                   }}
                 />
+
+                {/* Local self-view (PiP): movable + auto-fade */}
+                {roomType === "video" && (
+                  <div
+                    ref={pipRef}
+                    className="pointer-events-auto absolute z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+                    style={{
+                      left: pipPos?.x ?? 16,
+                      top: pipPos?.y ?? 16,
+                      width: 160,
+                      height: 96,
+                      opacity: pipVisible ? 1 : 0.25,
+                      transition: "opacity 250ms ease",
+                      touchAction: "none",
+                      userSelect: "none",
+                      WebkitUserSelect: "none",
+                    }}
+                    onPointerDown={pipOnPointerDown}
+                    onPointerMove={pipOnPointerMove}
+                    onPointerUp={pipOnPointerUpOrCancel}
+                    onPointerCancel={pipOnPointerUpOrCancel}
+                    onClick={() => pipShowNow()}
+                    title="Your camera"
+                    aria-label="Your camera"
+                  >
+                    {camOn ? (
+                      <video
+                        data-local="1"
+                        ref={attachLocalVideo}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
+                        Camera off
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1137,7 +1196,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     <video
                       autoPlay
                       playsInline
-                      className="h-full w-full object-contain bg-black"
+                      className="h-full w-full object-cover bg-black"
                       ref={(el) => {
                         const stream = peerStreams[pid];
                         if (el && stream && el.srcObject !== stream) {
@@ -1277,8 +1336,8 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   // LOW: sits close to the bottom and may overlap dock/PTT.
                   // When text input is open, lift a bit so captions don't sit under the input.
                   paddingBottom: showTextInput
-                    ? "calc(env(safe-area-inset-bottom) + 118px)"
-                    : "calc(env(safe-area-inset-bottom) + 64px)",
+                    ? "calc(env(safe-area-inset-bottom) + 148px)"
+                    : "calc(env(safe-area-inset-bottom) + 108px)",
                 }}
               >
                 {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
@@ -1364,31 +1423,7 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
           )}
                 </main>
 
-        {/* In-call controls (minimal) */}
-        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
-          {/* End Call (bottom center) */}
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="
-                w-[56px] h-[56px]
-                rounded-full
-                border border-red-300/30
-                bg-red-600/60
-                shadow-xl
-                backdrop-blur-md
-                active:scale-[0.98]
-                transition
-                flex items-center justify-center
-                text-white text-xl
-              "
-              title="End call"
-            >
-              📴
-            </button>
-          </div>
-        </div>
+        {/* In-call controls live in top bar + bottom corners */}
 
         {/* Controls overlay (camera + PTT) */}
         <div className="fixed inset-0 z-50 pointer-events-none">
@@ -1408,7 +1443,10 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
 
           {/* PTT (mobile, draggable) */}
           {isMobile && (
-            <div className="fixed pointer-events-auto" style={{ left: pttPos.x, top: pttPos.y }}>
+            <div
+              className="fixed pointer-events-auto"
+              style={{ left: pttPos.x, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+            >
               <button
                 className={`
                   w-[76px] h-[76px]
@@ -1436,7 +1474,6 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                   d.startX = e.clientX;
                   d.startY = e.clientY;
                   d.originX = pttPos.x;
-                  d.originY = pttPos.y;
                   d.moved = false;
                   d.dragging = false;
                   d.startedPtt = false;
@@ -1475,16 +1512,14 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
 
                   if (d.dragging) {
                     const w = window.innerWidth || 360;
-                    const h = window.innerHeight || 640;
                     const size = 76;
                     const margin = 12;
 
                     const maxX = Math.max(margin, w - size - margin);
-                    const maxY = Math.max(margin + 40, h - size - (margin + 90));
                     const nx = Math.min(maxX, Math.max(margin, d.originX + dx));
-                    const ny = Math.min(maxY, Math.max(margin + 40, d.originY + dy));
 
-                    setPttPos({ x: nx, y: ny });
+                    // Side-to-side only (Y is fixed by the rail)
+                    setPttPos({ x: nx });
                   }
                 }}
                 onPointerUp={(e) => {
@@ -1503,13 +1538,26 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
                     const w = window.innerWidth || 360;
                     const size = 76;
                     const margin = 12;
-                    const maxX = Math.max(margin, w - size - margin);
-                    const snappedX = pttPos.x < w / 2 ? margin : maxX;
+                    const leftX = margin;
+                    const rightX = Math.max(margin, w - size - margin);
+                    const centerX = Math.round((w - size) / 2);
 
-                    const next = { x: snappedX, y: pttPos.y };
+                    // Snap to left / center / right
+                    const candidates = [leftX, centerX, rightX];
+                    let best = candidates[0];
+                    let bestDist = Math.abs(pttPos.x - best);
+                    for (const c of candidates.slice(1)) {
+                      const dist = Math.abs(pttPos.x - c);
+                      if (dist < bestDist) {
+                        bestDist = dist;
+                        best = c;
+                      }
+                    }
+
+                    const next = { x: best };
                     setPttPos(next);
                     try {
-                      localStorage.setItem("anyspeak_ptt_pos_v1", JSON.stringify(next));
+                      localStorage.setItem("anyspeak_ptt_pos_v2", JSON.stringify(next));
                     } catch {}
                   } else if (d.startedPtt) {
                     pttUp();
