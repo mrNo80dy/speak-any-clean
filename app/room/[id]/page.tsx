@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  useLayoutEffect,
+} from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { LANGUAGES } from "@/lib/languages";
@@ -31,14 +38,12 @@ type TranscriptPayload = {
 
 type Peer = AnySpeakPeer;
 type PeerStreams = Record<string, MediaStream>;
-type RoomType = "audio" | "video";
 
+type RoomType = "audio" | "video";
 type RoomInfo = {
   code: string | null;
   room_type: RoomType;
 };
-
-type SttStatus = "unknown" | "ok" | "unsupported" | "error";
 
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
@@ -90,124 +95,115 @@ async function translateText(
 }
 
 /**
- * Video framing logic
- * - Always show a blurred background fill (cover)
- * - Foreground switches between cover/contain depending on aspect mismatch
- *   so PC->Phone doesn't look "zoomed in" and Phone->PC doesn't look weird.
+ * Adaptive video surface:
+ * - If source & container have SAME orientation => cover (fills nicely)
+ * - If MIXED orientation => contain (prevents ugly zoom/crop)
  */
-function FullBleedVideo({
+function AdaptiveVideo({
   stream,
   isLocal = false,
-  preferContain = false,
-  containerAspectOverride,
+  blurredBackdrop = true,
+  className = "",
 }: {
   stream: MediaStream | null;
   isLocal?: boolean;
-  preferContain?: boolean;
-  containerAspectOverride?: number; // optional (PiP uses its own aspect)
+  blurredBackdrop?: boolean;
+  className?: string;
 }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const vidRef = useRef<HTMLVideoElement | null>(null);
   const bgRef = useRef<HTMLVideoElement | null>(null);
-  const fgRef = useRef<HTMLVideoElement | null>(null);
-  const cloneRef = useRef<MediaStream | null>(null);
 
+  const [containerAspect, setContainerAspect] = useState<number>(16 / 9);
   const [videoAspect, setVideoAspect] = useState<number>(16 / 9);
-  const [screenAspect, setScreenAspect] = useState<number>(() => {
-    if (typeof window === "undefined") return 16 / 9;
-    return (window.innerWidth || 1) / (window.innerHeight || 1);
-  });
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onResize = () => {
-      setScreenAspect((window.innerWidth || 1) / (window.innerHeight || 1));
-    };
-    onResize();
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
+  // measure container
+  useLayoutEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      const a = r.height > 0 ? r.width / r.height : 16 / 9;
+      setContainerAspect(a);
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
+  // attach stream
   useEffect(() => {
-    const s = stream || null;
-    const fg = fgRef.current;
-    const bg = bgRef.current;
+    const v = vidRef.current;
+    const b = bgRef.current;
 
-    if (!s) {
-      if (fg) fg.srcObject = null;
-      if (bg) bg.srcObject = null;
+    if (!stream) {
+      if (v) v.srcObject = null;
+      if (b) b.srcObject = null;
       return;
     }
 
-    // Clone for blurred background layer
-    const tracks = s.getTracks();
-    if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
-      cloneRef.current = new MediaStream(tracks);
+    if (b && b.srcObject !== stream) {
+      b.srcObject = stream;
+      b.playsInline = true as any;
+      b.muted = true;
+      b.play().catch(() => {});
     }
 
-    if (bg && bg.srcObject !== cloneRef.current) {
-      bg.srcObject = cloneRef.current;
-      bg.playsInline = true as any;
-      bg.muted = true;
-      bg.play().catch(() => {});
-    }
-
-    if (fg && fg.srcObject !== s) {
-      fg.srcObject = s;
-      fg.playsInline = true as any;
-      fg.muted = true;
-      fg.onloadedmetadata = () => {
-        const w = fg.videoWidth || 0;
-        const h = fg.videoHeight || 0;
-        if (w > 0 && h > 0) setVideoAspect(w / h);
-      };
-      fg.play().catch(() => {});
-    }
-
-    // Fallback: try track settings (helps before metadata)
-    const vTrack = s.getVideoTracks?.()[0];
-    const ar = (vTrack?.getSettings?.() as any)?.aspectRatio;
-    if (typeof ar === "number" && ar > 0.1 && ar < 10) {
-      setVideoAspect(ar);
+    if (v && v.srcObject !== stream) {
+      v.srcObject = stream;
+      v.playsInline = true as any;
+      v.muted = true; // local & remote video elements muted (raw audio handled by <audio data-remote>)
+      v.play().catch(() => {});
     }
   }, [stream]);
 
-  const containerAspect = containerAspectOverride ?? screenAspect;
+  // detect video aspect from metadata
+  useEffect(() => {
+    const v = vidRef.current;
+    if (!v) return;
 
-  // mismatch ratio: how different the shapes are
-  const mismatch =
-    containerAspect > 0 && videoAspect > 0
-      ? Math.max(containerAspect, videoAspect) / Math.min(containerAspect, videoAspect)
-      : 1;
+    const onMeta = () => {
+      const w = v.videoWidth || 16;
+      const h = v.videoHeight || 9;
+      const a = h > 0 ? w / h : 16 / 9;
+      setVideoAspect(a);
+    };
 
-  // Rule:
-  // - If mismatch is big, use contain (prevents zoom-crop)
-  // - If mismatch is small, use cover (nice fill)
-  // - preferContain forces contain (useful for PiP)
-  const foregroundFit =
-    preferContain || mismatch >= 1.25 ? "object-contain" : "object-cover";
+    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("resize", onMeta as any);
+    return () => {
+      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("resize", onMeta as any);
+    };
+  }, []);
+
+  const containerPortrait = containerAspect < 1;
+  const videoPortrait = videoAspect < 1;
+
+  // Mixed orientation -> contain (fixes zoom/crop on PC<->phone)
+  const mixedOrientation = containerPortrait !== videoPortrait;
+  const objectFit = mixedOrientation ? "object-contain" : "object-cover";
 
   return (
-    <div className="absolute inset-0 bg-black overflow-hidden">
-      {/* Blurred fill background */}
-      <video
-        ref={bgRef}
-        autoPlay
-        playsInline
-        muted
-        className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
-      />
+    <div ref={wrapRef} className={`absolute inset-0 bg-black overflow-hidden ${className}`}>
+      {blurredBackdrop && (
+        <video
+          ref={bgRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-35"
+        />
+      )}
 
-      {/* Foreground: dynamically cover/contain */}
       <video
-        ref={fgRef}
+        ref={vidRef}
         autoPlay
         playsInline
         muted
         data-local={isLocal ? "1" : undefined}
-        className={`absolute inset-0 h-full w-full ${foregroundFit}`}
+        className={`absolute inset-0 h-full w-full ${objectFit}`}
       />
     </div>
   );
@@ -238,71 +234,16 @@ export default function RoomPage() {
 
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
-  const recognitionRef = useRef<any>(null);
-
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
-
   const userTouchedMicRef = useRef(false);
 
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false);
   const pttHeldRef = useRef(false);
 
-  // ---- Mobile PTT positioning (dockable) ----
-  type PttDock = "bottom" | "left" | "right";
-  const [pttDock, setPttDock] = useState<PttDock>("bottom");
-  const [pttT, setPttT] = useState<number>(0);
-
-  const pttDockRef = useRef<PttDock>("bottom");
-  const pttTRef = useRef<number>(0);
-
-  useEffect(() => {
-    pttDockRef.current = pttDock;
-  }, [pttDock]);
-  useEffect(() => {
-    pttTRef.current = pttT;
-  }, [pttT]);
-
-  const pttDragRef = useRef<{
-    pointerId: number | null;
-    startX: number;
-    startY: number;
-    moved: boolean;
-    dragging: boolean;
-    startedPtt: boolean;
-    holdTimer: any;
-  }>({
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    moved: false,
-    dragging: false,
-    startedPtt: false,
-    holdTimer: null,
-  });
-
-  useEffect(() => {
-    if (!isMobile) return;
-    try {
-      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const d = parsed?.dock as PttDock | undefined;
-        const t = parsed?.t as number | undefined;
-        const okDock = d === "bottom" || d === "left" || d === "right";
-        if (okDock && typeof t === "number") {
-          setPttDock(d as PttDock);
-          setPttT(Math.min(1, Math.max(0, t)));
-          return;
-        }
-      }
-    } catch {}
-    setPttDock("bottom");
-    setPttT(0);
-  }, [isMobile]);
-
   const displayNameRef = useRef<string>("You");
+
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
@@ -313,179 +254,6 @@ export default function RoomPage() {
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
-  // ---- Local preview (PiP) behavior -------------------------
-  const pipRef = useRef<HTMLDivElement | null>(null);
-  const pipHideTimerRef = useRef<number | null>(null);
-  const pipDraggingRef = useRef(false);
-  const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
-
-  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
-  const [pipVisible, setPipVisible] = useState(true);
-
-  // PiP size matches camera orientation on mobile
-  const [pipSize, setPipSize] = useState<{ w: number; h: number }>(() =>
-    isMobile ? { w: 120, h: 160 } : { w: 160, h: 96 }
-  );
-
-  const clearPipTimer = () => {
-    if (pipHideTimerRef.current) {
-      window.clearTimeout(pipHideTimerRef.current);
-      pipHideTimerRef.current = null;
-    }
-  };
-
-  const schedulePipHide = () => {
-    clearPipTimer();
-    pipHideTimerRef.current = window.setTimeout(() => {
-      setPipVisible(false);
-    }, 2500);
-  };
-
-  const pipShowNow = () => {
-    setPipVisible(true);
-    schedulePipHide();
-  };
-
-  // Update PiP size based on local video aspect (mobile only)
-  useEffect(() => {
-    if (!isMobile) {
-      setPipSize({ w: 160, h: 96 });
-      return;
-    }
-
-    const s = localStreamRef.current;
-    const vTrack = s?.getVideoTracks?.()?.[0];
-    const ar = (vTrack?.getSettings?.() as any)?.aspectRatio as number | undefined;
-
-    if (typeof ar === "number" && ar > 0.1 && ar < 10) {
-      if (ar < 1) setPipSize({ w: 120, h: 160 }); // portrait
-      else setPipSize({ w: 160, h: 96 }); // landscape
-    } else {
-      // Safe default: portrait-ish on mobile
-      setPipSize({ w: 120, h: 160 });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobile, roomInfo?.room_type]);
-
-  // Set initial PiP position
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (pipPos) return;
-    if (peerIds.length !== 1) return;
-
-    const pad = 16;
-
-    // On mobile: start top-left (below the top pills)
-    if (isMobile) {
-      const y = 92; // clears top pills area + safe-ish
-      setPipPos({ x: pad, y });
-      setPipVisible(true);
-      schedulePipHide();
-      return;
-    }
-
-    // Desktop: bottom-right above dock
-    const dock = 120;
-    const x = Math.max(pad, window.innerWidth - pipSize.w - pad);
-    const y = Math.max(pad, window.innerHeight - pipSize.h - dock);
-    setPipPos({ x, y });
-    setPipVisible(true);
-    schedulePipHide();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peerIds.length, isMobile, pipSize.w, pipSize.h]);
-
-  // Keep PiP inside viewport on resize
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!pipPos) return;
-
-    const onResize = () => {
-      const pad = 8;
-      const dock = 120;
-      const maxX = Math.max(pad, window.innerWidth - pipSize.w - pad);
-      const maxY = Math.max(pad, window.innerHeight - pipSize.h - dock);
-      setPipPos((p) =>
-        p
-          ? {
-              x: Math.min(Math.max(p.x, pad), maxX),
-              y: Math.min(Math.max(p.y, pad), maxY),
-            }
-          : p
-      );
-    };
-
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
-  }, [pipPos, pipSize.w, pipSize.h]);
-
-  const pipOnPointerDown = (e: React.PointerEvent) => {
-    pipShowNow();
-    if (!pipPos) return;
-
-    pipDraggingRef.current = true;
-    clearPipTimer();
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {}
-
-    pipDragOffsetRef.current = { dx: e.clientX - pipPos.x, dy: e.clientY - pipPos.y };
-  };
-
-  const pipOnPointerMove = (e: React.PointerEvent) => {
-    if (!pipDraggingRef.current) return;
-
-    const pad = 8;
-    const dock = 120;
-    const maxX = Math.max(pad, window.innerWidth - pipSize.w - pad);
-    const maxY = Math.max(pad, window.innerHeight - pipSize.h - dock);
-
-    const x = e.clientX - pipDragOffsetRef.current.dx;
-    const y = e.clientY - pipDragOffsetRef.current.dy;
-
-    setPipPos({
-      x: Math.min(Math.max(x, pad), maxX),
-      y: Math.min(Math.max(y, pad), maxY),
-    });
-  };
-
-  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
-    if (!pipDraggingRef.current) {
-      pipShowNow();
-      return;
-    }
-    pipDraggingRef.current = false;
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    schedulePipHide();
-  };
-
-  useEffect(() => {
-    return () => clearPipTimer();
-  }, []);
-
-  // Captions / text stream
-  const { messages, pushMessage, clearMessages } = useAnySpeakMessages({ max: 30 });
-  const [captionLines, setCaptionLines] = useState<number>(3);
-
-  // Manual text captions
-  const [showTextInput, setShowTextInput] = useState(false);
-  const [textInput, setTextInput] = useState("");
-  const [ccOn, setCcOn] = useState(false);
-
-  // ✅ Enforced room mode (from DB)
-  const roomType: RoomType | null = roomInfo?.room_type ?? null;
-
-  // ✅ Joiner camera choice for VIDEO rooms
-  const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
-
-  const prejoinDone =
-    roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
-
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
@@ -493,6 +261,21 @@ export default function RoomPage() {
     setLogs((l) => [line, ...l].slice(0, 250));
   };
 
+  // captions/messages
+  const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
+  const [captionLines] = useState<number>(3);
+  const [showTextInput, setShowTextInput] = useState(false);
+  const [textInput, setTextInput] = useState("");
+  const [ccOn, setCcOn] = useState(false);
+
+  // enforced room type
+  const roomType: RoomType | null = roomInfo?.room_type ?? null;
+  const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
+
+  const prejoinDone =
+    roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
+
+  // final behavior
   const FINAL_MUTE_RAW_AUDIO = true;
   const FINAL_AUTOSPEAK_TRANSLATED = true;
 
@@ -543,21 +326,14 @@ export default function RoomPage() {
     displayNameRef.current = displayName || "You";
   }, [displayName]);
 
-  useEffect(() => {
-    const allowRaw = !shouldMuteRawAudioRef.current;
-    Object.values(peerStreams).forEach((stream) => {
-      stream.getAudioTracks().forEach((track) => {
-        track.enabled = allowRaw;
-      });
-    });
-  }, [peerStreams, shouldMuteRawAudio]);
-
+  // load name
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem("displayName");
     if (saved) setDisplayName(saved);
   }, []);
 
+  // load room info
   useEffect(() => {
     if (!roomId) return;
 
@@ -580,9 +356,7 @@ export default function RoomPage() {
         setRoomInfo({ code: (data?.code ?? null) as any, room_type: safeType });
         log("room loaded", { safeType });
 
-        if (safeType === "audio") {
-          setJoinCamOn(false);
-        }
+        if (safeType === "audio") setJoinCamOn(false);
       } catch (err) {
         log("room load error", { err: (err as Error).message });
       }
@@ -590,40 +364,7 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  const sendFinalTranscript = async (finalText: string, recLang: string) => {
-    const text = (finalText || "").trim();
-    if (!text) return;
-
-    const lang = recLang || "en-US";
-    const fromName = displayNameRef.current || "You";
-    const target = targetLangRef.current || "en-US";
-
-    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
-
-    pushMessage({
-      fromId: clientId,
-      fromName,
-      originalLang: lang,
-      translatedLang: outLang,
-      originalText: text,
-      translatedText,
-      isLocal: true,
-    });
-
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "transcript",
-        payload: { from: clientId, text, lang, name: fromName },
-      });
-    } else {
-      log("stt send skipped (no channelRef)", {});
-    }
-
-    log("stt sent transcript", { lang, textLen: text.length });
-  };
-
-  // ---- Hooks you built ---------------------------------------
+  // local media hooks
   const enforcedModeParam: "audio" | "video" = roomType === "video" ? "video" : "audio";
   const participantCount = peerIds.length + 1;
 
@@ -634,7 +375,7 @@ export default function RoomPage() {
 
   const localMedia = useLocalMedia({
     wantVideo: mode === "video",
-    wantAudio: !isMobile,
+    wantAudio: !isMobile, // mobile: no raw mic capture (STT uses mic)
   });
 
   const {
@@ -652,14 +393,13 @@ export default function RoomPage() {
     isMobile,
     roomType,
     joinCamOn,
-    acquire: async () => {
-      return await acquire();
-    },
+    acquire: async () => await acquire(),
     localStreamRef,
     setCamEnabled,
     log,
   });
 
+  // STT hook
   const {
     sttListening,
     sttArmedNotListening,
@@ -669,8 +409,6 @@ export default function RoomPage() {
     pttDown,
     pttUp,
     pttCancel,
-    startSttNow,
-    stopSttNow,
     stopAllStt,
   } = useAnySpeakStt({
     isMobile,
@@ -691,6 +429,7 @@ export default function RoomPage() {
 
   const micUiOn = isMobile ? sttListening : micOn;
 
+  // peer helpers
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
   }
@@ -718,6 +457,7 @@ export default function RoomPage() {
     setConnected(false);
   }
 
+  // ICE servers
   const { iceServers, turnEnabled, turnUrlsCount, turnMissing } = useMemo(() => {
     const turnUrls = (process.env.NEXT_PUBLIC_TURN_URLS || "")
       .split(",")
@@ -760,6 +500,7 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // WebRTC hook
   const { makeOffer, handleOffer, handleAnswer, handleIce, clearPendingIce } =
     useAnySpeakWebRtc({
       clientId,
@@ -773,6 +514,7 @@ export default function RoomPage() {
       upsertPeerStream,
     });
 
+  // kill raw audio on video/audio elements
   useEffect(() => {
     const allowRaw = !shouldMuteRawAudio;
 
@@ -790,6 +532,41 @@ export default function RoomPage() {
     });
   }, [shouldMuteRawAudio, peerStreams, peerIds]);
 
+  // send transcript
+  const sendFinalTranscript = async (finalText: string, recLang: string) => {
+    const text = (finalText || "").trim();
+    if (!text) return;
+
+    const lang = recLang || "en-US";
+    const fromName = displayNameRef.current || "You";
+    const target = targetLangRef.current || "en-US";
+
+    const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
+
+    pushMessage({
+      fromId: clientId,
+      fromName,
+      originalLang: lang,
+      translatedLang: outLang,
+      originalText: text,
+      translatedText,
+      isLocal: true,
+    });
+
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "transcript",
+        payload: { from: clientId, text, lang, name: fromName },
+      });
+    } else {
+      log("stt send skipped (no channelRef)", {});
+    }
+
+    log("stt sent transcript", { lang, textLen: text.length });
+  };
+
+  // realtime
   const { rtStatus, channelRef } = useAnySpeakRealtime({
     roomId,
     clientId,
@@ -865,11 +642,10 @@ export default function RoomPage() {
       setPeerLabels(labels);
       peerLabelsRef.current = labels;
 
+      // 3+ users default: mic OFF (unless user already touched mic)
       const total = others.length + 1;
       if (total >= 3 && !userTouchedMicRef.current) {
-        if (!isMobile) {
-          setMicEnabled(false);
-        }
+        if (!isMobile) setMicEnabled(false);
         micOnRef.current = false;
         stopAllStt(isMobile ? "auto-muted-3plus" : "auto-muted");
         log("auto-muted for 3+ participants", { total });
@@ -883,14 +659,13 @@ export default function RoomPage() {
     },
   });
 
+  // text submit
   const handleTextSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = textInput.trim();
     if (!text) return;
 
-    const lang =
-      (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
-
+    const lang = (debugEnabled ? speakLangRef.current : (navigator.language as string)) || "en-US";
     const fromName = displayNameRef.current || "You";
     const target = targetLangRef.current || "en-US";
     const { translatedText, targetLang: outLang } = await translateText(lang, target, text);
@@ -924,12 +699,13 @@ export default function RoomPage() {
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   const online = rtStatus === "SUBSCRIBED";
-
   const camClass = camOn
     ? "bg-neutral-100 text-neutral-900 border-neutral-300"
     : "bg-red-900/80 text-red-100 border-red-700";
 
-  const effectiveCaptionLines = Math.max(1, captionLines || 3);
+  const micClass = micUiOn
+    ? "bg-emerald-600/65 text-white border-emerald-300/30"
+    : "bg-red-600/55 text-white border-red-300/30";
 
   const handleEndCall = async () => {
     try {
@@ -950,52 +726,163 @@ export default function RoomPage() {
     }
   };
 
-  // ---- PTT dock layout helpers (mobile) ----------------------
-  const getPttLayout = () => {
-    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
-    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
-    const size = 76;
-    const margin = 12;
-    const edgeZone = 56;
+  // ---------- PiP (self-view) ----------
+  const pipRef = useRef<HTMLDivElement | null>(null);
+  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
+  const [pipVisible, setPipVisible] = useState(true);
+  const pipHideTimerRef = useRef<number | null>(null);
+  const pipDraggingRef = useRef(false);
+  const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
-    const xLeft = margin;
-    const xCenter = Math.round((w - size) / 2);
-    const xRight = Math.max(margin, w - size - margin);
-
-    const topPad = 92;
-    const bottomPad = showTextInput ? 210 : 150;
-    const minY = topPad;
-    const maxY = Math.max(minY, h - bottomPad - size);
-
-    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
+  const clearPipTimer = () => {
+    if (pipHideTimerRef.current) {
+      window.clearTimeout(pipHideTimerRef.current);
+      pipHideTimerRef.current = null;
+    }
+  };
+  const schedulePipHide = () => {
+    clearPipTimer();
+    pipHideTimerRef.current = window.setTimeout(() => setPipVisible(false), 2500);
+  };
+  const pipShowNow = () => {
+    setPipVisible(true);
+    schedulePipHide();
   };
 
-  const pttPx = useMemo(() => {
-    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
-    const { xLeft, xRight, minY, maxY } = getPttLayout();
+  // initial PiP position:
+  // - mobile: top-left (below top pills)
+  // - desktop: bottom-right
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pipPos) return;
+    if (peerIds.length !== 1) return;
+    const el = pipRef.current;
+    if (!el) return;
 
-    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-    const t = clamp01(pttT);
+    const rect = el.getBoundingClientRect();
+    const w = rect.width || 160;
+    const h = rect.height || 96;
 
-    if (pttDock === "bottom") {
-      const left = Math.round(xLeft + (xRight - xLeft) * t);
-      return { dock: "bottom" as const, left, top: 0 };
+    const pad = 12;
+    const topBar = 68; // clears CC/Share/Online/End
+    const bottomDock = 120;
+
+    const x = isMobile ? pad : Math.max(pad, window.innerWidth - w - pad);
+    const y = isMobile ? topBar : Math.max(pad, window.innerHeight - h - bottomDock);
+
+    setPipPos({ x, y });
+    setPipVisible(true);
+    schedulePipHide();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerIds.length, isMobile]);
+
+  useEffect(() => {
+    return () => clearPipTimer();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!pipPos) return;
+
+    const onResize = () => {
+      const el = pipRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const pad = 8;
+      const topBar = 68;
+      const bottomDock = 120;
+
+      const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+      const maxY = Math.max(topBar, window.innerHeight - rect.height - bottomDock);
+
+      setPipPos((p) =>
+        p
+          ? {
+              x: Math.min(Math.max(p.x, pad), maxX),
+              y: Math.min(Math.max(p.y, topBar), maxY),
+            }
+          : p
+      );
+    };
+
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [pipPos]);
+
+  const pipOnPointerDown = (e: React.PointerEvent) => {
+    pipShowNow();
+    if (!pipPos) return;
+    pipDraggingRef.current = true;
+    clearPipTimer();
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {}
+    pipDragOffsetRef.current = { dx: e.clientX - pipPos.x, dy: e.clientY - pipPos.y };
+  };
+
+  const pipOnPointerMove = (e: React.PointerEvent) => {
+    if (!pipDraggingRef.current) return;
+    const el = pipRef.current;
+    if (!el) return;
+
+    const rect = el.getBoundingClientRect();
+    const pad = 8;
+    const topBar = 68;
+    const bottomDock = 120;
+
+    const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
+    const maxY = Math.max(topBar, window.innerHeight - rect.height - bottomDock);
+
+    const x = e.clientX - pipDragOffsetRef.current.dx;
+    const y = e.clientY - pipDragOffsetRef.current.dy;
+
+    setPipPos({
+      x: Math.min(Math.max(x, pad), maxX),
+      y: Math.min(Math.max(y, topBar), maxY),
+    });
+  };
+
+  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
+    if (!pipDraggingRef.current) {
+      pipShowNow();
+      return;
     }
-    const top = Math.round(minY + (maxY - minY) * t);
-    return { dock: pttDock as "left" | "right", left: 0, top };
-  }, [isMobile, pttDock, pttT, showTextInput]);
+    pipDraggingRef.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    schedulePipHide();
+  };
 
-  // ---- Render -----------------------------------------------
+  // desktop mic toggle (fix: “no way to turn on MIC on PC”)
+  const toggleDesktopMic = () => {
+    if (isMobile) return;
+    userTouchedMicRef.current = true;
+    setMicEnabled(!micOn);
+  };
+
+  // effective caption lines
+  const effectiveCaptionLines = Math.max(1, captionLines || 3);
+
+  // layout buckets
+  const showOneOnOne = peerIds.length === 1 && !!firstRemoteId;
+  const showGrid = totalParticipants >= 2 && totalParticipants <= 4;
+  const showSpotlight = totalParticipants >= 5;
+
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
-        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
+        {/* Joiner overlay for VIDEO rooms: choose cam ON/OFF */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
             <div className="absolute inset-0">
               {localStreamRef.current ? (
                 <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal />
+                  <AdaptiveVideo stream={localStreamRef.current} isLocal blurredBackdrop />
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-black" />
@@ -1092,6 +979,98 @@ export default function RoomPage() {
         </header>
 
         <main className="absolute inset-0 pt-0 md:pt-14">
+          {/* Debug Panel */}
+          {debugEnabled && (
+            <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
+              <div className="text-xs text-neutral-300 mb-2">
+                Debug Mode (URL has <span className="font-mono">?debug=1</span>)
+                {isMobile ? " · Mobile" : " · Desktop"}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  unlockTts();
+                  speakText("Teste de voz", "pt-BR", 0.95);
+                }}
+                className="px-3 py-2 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-500 text-white"
+              >
+                Test Voice
+              </button>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
+                <label className="text-xs">
+                  <div className="text-neutral-300 mb-1">I speak (STT)</div>
+                  <select
+                    value={speakLang}
+                    onChange={(e) => setSpeakLang(e.target.value)}
+                    className="w-full bg-black/60 text-xs border border-neutral-700 rounded-lg px-2 py-2"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.label} ({l.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="text-xs">
+                  <div className="text-neutral-300 mb-1">Show captions in</div>
+                  <select
+                    value={targetLang}
+                    onChange={(e) => setTargetLang(e.target.value)}
+                    className="w-full bg-black/60 text-xs border border-neutral-700 rounded-lg px-2 py-2"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.label} ({l.code})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={debugHearRawAudio}
+                      onChange={(e) => setDebugHearRawAudio(e.target.checked)}
+                    />
+                    <span className="text-neutral-200">Hear raw audio</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={debugSpeakTranslated}
+                      onChange={(e) => setDebugSpeakTranslated(e.target.checked)}
+                    />
+                    <span className="text-neutral-200">Speak translated</span>
+                  </label>
+
+                  <div className="text-[10px] text-neutral-400">
+                    Tip: after changing “I speak”, hold to talk again.
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 text-[10px] text-neutral-400">
+                Raw audio muted:{" "}
+                <span className="font-mono">{shouldMuteRawAudio ? "true" : "false"}</span>{" "}
+                · Speak translated:{" "}
+                <span className="font-mono">{shouldSpeakTranslated ? "true" : "false"}</span>{" "}
+                · Connected: <span className="font-mono">{connected ? "true" : "false"}</span>
+              </div>
+
+              <div className="mt-3 max-h-40 overflow-auto rounded-lg bg-black/50 border border-neutral-700 p-2">
+                <div className="text-[10px] text-neutral-400 mb-1">Logs</div>
+                <pre className="text-[10px] leading-snug whitespace-pre-wrap text-neutral-200">
+                  {logs.slice(0, 20).join("\n")}
+                </pre>
+              </div>
+            </div>
+          )}
+
           {/* STT status */}
           {sttStatus !== "ok" && (
             <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
@@ -1110,18 +1089,17 @@ export default function RoomPage() {
           )}
 
           <div className="h-full w-full">
-            {/* 0 peers: show local full screen */}
+            {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal />
+                <AdaptiveVideo stream={localStreamRef.current} isLocal blurredBackdrop />
               </div>
             )}
 
-            {/* 1 peer: remote full screen + local PiP */}
-            {peerIds.length === 1 && firstRemoteId && (
+            {/* 1 peer: remote full, local PiP */}
+            {showOneOnOne && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} />
-
+                <AdaptiveVideo stream={firstRemoteStream} blurredBackdrop />
                 <audio
                   data-remote
                   autoPlay
@@ -1133,15 +1111,17 @@ export default function RoomPage() {
                   }}
                 />
 
+                {/* Local PiP */}
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
                     className="pointer-events-auto absolute z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
                     style={{
-                      left: pipPos?.x ?? 16,
-                      top: pipPos?.y ?? 92,
-                      width: pipSize.w,
-                      height: pipSize.h,
+                      left: pipPos?.x ?? 12,
+                      top: pipPos?.y ?? 68,
+                      // Let the video itself decide fit; we just bound the box.
+                      width: isMobile ? 140 : 160,
+                      height: isMobile ? 140 : 96, // square-ish on mobile (AdaptiveVideo will contain/cover based on orientation)
                       opacity: pipVisible ? 1 : 0.25,
                       transition: "opacity 250ms ease",
                       touchAction: "none",
@@ -1157,12 +1137,9 @@ export default function RoomPage() {
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo
-                        stream={localStreamRef.current}
-                        isLocal
-                        preferContain
-                        containerAspectOverride={pipSize.w / pipSize.h}
-                      />
+                      <div className="relative h-full w-full">
+                        <AdaptiveVideo stream={localStreamRef.current} isLocal blurredBackdrop={false} />
+                      </div>
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1173,24 +1150,25 @@ export default function RoomPage() {
               </div>
             )}
 
-            {/* 2–4 participants: grid (use FullBleedVideo for better framing) */}
-            {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length > 0 && (
-              <div className="h-full w-full grid grid-cols-1 md:grid-cols-2 gap-2 p-2">
-                {/* Local tile */}
-                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-0">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
-                    You
+            {/* 2-4 participants: grid */}
+            {showGrid && (
+              <div className="h-full w-full p-2 md:p-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                {/* Local tile (only in video rooms) */}
+                {roomType === "video" && (
+                  <div className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0">
+                    <AdaptiveVideo stream={localStreamRef.current} isLocal blurredBackdrop />
+                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded">
+                      You
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Remote tiles */}
                 {peerIds.map((pid) => (
                   <div
                     key={pid}
-                    className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-0"
+                    className="relative bg-neutral-900 rounded-2xl overflow-hidden h-full min-h-0"
                   >
-                    <FullBleedVideo stream={peerStreams[pid] ?? null} />
+                    <AdaptiveVideo stream={peerStreams[pid] ?? null} blurredBackdrop />
                     <audio
                       data-remote
                       autoPlay
@@ -1208,15 +1186,15 @@ export default function RoomPage() {
               </div>
             )}
 
-            {/* 5+ participants: spotlight mode */}
-            {totalParticipants >= 5 && (
+            {/* 5+ spotlight */}
+            {showSpotlight && (
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal />
+                    <AdaptiveVideo stream={localStreamRef.current} isLocal blurredBackdrop />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} />
+                      <AdaptiveVideo stream={peerStreams[spotlightId] ?? null} blurredBackdrop />
                       <audio
                         data-remote
                         autoPlay
@@ -1268,9 +1246,7 @@ export default function RoomPage() {
                           className="h-full w-full object-contain bg-black"
                           ref={(el) => {
                             const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
+                            if (el && stream && el.srcObject !== stream) el.srcObject = stream;
                           }}
                         />
                         <audio
@@ -1293,7 +1269,7 @@ export default function RoomPage() {
             )}
           </div>
 
-          {/* Captions overlay */}
+          {/* Captions */}
           {ccOn && messages.length > 0 && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
@@ -1308,14 +1284,17 @@ export default function RoomPage() {
                 {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
                   const isNewest = idx === arr.length - 1;
                   return (
-                    <div
-                      key={m.id}
-                      className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}
-                    >
+                    <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
                       <div
-                        className={`max-w-[74%] rounded-2xl border border-white/10 bg-black/30 backdrop-blur-md shadow ${
-                          isNewest ? "px-3 py-2.5" : "px-2.5 py-2"
-                        }`}
+                        className={`
+                          max-w-[74%]
+                          rounded-2xl
+                          border border-white/10
+                          bg-black/30
+                          backdrop-blur-md
+                          shadow
+                          ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
+                        `}
                         style={{
                           opacity: isNewest ? 1 : 0.65,
                           transform: isNewest ? "scale(1)" : "scale(0.98)",
@@ -1333,7 +1312,6 @@ export default function RoomPage() {
                             {m.originalLang}→{m.translatedLang}
                           </span>
                         </div>
-
                         <div
                           className={`${isNewest ? "text-[13px]" : "text-[12px]"} leading-snug text-white/95 overflow-hidden`}
                           style={{
@@ -1376,8 +1354,21 @@ export default function RoomPage() {
           )}
         </main>
 
-        {/* Controls overlay */}
+        {/* Bottom controls */}
         <div className="fixed inset-0 z-50 pointer-events-none">
+          {/* Desktop MIC toggle (bottom left) */}
+          {!isMobile && (
+            <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+              <button
+                onClick={toggleDesktopMic}
+                className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
+                title="Microphone"
+              >
+                {micOn ? "🎙️" : "🎙️✕"}
+              </button>
+            </div>
+          )}
+
           {/* Camera toggle (bottom right) */}
           <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
             <button
@@ -1392,18 +1383,9 @@ export default function RoomPage() {
             </button>
           </div>
 
-          {/* PTT (mobile, dockable) */}
+          {/* Mobile PTT (unchanged behavior) */}
           {isMobile && (
-            <div
-              className="fixed pointer-events-auto"
-              style={
-                pttPx.dock === "bottom"
-                  ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
-                  : pttPx.dock === "left"
-                  ? { left: 12, top: pttPx.top }
-                  : { right: 12, top: pttPx.top }
-              }
-            >
+            <div className="fixed right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
               <button
                 className={`
                   w-[76px] h-[76px]
@@ -1421,151 +1403,21 @@ export default function RoomPage() {
                   try {
                     e.currentTarget.setPointerCapture(e.pointerId);
                   } catch {}
-                  const d = pttDragRef.current;
-                  d.pointerId = e.pointerId;
-                  d.startX = e.clientX;
-                  d.startY = e.clientY;
-                  d.moved = false;
-                  d.dragging = false;
-                  d.startedPtt = false;
-
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-
-                  d.holdTimer = setTimeout(() => {
-                    if (!pttDragRef.current.moved) {
-                      pttDown();
-                      pttDragRef.current.startedPtt = true;
-                    }
+                  // hold to talk
+                  window.setTimeout(() => {
+                    pttDown();
                   }, 140);
-                }}
-                onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
-
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
-
-                  if (!d.moved && dist > 8) {
-                    d.moved = true;
-                    d.dragging = true;
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
-
-                  if (!d.dragging) return;
-
-                  const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
-
-                  const nextDock =
-                    e.clientX <= edgeZone
-                      ? "left"
-                      : e.clientX >= w - size - edgeZone
-                      ? "right"
-                      : "bottom";
-
-                  if (nextDock !== pttDockRef.current) {
-                    setPttDock(nextDock as any);
-                    pttDockRef.current = nextDock as any;
-                  }
-
-                  if (nextDock === "bottom") {
-                    const centerX = e.clientX - size / 2;
-                    const t = (centerX - xLeft) / (xRight - xLeft || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  } else {
-                    const centerY = e.clientY - size / 2;
-                    const t = (centerY - minY) / (maxY - minY || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  }
                 }}
                 onPointerUp={(e) => {
                   e.preventDefault();
                   try {
                     e.currentTarget.releasePointerCapture(e.pointerId);
                   } catch {}
-
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-
-                  if (d.dragging) {
-                    const { xLeft, xCenter, xRight } = getPttLayout();
-
-                    if (pttDockRef.current === "bottom") {
-                      const x = pttPx.left;
-                      const candidates = [xLeft, xCenter, xRight];
-                      let best = candidates[0];
-                      let bestDist = Math.abs(x - best);
-                      for (const c of candidates.slice(1)) {
-                        const dd = Math.abs(x - c);
-                        if (dd < bestDist) {
-                          bestDist = dd;
-                          best = c;
-                        }
-                      }
-
-                      const newT =
-                        best === xLeft
-                          ? 0
-                          : best === xRight
-                          ? 1
-                          : (xCenter - xLeft) / (xRight - xLeft || 1);
-
-                      setPttT(newT);
-                      try {
-                        localStorage.setItem(
-                          "anyspeak_ptt_dock_v1",
-                          JSON.stringify({ dock: "bottom", t: newT })
-                        );
-                      } catch {}
-                    } else {
-                      try {
-                        localStorage.setItem(
-                          "anyspeak_ptt_dock_v1",
-                          JSON.stringify({ dock: pttDockRef.current, t: pttTRef.current })
-                        );
-                      } catch {}
-                    }
-                  } else if (d.startedPtt) {
-                    pttUp();
-                  }
-
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
+                  pttUp();
                 }}
                 onPointerCancel={(e) => {
                   e.preventDefault();
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-                  if (d.startedPtt) {
-                    pttCancel();
-                  }
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
-                onClick={() => {
-                  // desktop only
-                  if (isMobile) return;
-                  void toggleMic();
+                  pttCancel();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 aria-label="Push to talk"
@@ -1577,6 +1429,17 @@ export default function RoomPage() {
               </button>
             </div>
           )}
+
+          {/* Small “Text” toggle (optional quick access) */}
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <button
+              onClick={() => setShowTextInput((v) => !v)}
+              className="px-4 py-1 rounded-full text-xs bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow active:scale-[0.98] transition"
+              title="Text"
+            >
+              {showTextInput ? "Text ✕" : "Text"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
