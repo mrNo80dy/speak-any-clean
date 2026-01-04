@@ -1075,7 +1075,8 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
               </div>
             </div>
           </div>
-        )})}
+        )}
+        
 
         {/* Top floating controls (no code, no audio/video) */}
         <header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
@@ -1736,3 +1737,4 @@ const { beforeConnect, toggleCamera } = useAnySpeakRoomMedia({
     </div>
   );
 }
+
