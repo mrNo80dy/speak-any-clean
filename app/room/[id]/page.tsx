@@ -1430,16 +1430,17 @@ export default function RoomPage() {
               style={{ left: "50%", transform: "translateX(-50%)", bottom: CONTROL_BOTTOM }}
             >
               <button
-                className={`
-                  w-[${PTT_SIZE}px] h-[${PTT_SIZE}px]
-                  rounded-full
-                  border
-                  shadow-xl
-                  backdrop-blur-md
-                  active:scale-[0.98]
-                  transition
-                  ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
-                `}
+  style={{ width: PTT_SIZE, height: PTT_SIZE }}
+  className={`
+    rounded-full
+    border
+    shadow-xl
+    backdrop-blur-md
+    active:scale-[0.98]
+    transition
+    ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+  `}
+>
                 style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
                 onPointerDown={(e) => {
                   e.preventDefault();
@@ -1540,4 +1541,5 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
