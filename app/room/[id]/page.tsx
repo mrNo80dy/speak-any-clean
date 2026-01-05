@@ -1424,107 +1424,122 @@ export default function RoomPage() {
           </div>
 
           {/* Mobile PTT (fixed, bottom-center) */}
-          {isMobile && (
-            <div
-              className="fixed pointer-events-auto"
-              style={{ left: "50%", transform: "translateX(-50%)", bottom: CONTROL_BOTTOM }}
-            >
-              <button
-  style={{ width: PTT_SIZE, height: PTT_SIZE }}
-  className={`
-    rounded-full
-    border
-    shadow-xl
-    backdrop-blur-md
-    active:scale-[0.98]
-    transition
-    ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
-  `}
->
-                style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                  } catch {}
-                  const d = pttDragRef.current;
-                  d.pointerId = e.pointerId;
-                  d.startX = e.clientX;
-                  d.startY = e.clientY;
-                  d.moved = false;
-                  d.dragging = false;
-                  d.startedPtt = false;
+{isMobile && (
+  <div
+    className="fixed pointer-events-auto"
+    style={{ left: "50%", transform: "translateX(-50%)", bottom: CONTROL_BOTTOM }}
+  >
+    <button
+      type="button"
+      style={{
+        width: PTT_SIZE,
+        height: PTT_SIZE,
+        touchAction: "none",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+      className={`
+        rounded-full
+        border
+        shadow-xl
+        backdrop-blur-md
+        active:scale-[0.98]
+        transition
+        ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+      `}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {}
 
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
+        const d = pttDragRef.current;
+        d.pointerId = e.pointerId;
+        d.startX = e.clientX;
+        d.startY = e.clientY;
+        d.moved = false;
+        d.dragging = false;
+        d.startedPtt = false;
 
-                  // Hold-to-talk (ignore tiny movement)
-                  d.holdTimer = setTimeout(() => {
-                    if (!pttDragRef.current.moved) {
-                      pttDown();
-                      pttDragRef.current.startedPtt = true;
-                    }
-                  }, 180);
-                }}
-                onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
+        if (d.holdTimer) {
+          clearTimeout(d.holdTimer);
+          d.holdTimer = null;
+        }
 
-                  // Only cancel if user clearly moved away
-                  if (!d.moved && dist > 22) {
-                    d.moved = true;
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
-                }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  } catch {}
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-                  if (d.startedPtt) pttUp();
-                  d.pointerId = null;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
-                onPointerCancel={(e) => {
-                  e.preventDefault();
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-                  if (d.startedPtt) pttCancel();
-                  d.pointerId = null;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
-                onContextMenu={(e) => e.preventDefault()}
-                aria-label="Push to talk"
-                title="Hold to talk"
-              >
-                <div className="flex items-center justify-center text-center leading-tight">
-                  <div className="text-xl">🎙️</div>
-                </div>
-              </button>
-            </div>
-          )}
+        // Hold-to-talk (ignore tiny movement)
+        d.holdTimer = setTimeout(() => {
+          if (!pttDragRef.current.moved) {
+            pttDown();
+            pttDragRef.current.startedPtt = true;
+          }
+        }, 180);
+      }}
+      onPointerMove={(e) => {
+        const d = pttDragRef.current;
+        if (d.pointerId !== e.pointerId) return;
+
+        const dx = e.clientX - d.startX;
+        const dy = e.clientY - d.startY;
+        const dist = Math.hypot(dx, dy);
+
+        // Only cancel if user clearly moved away
+        if (!d.moved && dist > 22) {
+          d.moved = true;
+          if (d.holdTimer) {
+            clearTimeout(d.holdTimer);
+            d.holdTimer = null;
+          }
+          if (d.startedPtt) {
+            pttCancel();
+            d.startedPtt = false;
+          }
+        }
+      }}
+      onPointerUp={(e) => {
+        e.preventDefault();
+        try {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        } catch {}
+
+        const d = pttDragRef.current;
+        if (d.holdTimer) {
+          clearTimeout(d.holdTimer);
+          d.holdTimer = null;
+        }
+
+        if (d.startedPtt) pttUp();
+
+        d.pointerId = null;
+        d.dragging = false;
+        d.moved = false;
+        d.startedPtt = false;
+      }}
+      onPointerCancel={(e) => {
+        e.preventDefault();
+
+        const d = pttDragRef.current;
+        if (d.holdTimer) {
+          clearTimeout(d.holdTimer);
+          d.holdTimer = null;
+        }
+
+        if (d.startedPtt) pttCancel();
+
+        d.pointerId = null;
+        d.dragging = false;
+        d.moved = false;
+        d.startedPtt = false;
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+      aria-label="Push to talk"
+      title="Hold to talk"
+    >
+      <div className="flex items-center justify-center text-center leading-tight">
+        <div className="text-xl">🎙️</div>
+      </div>
+    </button>
+  </div>
+)}
 
           {/* Optional: small text toggle (desktop + mobile) */}
           <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+12px)] pointer-events-auto hidden">
@@ -1541,5 +1556,6 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
