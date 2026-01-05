@@ -42,8 +42,6 @@ type RoomInfo = {
   room_type: RoomType;
 };
 
-type PttDock = "bottom" | "left" | "right";
-
 // Pick a safe default that actually exists in LANGUAGES
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
@@ -140,19 +138,8 @@ export default function RoomPage() {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
-  // ---- Mobile PTT positioning (dockable) ----
-  const [pttDock, setPttDock] = useState<PttDock>("bottom");
-  const [pttT, setPttT] = useState<number>(0); // 0..1
-
-  const pttDockRef = useRef<PttDock>("bottom");
-  const pttTRef = useRef<number>(0);
-
-  useEffect(() => {
-    pttDockRef.current = pttDock;
-  }, [pttDock]);
-  useEffect(() => {
-    pttTRef.current = pttT;
-  }, [pttT]);
+  // ---- Mobile PTT ----
+  // Fixed bottom-center (no dragging/docking).
 
   const pttDragRef = useRef<{
     pointerId: number | null;
@@ -174,27 +161,7 @@ export default function RoomPage() {
     dragStartedAtMs: 0,
   });
 
-  useEffect(() => {
-    if (!isMobile) return;
-    try {
-      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const d = parsed?.dock as PttDock | undefined;
-        const t = parsed?.t as number | undefined;
-        const okDock = d === "bottom" || d === "left" || d === "right";
-        if (okDock && typeof t === "number") {
-          setPttDock(d as PttDock);
-          setPttT(Math.min(1, Math.max(0, t)));
-          return;
-        }
-      }
-    } catch {}
 
-    // Default: bottom-left-ish
-    setPttDock("bottom");
-    setPttT(0);
-  }, [isMobile]);
 
   const displayNameRef = useRef<string>("You");
 
@@ -277,8 +244,8 @@ export default function RoomPage() {
     }, 2500);
   };
 
-  // Set an initial position once we have a peer (1:1 view).
-  // Mobile: start bottom-left (stays out of the way of top pills).
+    // Set an initial position once we have a peer (1:1 view).
+  // Mobile: start top-left (selfie-like preview area).
   // Desktop: start bottom-right, above the bottom dock.
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -293,10 +260,10 @@ export default function RoomPage() {
     const h = window.innerHeight || 640;
 
     if (isMobile) {
-      // Keep PiP away from top pills and the bottom PTT zone.
-      const bottomPad = 108;
+      // Clear the top controls/safe area.
+      const topPad = 76;
       const x = pad;
-      const y = Math.max(pad, h - pipDims.h - bottomPad);
+      const y = Math.max(pad, topPad);
       setPipPos({ x, y });
     } else {
       const x = Math.max(pad, w - pipDims.w - pad);
@@ -908,40 +875,12 @@ export default function RoomPage() {
     } catch {}
   };
 
-  // ---- PTT dock layout helpers (mobile) ----------------------
-  const getPttLayout = () => {
-    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
-    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
-    const size = 64; // smaller, less ostentatious
-    const margin = 12;
-    const edgeZone = 44; // must be closer to edge
-
-    const xLeft = margin;
-    const xCenter = Math.round((w - size) / 2);
-    const xRight = Math.max(margin, w - size - margin);
-
-    const topPad = 92;
-    const bottomPad = showTextInput ? 210 : 150;
-    const minY = topPad;
-    const maxY = Math.max(minY, h - bottomPad - size);
-
-    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
-  };
-
-  const pttPx = useMemo(() => {
-    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
-    const { xLeft, xRight, minY, maxY } = getPttLayout();
-
-    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-    const t = clamp01(pttT);
-
-    if (pttDock === "bottom") {
-      const left = Math.round(xLeft + (xRight - xLeft) * t);
-      return { dock: "bottom" as const, left, top: 0 };
-    }
-    const top = Math.round(minY + (maxY - minY) * t);
-    return { dock: pttDock as "left" | "right", left: 0, top };
-  }, [isMobile, pttDock, pttT, showTextInput]);
+  // ---- Mobile control sizing (PTT + PiP inline) --------------
+  const PTT_SIZE = 64;
+  const PIP_W = 148;
+  const PIP_H = 96;
+  const CONTROL_GAP = 10;
+  const CONTROL_BOTTOM = "calc(env(safe-area-inset-bottom) + 12px)";
 
   // ---- Render -----------------------------------------------
   return (
@@ -1210,21 +1149,28 @@ export default function RoomPage() {
                     ref={pipRef}
                     className="pointer-events-auto absolute z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
                     style={{
-                      left: pipPos?.x ?? 16,
-                      top: pipPos?.y ?? 16,
-                      // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
-                      width: isMobile ? 148 : 160,
-                      height: isMobile ? 100 : 96,
+                      ...(isMobile
+                        ? {
+                            // Layout A: PiP sits directly left of the PTT button (inline).
+                            left: `calc(50% - ${PTT_SIZE / 2 + CONTROL_GAP + PIP_W}px)`,
+                            bottom: CONTROL_BOTTOM,
+                          }
+                        : {
+                            left: pipPos?.x ?? 16,
+                            top: pipPos?.y ?? 16,
+                          }),
+                      width: isMobile ? PIP_W : 160,
+                      height: isMobile ? PIP_H : 96,
                       opacity: pipVisible ? 1 : 0.25,
                       transition: "opacity 250ms ease",
                       touchAction: "none",
                       userSelect: "none",
                       WebkitUserSelect: "none",
                     }}
-                    onPointerDown={pipOnPointerDown}
-                    onPointerMove={pipOnPointerMove}
-                    onPointerUp={pipOnPointerUpOrCancel}
-                    onPointerCancel={pipOnPointerUpOrCancel}
+                    onPointerDown={isMobile ? undefined : pipOnPointerDown}
+                    onPointerMove={isMobile ? undefined : pipOnPointerMove}
+                    onPointerUp={isMobile ? undefined : pipOnPointerUpOrCancel}
+                    onPointerCancel={isMobile ? undefined : pipOnPointerUpOrCancel}
                     onClick={() => pipShowNow()}
                     title="Your camera"
                     aria-label="Your camera"
@@ -1463,38 +1409,36 @@ export default function RoomPage() {
             </div>
           )}
 
-          {/* Camera toggle */}
-          {!isMobile && (
-            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-              <button
-                onClick={toggleCamera}
-                className={`${pillBase} ${camClass} ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                } bg-black/25 backdrop-blur-md border-white/10`}
-                disabled={roomType !== "video"}
-                title="Camera"
-              >
-                {camOn ? "📷" : "📷✕"}
-              </button>
-            </div>
-          )}
+          {/* Camera toggle (bottom right) */}
+          <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <button
+              onClick={toggleCamera}
+              className={`${pillBase} ${camClass} ${
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+              } bg-black/25 backdrop-blur-md border-white/10`}
+              disabled={roomType !== "video"}
+              title="Camera"
+            >
+              {camOn ? "📷" : "📷✕"}
+            </button>
+          </div>
 
-          {/* Mobile controls (locked): PTT centered at bottom, camera toggle to the right */}
+          {/* Mobile PTT (fixed, bottom-center) */}
           {isMobile && (
             <div
-              className="fixed left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 pointer-events-auto"
-              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+              className="fixed pointer-events-auto"
+              style={{ left: "50%", transform: "translateX(-50%)", bottom: CONTROL_BOTTOM }}
             >
               <button
                 className={`
-                  w-[56px] h-[56px]
+                  w-[${PTT_SIZE}px] h-[${PTT_SIZE}px]
                   rounded-full
                   border
-                  shadow-lg
+                  shadow-xl
                   backdrop-blur-md
                   active:scale-[0.98]
                   transition
-                  ${micUiOn ? "bg-emerald-600/60 border-emerald-300/25" : "bg-red-600/50 border-red-300/25"}
+                  ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
                 `}
                 style={{ touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
                 onPointerDown={(e) => {
@@ -1504,8 +1448,44 @@ export default function RoomPage() {
                   } catch {}
                   const d = pttDragRef.current;
                   d.pointerId = e.pointerId;
-                  d.startedPtt = true;
-                  pttDown();
+                  d.startX = e.clientX;
+                  d.startY = e.clientY;
+                  d.moved = false;
+                  d.dragging = false;
+                  d.startedPtt = false;
+
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
+
+                  // Hold-to-talk (ignore tiny movement)
+                  d.holdTimer = setTimeout(() => {
+                    if (!pttDragRef.current.moved) {
+                      pttDown();
+                      pttDragRef.current.startedPtt = true;
+                    }
+                  }, 180);
+                }}
+                onPointerMove={(e) => {
+                  const d = pttDragRef.current;
+                  if (d.pointerId !== e.pointerId) return;
+                  const dx = e.clientX - d.startX;
+                  const dy = e.clientY - d.startY;
+                  const dist = Math.hypot(dx, dy);
+
+                  // Only cancel if user clearly moved away
+                  if (!d.moved && dist > 22) {
+                    d.moved = true;
+                    if (d.holdTimer) {
+                      clearTimeout(d.holdTimer);
+                      d.holdTimer = null;
+                    }
+                    if (d.startedPtt) {
+                      pttCancel();
+                      d.startedPtt = false;
+                    }
+                  }
                 }}
                 onPointerUp={(e) => {
                   e.preventDefault();
@@ -1513,53 +1493,34 @@ export default function RoomPage() {
                     e.currentTarget.releasePointerCapture(e.pointerId);
                   } catch {}
                   const d = pttDragRef.current;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
                   if (d.startedPtt) pttUp();
                   d.pointerId = null;
+                  d.moved = false;
                   d.startedPtt = false;
                 }}
                 onPointerCancel={(e) => {
                   e.preventDefault();
                   const d = pttDragRef.current;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
                   if (d.startedPtt) pttCancel();
                   d.pointerId = null;
+                  d.moved = false;
                   d.startedPtt = false;
-                }}
-                onClick={() => {
-                  // hold-to-talk; ignore click
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 aria-label="Push to talk"
                 title="Hold to talk"
               >
                 <div className="flex items-center justify-center text-center leading-tight">
-                  <div className="text-lg">🎙️</div>
+                  <div className="text-xl">🎙️</div>
                 </div>
-              </button>
-
-              {/* Mobile camera toggle (kept close to PTT) */}
-              <button
-                type="button"
-                onClick={toggleCamera}
-                disabled={roomType !== "video"}
-                className={`
-                  w-[48px] h-[48px]
-                  rounded-full
-                  border
-                  shadow-md
-                  backdrop-blur-md
-                  transition
-                  ${
-                    roomType !== "video"
-                      ? "opacity-30 cursor-not-allowed bg-black/20 border-white/10"
-                      : camOn
-                      ? "bg-emerald-600/40 border-emerald-300/20"
-                      : "bg-black/25 border-white/10"
-                  }
-                `}
-                aria-label="Toggle camera"
-                title="Camera"
-              >
-                <div className="flex items-center justify-center text-lg">{camOn ? "📷" : "🚫"}</div>
               </button>
             </div>
           )}
