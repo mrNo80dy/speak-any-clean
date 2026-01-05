@@ -876,7 +876,7 @@ export default function RoomPage() {
   };
 
   // ---- Mobile control sizing (PTT + PiP inline) --------------
-  const PTT_SIZE = 64;
+  const PTT_SIZE = 84;
   const PIP_W = 148;
   const PIP_H = 96;
   const CONTROL_GAP = 10;
@@ -1540,3 +1540,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
