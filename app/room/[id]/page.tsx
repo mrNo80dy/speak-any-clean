@@ -263,6 +263,15 @@ export default function RoomPage() {
     return { w: Math.round(outW), h: Math.round(outH) };
   }, [vp.w, vp.h, pipAspect, isMobile]);
 
+  // Fit rules:
+  // - On phones in portrait we want the main video to be full-bleed (cover) to mimic the native selfie preview.
+  // - Otherwise we prefer contain to avoid aggressive cropping on desktop/tablet.
+  const screenW = vp.w || (typeof window !== "undefined" ? window.innerWidth || 360 : 360);
+  const screenH = vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640);
+  const isPortraitScreen = screenH >= screenW;
+  const mainFit: "cover" | "contain" = isMobile && isPortraitScreen ? "cover" : "contain";
+  const pipFit: "cover" | "contain" = isMobile && isPortraitScreen ? "cover" : "contain";
+
   const clearPipTimer = () => {
     if (pipHideTimerRef.current) {
       window.clearTimeout(pipHideTimerRef.current);
@@ -273,11 +282,6 @@ export default function RoomPage() {
   const schedulePipHide = () => {
     clearPipTimer();
     pipHideTimerRef.current = window.setTimeout(() => {
-
-  // Fit rules: phones in portrait should fill the screen like a native selfie preview
-  const isPortraitScreen = (vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640)) > (vp.w || (typeof window !== "undefined" ? window.innerWidth || 360 : 360));
-  const mainFit = (isMobile && isPortraitScreen) ? "cover" : "contain";
-
       setPipVisible(false);
     }, 2500);
   };
@@ -298,10 +302,11 @@ export default function RoomPage() {
     const h = window.innerHeight || 640;
 
     if (isMobile) {
-      // Clear the top controls/safe area.
-      const topPad = 76;
+      // Bottom-left keeps PiP away from the top pill controls.
+      // Leave room for the bottom captions/controls area.
+      const bottomPad = 160;
       const x = pad;
-      const y = Math.max(pad, topPad);
+      const y = Math.max(pad, h - pipDims.h - bottomPad);
       setPipPos({ x, y });
     } else {
       const x = Math.max(pad, w - pipDims.w - pad);
