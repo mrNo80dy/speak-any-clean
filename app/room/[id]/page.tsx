@@ -880,10 +880,11 @@ export default function RoomPage() {
     setTextInput("");
   };
 
+  const totalParticipants = peerIds.length + 1;
   const firstPeerId = peerIds[0] ?? null;
 
-const firstRemoteStream = useMemo(() => {
-  if (!firstPeerId) return null;
+  const firstRemoteStream = useMemo(() => {
+    if (!firstPeerId) return null;
 
   // Primary: state map populated by upsertPeerStream
   const fromState = peerStreams[firstPeerId];
@@ -893,13 +894,6 @@ const firstRemoteStream = useMemo(() => {
   const peer = peersRef.current.get(firstPeerId);
   return peer?.remoteStream ?? null;
 }, [peerIds, peerStreams]); // note: peersRef is a ref, don't include it
-
-  const totalParticipants = peerIds.length + 1;
-  const firstRemoteId = peerIds[0] ?? null;
-  const firstRemoteStream = firstRemoteId
-  ? peerStreams[firstRemoteId] ?? null
-  : null;
-
 
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
@@ -1760,5 +1754,6 @@ const firstRemoteStream = useMemo(() => {
     </div>
   );
 }
+
 
 
