@@ -895,6 +895,11 @@ const firstRemoteStream = useMemo(() => {
 }, [peerIds, peerStreams]); // note: peersRef is a ref, don't include it
 
   const totalParticipants = peerIds.length + 1;
+  const firstRemoteId = peerIds[0] ?? null;
+  const firstRemoteStream = firstRemoteId
+  ? peerStreams[firstRemoteId] ?? null
+  : null;
+
 
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
@@ -1755,4 +1760,5 @@ const firstRemoteStream = useMemo(() => {
     </div>
   );
 }
+
 
