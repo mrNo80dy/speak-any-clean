@@ -1239,20 +1239,21 @@ export default function RoomPage() {
               </div>
             )}
 
-            {/* 1 peer: remote full + local PiP */}
-            {peerIds.length === 1 && firstRemoteId && (
-              <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} fit={mainFit} />
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    if (!el || !firstRemoteId) return;
-                    const stream = peerStreams[firstRemoteId];
-                    if (!stream) return;
-                    if (el.srcObject !== stream) el.srcObject = stream;
-                  }}
-                />
+          {/* 1 peer: remote full + local PiP */}
+{peerIds.length === 1 && firstPeerId && (
+  <div className="relative h-full w-full bg-neutral-900">
+    <FullBleedVideo stream={firstRemoteStream} fit={mainFit} />
+    <audio
+      data-remote
+      autoPlay
+      ref={(el) => {
+        if (!el || !firstPeerId) return;
+        const stream = peerStreams[firstPeerId];
+        if (!stream) return;
+        if (el.srcObject !== stream) el.srcObject = stream;
+      }}
+    />
+
 
                 {roomType === "video" && (
                   <div
@@ -1754,6 +1755,7 @@ export default function RoomPage() {
     </div>
   );
 }
+
 
 
 
