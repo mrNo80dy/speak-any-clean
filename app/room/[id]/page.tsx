@@ -263,10 +263,6 @@ export default function RoomPage() {
     return { w: Math.round(outW), h: Math.round(outH) };
   }, [vp.w, vp.h, pipAspect, isMobile]);
 
-  // Main video fit ("selfie" feel on mobile portrait)
-  const isPortrait = (vp.h || 0) >= (vp.w || 0);
-  const mainFit: "cover" | "contain" = isMobile && isPortrait ? "cover" : "contain";
-
   const clearPipTimer = () => {
     if (pipHideTimerRef.current) {
       window.clearTimeout(pipHideTimerRef.current);
@@ -297,11 +293,10 @@ export default function RoomPage() {
     const h = window.innerHeight || 640;
 
     if (isMobile) {
-      // Mobile: bottom-left, tucked near the PTT row (WhatsApp-like).
-      // Keep a little lift to avoid the browser nav + our bottom controls.
-      const bottomLift = 140;
+      // Clear the top controls/safe area.
+      const topPad = 76;
       const x = pad;
-      const y = Math.max(pad, h - pipDims.h - bottomLift);
+      const y = Math.max(pad, topPad);
       setPipPos({ x, y });
     } else {
       const x = Math.max(pad, w - pipDims.w - pad);
@@ -880,20 +875,9 @@ export default function RoomPage() {
     setTextInput("");
   };
 
+  const firstRemoteId = peerIds[0] ?? null;
+  const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
   const totalParticipants = peerIds.length + 1;
-  const firstPeerId = peerIds[0] ?? null;
-
-  const firstRemoteStream = useMemo(() => {
-    if (!firstPeerId) return null;
-
-  // Primary: state map populated by upsertPeerStream
-  const fromState = peerStreams[firstPeerId];
-  if (fromState) return fromState;
-
-  // Fallback: the WebRTC peer's persistent remoteStream (tracks are added into this)
-  const peer = peersRef.current.get(firstPeerId);
-  return peer?.remoteStream ?? null;
-}, [peerIds, peerStreams]); // note: peersRef is a ref, don't include it
 
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
@@ -963,6 +947,24 @@ export default function RoomPage() {
     return { dock: pttDock as "left" | "right", left: 0, top };
   }, [isMobile, pttDock, pttT, showTextInput]);
 
+  // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
+  const PIP_INLINE_W = 110;
+  const PIP_INLINE_H = 82;
+  const pipInline = isMobile && pttPx.dock === "bottom";
+  const pipInlineStyle = useMemo(() => {
+    if (!pipInline) return null;
+    const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
+    const left = Math.max(12, pttPx.left - PIP_INLINE_W - 12);
+    return {
+      position: "fixed" as const,
+      left,
+      bottom,
+      width: PIP_INLINE_W,
+      height: PIP_INLINE_H,
+      zIndex: 70,
+    };
+  }, [pipInline, pttPx.left]);
+
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -973,7 +975,7 @@ export default function RoomPage() {
             <div className="absolute inset-0">
               {localStreamRef.current ? (
                 <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-black" />
@@ -1235,52 +1237,62 @@ export default function RoomPage() {
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
+                <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
               </div>
             )}
 
-          {/* 1 peer: remote full + local PiP */}
-{peerIds.length === 1 && firstPeerId && (
-  <div className="relative h-full w-full bg-neutral-900">
-    <FullBleedVideo stream={firstRemoteStream} fit={mainFit} />
-    <audio
-      data-remote
-      autoPlay
-      ref={(el) => {
-        if (!el || !firstPeerId) return;
-        const stream = peerStreams[firstPeerId];
-        if (!stream) return;
-        if (el.srcObject !== stream) el.srcObject = stream;
-      }}
-    />
-
+            {/* 1 peer: remote full + local PiP */}
+            {peerIds.length === 1 && firstRemoteId && (
+              <div className="relative h-full w-full bg-neutral-900">
+                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
+                <audio
+                  data-remote
+                  autoPlay
+                  ref={(el) => {
+                    if (!el || !firstRemoteId) return;
+                    const stream = peerStreams[firstRemoteId];
+                    if (!stream) return;
+                    if (el.srcObject !== stream) el.srcObject = stream;
+                  }}
+                />
 
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
-                    className="pointer-events-auto absolute z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
-                    style={{
-                      left: pipPos?.x ?? 16,
-                      top: pipPos?.y ?? 16,
-                      // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
-                      width: isMobile ? 148 : 160,
-                      height: isMobile ? 100 : 96,
-                      opacity: pipVisible ? 1 : 0.25,
-                      transition: "opacity 250ms ease",
-                      touchAction: "none",
-                      userSelect: "none",
-                      WebkitUserSelect: "none",
-                    }}
-                    onPointerDown={pipOnPointerDown}
-                    onPointerMove={pipOnPointerMove}
-                    onPointerUp={pipOnPointerUpOrCancel}
-                    onPointerCancel={pipOnPointerUpOrCancel}
+                    className={`pointer-events-auto ${pipInline ? "fixed" : "absolute"} z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black`}
+                    style={
+                      pipInline && pipInlineStyle
+                        ? {
+                            ...pipInlineStyle,
+                            opacity: pipVisible ? 1 : 0.25,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                        : {
+                            left: pipPos?.x ?? 16,
+                            top: pipPos?.y ?? 16,
+                            // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
+                            width: isMobile ? 148 : 160,
+                            height: isMobile ? 100 : 96,
+                            opacity: pipVisible ? 1 : 0.25,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                    }
+                    onPointerDown={pipInline ? undefined : pipOnPointerDown}
+                    onPointerMove={pipInline ? undefined : pipOnPointerMove}
+                    onPointerUp={pipInline ? undefined : pipOnPointerUpOrCancel}
+                    onPointerCancel={pipInline ? undefined : pipOnPointerUpOrCancel}
                     onClick={() => pipShowNow()}
                     title="Your camera"
                     aria-label="Your camera"
                   >
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
@@ -1296,7 +1308,7 @@ export default function RoomPage() {
               <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
                 {/* local tile */}
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     <span>You</span>
                   </div>
@@ -1330,10 +1342,10 @@ export default function RoomPage() {
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal fit={mainFit} />
+                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit={mainFit} />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
                       <audio
                         data-remote
                         autoPlay
@@ -1528,25 +1540,6 @@ export default function RoomPage() {
               </button>
             </div>
           )}
-
-          {/* Mobile PIP (bottom-left, aligned with PTT baseline) */}
-{isMobile && camOn && localStreamRef.current && (
-  <div
-    className="fixed z-40 pointer-events-none"
-    style={{
-      left: 12,
-      bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-    }}
-  >
-    <div className="h-[84px] w-[64px] rounded-2xl overflow-hidden border border-white/15 bg-black/40 backdrop-blur-md shadow-lg">
-      <FullBleedVideo
-        stream={localStreamRef.current}
-        isLocal
-        preferCoverOnMobilePortrait
-      />
-    </div>
-  </div>
-)}
 
           {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
@@ -1755,7 +1748,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
-
-
-
