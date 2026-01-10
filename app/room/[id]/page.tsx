@@ -880,8 +880,20 @@ export default function RoomPage() {
     setTextInput("");
   };
 
-  const firstRemoteId = peerIds[0] ?? null;
-  const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
+  const firstPeerId = peerIds[0] ?? null;
+
+const firstRemoteStream = useMemo(() => {
+  if (!firstPeerId) return null;
+
+  // Primary: state map populated by upsertPeerStream
+  const fromState = peerStreams[firstPeerId];
+  if (fromState) return fromState;
+
+  // Fallback: the WebRTC peer's persistent remoteStream (tracks are added into this)
+  const peer = peersRef.current.get(firstPeerId);
+  return peer?.remoteStream ?? null;
+}, [peerIds, peerStreams]); // note: peersRef is a ref, don't include it
+
   const totalParticipants = peerIds.length + 1;
 
   const pillBase =
@@ -1517,6 +1529,25 @@ export default function RoomPage() {
             </div>
           )}
 
+          {/* Mobile PIP (bottom-left, aligned with PTT baseline) */}
+{isMobile && camOn && localStreamRef.current && (
+  <div
+    className="fixed z-40 pointer-events-none"
+    style={{
+      left: 12,
+      bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+    }}
+  >
+    <div className="h-[84px] w-[64px] rounded-2xl overflow-hidden border border-white/15 bg-black/40 backdrop-blur-md shadow-lg">
+      <FullBleedVideo
+        stream={localStreamRef.current}
+        isLocal
+        preferCoverOnMobilePortrait
+      />
+    </div>
+  </div>
+)}
+
           {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
             <div
@@ -1724,3 +1755,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
