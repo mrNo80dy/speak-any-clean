@@ -87,17 +87,8 @@ export function useCamera({
     switchingRef.current = true;
 
     try {
-      // Try fast path first
-      try {
-        // @ts-ignore
-        await oldTrack.applyConstraints({ facingMode: { ideal: nextFacing } });
-        setFacingMode(nextFacing);
-        log?.("camera flip (applyConstraints)", { nextFacing });
-        return;
-      } catch {
-        // fall through
-      }
-
+      // Reliable path: always acquire a new track.
+      // (applyConstraints works on some devices, but is inconsistent and often breaks sizing)
       const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
       if (!md?.getUserMedia) return;
 
@@ -113,7 +104,7 @@ export function useCamera({
       const newTrack = newStream.getVideoTracks()[0];
       if (!newTrack) return;
 
-      // Replace in local stream
+      // Replace in local stream (keep the same MediaStream instance so all refs stay valid)
       try {
         currentStream.removeTrack(oldTrack);
       } catch {}
@@ -133,6 +124,11 @@ export function useCamera({
           } catch {}
         });
       }
+
+      // Ensure the local preview refreshes immediately.
+      try {
+        attachLocalVideo?.();
+      } catch {}
 
       setFacingMode(nextFacing);
       log?.("camera flip (new track)", { nextFacing });
