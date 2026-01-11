@@ -126,10 +126,7 @@ export function useCamera({
       }
 
       // Ensure the local preview refreshes immediately.
-      try {
-        attachLocalVideo?.();
-      } catch {}
-
+      
       setFacingMode(nextFacing);
       log?.("camera flip (new track)", { nextFacing });
     } finally {
