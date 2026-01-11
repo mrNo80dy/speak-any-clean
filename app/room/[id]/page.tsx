@@ -1156,6 +1156,9 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
     </button>
   </div>
 </header>
+
+        {/* Main stage */}
+        <main className="relative h-full w-full">
         
           {/* Debug Panel */}
           {debugEnabled && (
@@ -1727,7 +1730,10 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
           )}
 
           {/* Optional: small text toggle (desktop + mobile) */}
-          <div className="absolute left-3 top-3 pointer-events-auto hidden" style={{ top: "calc(env(safe-area-inset-top) + 12px)" }}>
+          <div
+            className="absolute left-3 top-3 pointer-events-auto hidden"
+            style={{ top: "calc(env(safe-area-inset-top) + 12px)" }}
+          >
             <button
               type="button"
               onClick={() => setShowTextInput((v) => !v)}
