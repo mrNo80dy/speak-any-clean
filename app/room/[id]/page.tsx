@@ -1267,24 +1267,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
             </div>
           )}
 
-          {/* STT status */}
-          {sttStatus !== "ok" && (
-            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={{ top: "calc(env(safe-area-inset-top) + 52px)" }}>
-              {sttStatus === "unsupported"
-                ? "Live captions mic not supported on this device. Use Text."
-                : sttStatus === "error"
-                ? sttErrorMessage || "Live captions mic error. Use Text."
-                : "Checking live captions mic..."}
-            </div>
-          )}
-
-          {isMobile && sttArmedNotListening && (
-            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={{ top: "calc(env(safe-area-inset-top) + 52px)" }}>
-              Captions paused. Hold to Talk.
-            </div>
-          )}
-
-          <div className="h-full w-full" onPointerDown={isMobile ? showCameraHud : undefined}>
+         <div className="h-full w-full" onPointerDown={isMobile ? showCameraHud : undefined}>
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
@@ -1735,4 +1718,5 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
     </div>
   );
 }
+
 
