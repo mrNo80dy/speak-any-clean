@@ -93,7 +93,7 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     attachLocalVideo(localVideoElRef.current);
 
     return stream;
-  },}, [attachLocalVideo, opts.wantVideo, wantAudio]);
+  }, [attachLocalVideo, opts.wantVideo, wantAudio]);
 
   const setMicEnabled = useCallback((enabled: boolean) => {
     const s = localStreamRef.current;
