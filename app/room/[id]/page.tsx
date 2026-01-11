@@ -134,7 +134,25 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
     };
   }, []);
   
-  // Stable per-tab clientId
+  
+
+  // ---- Mobile Camera HUD (camera flip icon) --------------------------
+  const [cameraHudVisible, setCameraHudVisible] = useState<boolean>(false);
+  const cameraHudTimerRef = useRef<number | null>(null);
+
+  const showCameraHud = useCallback(() => {
+    if (!isMobile) return;
+    setCameraHudVisible(true);
+    if (cameraHudTimerRef.current) window.clearTimeout(cameraHudTimerRef.current);
+    cameraHudTimerRef.current = window.setTimeout(() => setCameraHudVisible(false), 2500);
+  }, [isMobile]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraHudTimerRef.current) window.clearTimeout(cameraHudTimerRef.current);
+    };
+  }, []);
+// Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const existing = sessionStorage.getItem("clientId");
@@ -1066,7 +1084,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
       type="button"
       onClick={() => {
         setCcOn((v) => !v);
-        showMobileHud();
+        showCameraHud();
       }}
       className={`pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[13px] text-white/95 shadow active:scale-[0.98] transition ${
         ccOn ? "ring-1 ring-white/25" : "opacity-90"
@@ -1268,7 +1286,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
             </div>
           )}
 
-          <div className="h-full w-full">
+          <div className="h-full w-full" onPointerDown={isMobile ? showCameraHud : undefined}>
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
@@ -1343,7 +1361,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
     style={{
       left: 12,
       bottom: `calc(env(safe-area-inset-bottom) + ${12 + PIP_INLINE_H + 10}px)`,
-      opacity: camOn && mobileHudVisible ? 1 : 0,
+      opacity: camOn && cameraHudVisible ? 1 : 0,
     }}
   >
     <button
