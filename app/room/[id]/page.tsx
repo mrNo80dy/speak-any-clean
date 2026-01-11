@@ -883,7 +883,7 @@ export default function RoomPage() {
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   // Mobile control sizing (avoid Tailwind dynamic class issues)
-  const PTT_SIZE = 76;
+  const PTT_SIZE = 68; // tuned for mobile ergonomics
 
   const online = rtStatus === "SUBSCRIBED";
 
@@ -933,37 +933,32 @@ export default function RoomPage() {
   };
 
   const pttPx = useMemo(() => {
-    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
-    const { xLeft, xRight, minY, maxY } = getPttLayout();
+  if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
 
-    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-    const t = clamp01(pttT);
+  // Mobile requirement: PTT is ALWAYS fixed bottom-center (no docking/dragging).
+  const { xCenter } = getPttLayout();
+  return { dock: "bottom" as const, left: xCenter, top: 0 };
+}, [isMobile, showTextInput]);
 
-    if (pttDock === "bottom") {
-      const left = Math.round(xLeft + (xRight - xLeft) * t);
-      return { dock: "bottom" as const, left, top: 0 };
-    }
-    const top = Math.round(minY + (maxY - minY) * t);
-    return { dock: pttDock as "left" | "right", left: 0, top };
-  }, [isMobile, pttDock, pttT, showTextInput]);
 
   // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
   const PIP_INLINE_W = 110;
   const PIP_INLINE_H = 82;
-  const pipInline = false; // Mobile PiP should stay far-left, not inline next to PTT
+  const pipInline = isMobile; // Mobile requirement: PiP fixed bottom-left inline with the PTT row
   const pipInlineStyle = useMemo(() => {
-    if (!pipInline) return null;
-    const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
-    const left = Math.max(12, pttPx.left - PIP_INLINE_W - 12);
-    return {
-      position: "fixed" as const,
-      left,
-      bottom,
-      width: PIP_INLINE_W,
-      height: PIP_INLINE_H,
-      zIndex: 70,
-    };
-  }, [pipInline, pttPx.left]);
+  if (!pipInline) return null;
+
+  // Mobile requirement: PiP fixed bottom-left (same bottom row as PTT).
+  return {
+    position: "fixed" as const,
+    left: 12,
+    bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+    width: PIP_INLINE_W,
+    height: PIP_INLINE_H,
+    zIndex: 70,
+  };
+}, [pipInline]);
+
 
   // ---- Render -----------------------------------------------
   return (
@@ -1545,13 +1540,7 @@ export default function RoomPage() {
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
-              style={
-                pttPx.dock === "bottom"
-                  ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
-                  : pttPx.dock === "left"
-                  ? { left: 12, top: pttPx.top }
-                  : { right: 12, top: pttPx.top }
-              }
+              style={{ left: "50%", transform: "translateX(-50%)", bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
             >
               <button
                 style={{
@@ -1562,14 +1551,15 @@ export default function RoomPage() {
                   WebkitUserSelect: "none",
                 }}
                 className={`
-                  rounded-full
-                  border
-                  shadow-xl
-                  backdrop-blur-md
-                  active:scale-[0.98]
-                  transition
-                  ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
-                `}
+  rounded-full
+  border-[6px]
+  shadow-xl
+  backdrop-blur-md
+  bg-transparent
+  active:scale-[0.98]
+  transition
+  ${micUiOn ? "border-emerald-300/70" : "border-red-300/70"}
+`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   try {
@@ -1598,114 +1588,50 @@ export default function RoomPage() {
                   }, 180);
                 }}
                 onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
+  const d = pttDragRef.current;
+  if (d.pointerId !== e.pointerId) return;
 
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
+  const dx = e.clientX - d.startX;
+  const dy = e.clientY - d.startY;
+  const dist = Math.hypot(dx, dy);
 
-                  // Much higher threshold to avoid “small movements” breaking PTT
-                  if (!d.moved && dist > 18) {
-                    d.moved = true;
+  // If the finger moves, cancel the pending hold-to-talk start.
+  if (!d.moved && dist > 18) {
+    d.moved = true;
 
-                    // cancel hold-to-talk if it was about to fire
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
+    if (d.holdTimer) {
+      clearTimeout(d.holdTimer);
+      d.holdTimer = null;
+    }
+    if (d.startedPtt) {
+      pttCancel();
+      d.startedPtt = false;
+    }
+  }
 
-                  // Don’t actually drag unless user clearly intends to
-                  if (!d.dragging && dist > 32) {
-                    d.dragging = true;
-                  }
-                  if (!d.dragging) return;
-
-                  const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
-
-                  // Only switch docks if REALLY near an edge
-                  const nearLeft = e.clientX <= edgeZone;
-                  const nearRight = e.clientX >= w - size - edgeZone;
-
-                  const nextDock: PttDock = nearLeft ? "left" : nearRight ? "right" : "bottom";
-
-                  if (nextDock !== pttDockRef.current) {
-                    setPttDock(nextDock);
-                    pttDockRef.current = nextDock;
-                  }
-
-                  if (nextDock === "bottom") {
-                    const centerX = e.clientX - size / 2;
-                    const t = (centerX - xLeft) / (xRight - xLeft || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  } else {
-                    const centerY = e.clientY - size / 2;
-                    const t = (centerY - minY) / (maxY - minY || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  }
-                }}
+  // Mobile requirement: PTT is fixed bottom-center (no dragging/docking).
+}}
                 onPointerUp={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  } catch {}
+  e.preventDefault();
+  try {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  } catch {}
 
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
+  const d = pttDragRef.current;
+  if (d.holdTimer) {
+    clearTimeout(d.holdTimer);
+    d.holdTimer = null;
+  }
 
-                  if (d.dragging) {
-                    const { xLeft, xCenter, xRight } = getPttLayout();
+  if (d.startedPtt) {
+    pttUp();
+  }
 
-                    // Snap bottom dock to left/center/right
-                    if (pttDockRef.current === "bottom") {
-                      const x = pttPx.left;
-                      const candidates = [xLeft, xCenter, xRight];
-                      let best = candidates[0];
-                      let bestDist = Math.abs(x - best);
-                      for (const c of candidates.slice(1)) {
-                        const dd = Math.abs(x - c);
-                        if (dd < bestDist) {
-                          bestDist = dd;
-                          best = c;
-                        }
-                      }
-
-                      const newT =
-                        best === xLeft
-                          ? 0
-                          : best === xRight
-                          ? 1
-                          : (xCenter - xLeft) / (xRight - xLeft || 1);
-
-                      setPttT(newT);
-                      try {
-                        localStorage.setItem("anyspeak_ptt_dock_v1", JSON.stringify({ dock: "bottom", t: newT }));
-                      } catch {}
-                    } else {
-                      try {
-                        localStorage.setItem(
-                          "anyspeak_ptt_dock_v1",
-                          JSON.stringify({ dock: pttDockRef.current, t: pttTRef.current })
-                        );
-                      } catch {}
-                    }
-                  } else if (d.startedPtt) {
-                    pttUp();
-                  }
-
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
+  d.pointerId = null;
+  d.dragging = false;
+  d.moved = false;
+  d.startedPtt = false;
+}}
                 onPointerCancel={(e) => {
                   e.preventDefault();
                   const d = pttDragRef.current;
