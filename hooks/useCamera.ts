@@ -118,6 +118,11 @@ export function useCamera({
 
       const currentStream = localStreamRef.current;
       const oldTrack = currentStream?.getVideoTracks?.()?.[0] ?? null;
+
+      // Stop the old track so browsers release the previous camera cleanly (mobile camera flip depends on this).
+      try {
+        oldTrack?.stop?.();
+      } catch {}
       if (!currentStream) return;
 
       const newStream = await md.getUserMedia({ video: constraints, audio: false });
@@ -241,11 +246,44 @@ export function useCamera({
       // Mobile: flip between user/environment.
       if (isMobile) {
         const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
-        await replaceVideoTrack({
-          facingMode: { ideal: nextFacing },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        });
+
+        // Prefer an explicit facingMode switch. Some mobile browsers ignore `ideal`, so try `exact` first.
+        try {
+          await replaceVideoTrack({
+            facingMode: { exact: nextFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          });
+        } catch {
+          // Fallback: choose a deviceId by label (requires permissions already granted).
+          const vids = await refreshDevices();
+          const list = vids.length ? vids : videoDevices;
+          const wantRear = nextFacing === "environment";
+          const re = wantRear
+            ? /(rear|back|environment|traseira|wide|ultra|tele)/i
+            : /(front|user|facetime|selfie|frontal)/i;
+
+          const chosen =
+            list.find((d) => re.test(d.label || "")) ||
+            // If labels are empty, at least alternate between device ids if possible.
+            (list.length >= 2 ? list[1] : list[0]);
+
+          if (chosen?.deviceId) {
+            await replaceVideoTrack({
+              deviceId: { exact: chosen.deviceId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            });
+          } else {
+            // Last resort: try `ideal` if nothing else worked.
+            await replaceVideoTrack({
+              facingMode: { ideal: nextFacing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            });
+          }
+        }
+
         setFacingMode(nextFacing);
         log?.("camera flip (mobile)", { nextFacing });
         return;
