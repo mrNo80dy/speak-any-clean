@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type FormEvent } from "react";
 import type React from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -117,6 +117,23 @@ export default function RoomPage() {
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }, []);
 
+  // ---- Mobile HUD (top controls) --------------------------
+const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
+  const hudTimerRef = useRef<number | null>(null);
+  
+  const showMobileHud = useCallback(() => {
+    if (!isMobile) return;
+    setMobileHudVisible(true);
+    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = window.setTimeout(() => setMobileHudVisible(false), 2500);
+  }, [isMobile]);
+  
+  useEffect(() => {
+    return () => {
+      if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+    };
+  }, []);
+  
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -962,6 +979,15 @@ export default function RoomPage() {
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
       <div className="relative h-full w-full overflow-hidden">
+{/* Mobile HUD wake zone: touch top portion to show controls */}
+{isMobile && (
+  <div
+    className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
+    style={{ height: "30vh" }}
+    onPointerDown={() => showMobileHud()}
+  />
+)}
+
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
@@ -1042,7 +1068,7 @@ export default function RoomPage() {
         setCcOn((v) => !v);
         showMobileHud();
       }}
-      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[13px] text-white/95 shadow active:scale-[0.98] transition ${
+      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[13px] text-white/95 shadow active:scale-[0.98] transition ${
         ccOn ? "ring-1 ring-white/25" : "opacity-90"
       }`}
       title="Closed captions"
@@ -1058,7 +1084,7 @@ export default function RoomPage() {
         toggleCamera();
         showMobileHud();
       }}
-      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[16px] text-white/95 shadow active:scale-[0.98] transition ${
+      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[16px] text-white/95 shadow active:scale-[0.98] transition ${
         roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
       }`}
       disabled={roomType !== "video"}
@@ -1076,7 +1102,7 @@ export default function RoomPage() {
           flipCamera();
           showMobileHud();
         }}
-        className="pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+        className="pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
         title="Switch camera"
         aria-label="Switch camera"
         disabled={!camOn}
@@ -1108,7 +1134,7 @@ export default function RoomPage() {
           } catch {}
         }
       }}
-      className="pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      className="pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
       title="Share"
       aria-label="Share"
     >
@@ -1307,6 +1333,32 @@ export default function RoomPage() {
                   </div>
                 )}
               </div>
+{/* Mobile: camera switch button just above PiP (fades with camera + HUD) */}
+{isMobile && roomType === "video" && canFlip && (
+  <div
+    className="fixed pointer-events-auto z-[80] transition-opacity duration-200"
+    style={{
+      left: 12,
+      bottom: `calc(env(safe-area-inset-bottom) + ${12 + PIP_INLINE_H + 10}px)`,
+      opacity: camOn && mobileHudVisible ? 1 : 0,
+    }}
+  >
+    <button
+      type="button"
+      onClick={() => {
+        flipCamera();
+        showMobileHud();
+      }}
+      disabled={!camOn}
+      className="w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="Switch camera"
+      aria-label="Switch camera"
+    >
+      🔄
+    </button>
+  </div>
+)}
+
             )}
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
@@ -1520,7 +1572,8 @@ export default function RoomPage() {
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Desktop mic button (fix: no way to talk on PC) */}
           {!isMobile && (
-            <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <div className="absolute left-3 pointer-events-auto"
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
               <button
                 onClick={() => void toggleMic()}
                 className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
@@ -1533,7 +1586,8 @@ export default function RoomPage() {
 
           {/* Desktop-only camera toggle (mobile uses top pills) */}
           {!isMobile && (
-            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <div className="absolute right-3 pointer-events-auto"
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
               <button
                 onClick={toggleCamera}
                 className={`${pillBase} ${camClass} ${
