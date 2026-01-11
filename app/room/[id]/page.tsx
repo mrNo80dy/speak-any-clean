@@ -1332,7 +1332,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
                     )}
                   </div>
                 )}
-              </div>
+              
 {/* Mobile: camera switch button just above PiP (fades with camera + HUD) */}
 {isMobile && roomType === "video" && canFlip && (
   <div
@@ -1359,6 +1359,8 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
   </div>
 )}
 
+
+</div>
             )}
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
