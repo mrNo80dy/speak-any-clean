@@ -1250,7 +1250,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
 
           {/* STT status */}
           {sttStatus !== "ok" && (
-            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
+            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={ top: "calc(env(safe-area-inset-top) + 52px)" }>
               {sttStatus === "unsupported"
                 ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
@@ -1260,7 +1260,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
           )}
 
           {isMobile && sttArmedNotListening && (
-            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
+            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={ top: "calc(env(safe-area-inset-top) + 52px)" }>
               Captions paused. Hold to Talk.
             </div>
           )}
@@ -1488,7 +1488,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
 
               <div
-                className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
+                className="relative flex flex-col gap-1.5 px-3 pb-3"
                 style={{
                   paddingBottom: showTextInput
                     ? "calc(env(safe-area-inset-bottom) + 148px)"
@@ -1727,7 +1727,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
           )}
 
           {/* Optional: small text toggle (desktop + mobile) */}
-          <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+12px)] pointer-events-auto hidden">
+          <div className="absolute left-3 top-3 pointer-events-auto hidden" style={ top: "calc(env(safe-area-inset-top) + 12px)" }>
             <button
               type="button"
               onClick={() => setShowTextInput((v) => !v)}
