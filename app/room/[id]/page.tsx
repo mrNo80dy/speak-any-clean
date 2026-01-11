@@ -117,32 +117,6 @@ export default function RoomPage() {
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }, []);
 
-  // ---- Mobile HUD (hide most controls until touch) ------------
-  const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(() => {
-    // Hidden by default on mobile, visible by default on desktop.
-    if (typeof navigator === "undefined") return true;
-    const m = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    return !m;
-  });
-  const hudHideTimerRef = useRef<number | null>(null);
-  const showMobileHud = (ms = 2500) => {
-    if (!isMobile) return;
-    setMobileHudVisible(true);
-    if (hudHideTimerRef.current) {
-      window.clearTimeout(hudHideTimerRef.current);
-      hudHideTimerRef.current = null;
-    }
-    hudHideTimerRef.current = window.setTimeout(() => {
-      setMobileHudVisible(false);
-    }, ms);
-  };
-  useEffect(() => {
-    return () => {
-      if (hudHideTimerRef.current) window.clearTimeout(hudHideTimerRef.current);
-      hudHideTimerRef.current = null;
-    };
-  }, []);
-
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -166,6 +140,20 @@ export default function RoomPage() {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
+  // ---- Mobile PTT positioning (dockable) ----
+  const [pttDock, setPttDock] = useState<PttDock>("bottom");
+  const [pttT, setPttT] = useState<number>(0); // 0..1
+
+  const pttDockRef = useRef<PttDock>("bottom");
+  const pttTRef = useRef<number>(0);
+
+  useEffect(() => {
+    pttDockRef.current = pttDock;
+  }, [pttDock]);
+  useEffect(() => {
+    pttTRef.current = pttT;
+  }, [pttT]);
+
   const pttDragRef = useRef<{
     pointerId: number | null;
     startX: number;
@@ -185,6 +173,28 @@ export default function RoomPage() {
     holdTimer: null,
     dragStartedAtMs: 0,
   });
+
+  useEffect(() => {
+    if (!isMobile) return;
+    try {
+      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const d = parsed?.dock as PttDock | undefined;
+        const t = parsed?.t as number | undefined;
+        const okDock = d === "bottom" || d === "left" || d === "right";
+        if (okDock && typeof t === "number") {
+          setPttDock(d as PttDock);
+          setPttT(Math.min(1, Math.max(0, t)));
+          return;
+        }
+      }
+    } catch {}
+
+    // Default: bottom-left-ish
+    setPttDock("bottom");
+    setPttT(0);
+  }, [isMobile]);
 
   const displayNameRef = useRef<string>("You");
 
@@ -873,9 +883,7 @@ export default function RoomPage() {
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   // Mobile control sizing (avoid Tailwind dynamic class issues)
-  const PTT_SIZE = 76;
-
-  const online = rtStatus === "SUBSCRIBED";
+  const PTT_SIZE = 68; // tuned for mobile ergonomics
 
   const camClass = camOn
     ? "bg-neutral-100 text-neutral-900 border-neutral-300"
@@ -902,43 +910,58 @@ export default function RoomPage() {
     } catch {}
   };
 
-  // Mobile: keep PiP tucked inline to the left of the PTT button (lower-left, inline with PTT)
+  // ---- PTT dock layout helpers (mobile) ----------------------
+  const getPttLayout = () => {
+    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
+    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
+    const size = 64; // smaller, less ostentatious
+    const margin = 12;
+    const edgeZone = 44; // must be closer to edge
+
+    const xLeft = margin;
+    const xCenter = Math.round((w - size) / 2);
+    const xRight = Math.max(margin, w - size - margin);
+
+    const topPad = 92;
+    const bottomPad = showTextInput ? 210 : 150;
+    const minY = topPad;
+    const maxY = Math.max(minY, h - bottomPad - size);
+
+    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
+  };
+
+  const pttPx = useMemo(() => {
+  if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+
+  // Mobile requirement: PTT is ALWAYS fixed bottom-center (no docking/dragging).
+  const { xCenter } = getPttLayout();
+  return { dock: "bottom" as const, left: xCenter, top: 0 };
+}, [isMobile, showTextInput]);
+
+
+  // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
   const PIP_INLINE_W = 110;
   const PIP_INLINE_H = 82;
-  const pipInline = isMobile;
+  const pipInline = isMobile; // Mobile requirement: PiP fixed bottom-left inline with the PTT row
   const pipInlineStyle = useMemo(() => {
-    if (!pipInline) return null;
-    const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
-    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
-    const pttLeft = Math.round((w - PTT_SIZE) / 2);
-    const left = Math.max(12, pttLeft - PIP_INLINE_W - 12);
-    return {
-      position: "fixed" as const,
-      left,
-      bottom,
-      width: PIP_INLINE_W,
-      height: PIP_INLINE_H,
-      zIndex: 70,
-    };
-  }, [pipInline]);
+  if (!pipInline) return null;
+  const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
+  return {
+    position: "fixed" as const,
+    left: 12, // hard-left on mobile (inline with PTT row)
+    bottom,
+    width: PIP_INLINE_W,
+    height: PIP_INLINE_H,
+    zIndex: 70,
+  };
+}, [pipInline]);
 
-  const pipInlineFlipStyle = useMemo(() => {
-    if (!pipInline || !pipInlineStyle) return null;
-    return {
-      position: "fixed" as const,
-      left: (pipInlineStyle as any).left,
-      bottom: `calc(env(safe-area-inset-bottom) + 12px + ${PIP_INLINE_H + 8}px)`,
-      zIndex: 71,
-    };
-  }, [pipInline, pipInlineStyle]);
+
 
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
-      <div
-        className="relative h-full w-full overflow-hidden"
-        onPointerDownCapture={() => showMobileHud()}
-      >
+      <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
@@ -1007,98 +1030,109 @@ export default function RoomPage() {
         )}
 
         {/* Top floating controls */}
-        <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-200 ${
-            isMobile && !mobileHudVisible ? "opacity-0" : "opacity-100"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            {/* Left: Online status */}
-            <span
-              className={`pointer-events-auto px-3 py-1.5 rounded-full text-[11px] shadow backdrop-blur-md border border-white/10 ${
-                online ? "bg-emerald-600/55 text-white" : "bg-red-600/45 text-white"
-              }`}
-            >
-              {online ? "Online" : "Offline"}
-            </span>
+        <header className={/* Top floating controls (no pills) */}
+<header
+  className={`absolute top-3 left-0 right-0 z-20 pointer-events-none transition-opacity duration-200 ${
+    isMobile && !mobileHudVisible ? "opacity-0" : "opacity-100"
+  }`}
+>
+  <div className="flex items-center justify-center gap-3">
+    {/* CC */}
+    <button
+      type="button"
+      onClick={() => {
+        setCcOn((v) => !v);
+        showMobileHud();
+      }}
+      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[13px] text-white/95 shadow active:scale-[0.98] transition ${
+        ccOn ? "ring-1 ring-white/25" : "opacity-90"
+      }`}
+      title="Closed captions"
+      aria-label="Closed captions"
+    >
+      CC
+    </button>
 
-            {/* Right: controls */}
-            <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow ${
-                ccOn ? "ring-1 ring-white/20" : "opacity-80"
-              }`}
-              title="Closed Captions"
-            >
-              CC
-            </button>
+    {/* Camera toggle */}
+    <button
+      type="button"
+      onClick={() => {
+        toggleCamera();
+        showMobileHud();
+      }}
+      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[16px] text-white/95 shadow active:scale-[0.98] transition ${
+        roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+      }`}
+      disabled={roomType !== "video"}
+      title="Camera"
+      aria-label="Camera"
+    >
+      {camOn ? "📷" : "📷✕"}
+    </button>
 
-            {/* Camera ON/OFF as a pill (mobile + desktop) */}
-            <button
-              type="button"
-              onClick={toggleCamera}
-              className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition ${
-                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-              }`}
-              disabled={roomType !== "video"}
-              title="Camera"
-            >
-              {camOn ? "📷" : "📷✕"}
-            </button>
+    {/* Flip camera (desktop only; mobile flip lives above PiP) */}
+    {canFlip && !isMobile && (
+      <button
+        type="button"
+        onClick={() => {
+          flipCamera();
+          showMobileHud();
+        }}
+        className="pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+        title="Switch camera"
+        aria-label="Switch camera"
+        disabled={!camOn}
+      >
+        🔄
+      </button>
+    )}
 
-            {/* Flip camera (desktop only; mobile flip lives above PiP) */}
-            {canFlip && !isMobile && (
-              <button
-                type="button"
-                onClick={flipCamera}
-                className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
-                title="Switch camera"
-              >
-                🔄
-              </button>
-            )}
+    {/* Share */}
+    <button
+      type="button"
+      onClick={async () => {
+        showMobileHud();
+        try {
+          const url = window.location.href;
+          // @ts-ignore
+          if (navigator.share) {
+            // @ts-ignore
+            await navigator.share({ url, text: "Join my Any-Speak room" });
+          } else {
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          }
+        } catch {
+          try {
+            const url = window.location.href;
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          } catch {}
+        }
+      }}
+      className="pointer-events-auto w-11 h-11 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="Share"
+      aria-label="Share"
+    >
+      ⤴️
+    </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const url = window.location.href;
-                  // @ts-ignore
-                  if (navigator.share) {
-                    // @ts-ignore
-                    await navigator.share({ url, text: "Join my Any-Speak room" });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                    log("copied room link", { url });
-                  }
-                } catch {
-                  try {
-                    const url = window.location.href;
-                    await navigator.clipboard.writeText(url);
-                    log("copied room link", { url });
-                  } catch {}
-                }
-              }}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
-            >
-              ⤴️
-            </button>
-
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-red-600/45 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
-              title="End call"
-            >
-              📴
-            </button>
-            </div>
-          </div>
-        </header>
-
-        <main className="absolute inset-0 pt-0 md:pt-14">
+    {/* End call */}
+    <button
+      type="button"
+      onClick={() => {
+        showMobileHud();
+        void handleEndCall();
+      }}
+      className="pointer-events-auto w-11 h-11 rounded-full bg-red-600/35 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="End call"
+      aria-label="End call"
+    >
+      📴
+    </button>
+  </div>
+</header>
+4">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1238,7 +1272,7 @@ export default function RoomPage() {
                       pipInline && pipInlineStyle
                         ? {
                             ...pipInlineStyle,
-                            opacity: pipVisible ? 1 : 0.15,
+                            opacity: pipVisible ? 1 : 0.25,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1250,7 +1284,7 @@ export default function RoomPage() {
                             // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
                             width: isMobile ? 148 : 160,
                             height: isMobile ? 100 : 96,
-                            opacity: pipVisible ? 1 : 0.15,
+                            opacity: pipVisible ? 1 : 0.25,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1268,28 +1302,11 @@ export default function RoomPage() {
                     {camOn ? (
                       <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/30">
+                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
                       </div>
                     )}
                   </div>
-                )}
-
-                {/* Mobile flip button: just above PiP, fades with camera + HUD */}
-                {isMobile && canFlip && pipInline && pipInlineFlipStyle && (
-                  <button
-                    type="button"
-                    onClick={flipCamera}
-                    className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition-opacity duration-200`}
-                    style={{
-                      ...(pipInlineFlipStyle as any),
-                      opacity: mobileHudVisible ? (camOn ? 1 : 0.35) : 0,
-                    }}
-                    title="Switch camera"
-                    disabled={!camOn}
-                  >
-                    🔄
-                  </button>
                 )}
               </div>
             )}
@@ -1532,7 +1549,7 @@ export default function RoomPage() {
             </div>
           )}
 
-          {/* Mobile PTT (fixed bottom-center) */}
+          {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
@@ -1547,15 +1564,15 @@ export default function RoomPage() {
                   WebkitUserSelect: "none",
                 }}
                 className={`
-                  rounded-full
-                  border-4
-                  bg-transparent
-                  shadow-xl
-                  backdrop-blur-md
-                  active:scale-[0.98]
-                  transition
-                  ${micUiOn ? "border-emerald-300/80" : "border-red-300/80"}
-                `}
+  rounded-full
+  border-[6px]
+  shadow-xl
+  backdrop-blur-md
+  bg-transparent
+  active:scale-[0.98]
+  transition
+  ${micUiOn ? "border-emerald-300/70" : "border-red-300/70"}
+`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   try {
@@ -1584,52 +1601,50 @@ export default function RoomPage() {
                   }, 180);
                 }}
                 onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
+  const d = pttDragRef.current;
+  if (d.pointerId !== e.pointerId) return;
 
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
+  const dx = e.clientX - d.startX;
+  const dy = e.clientY - d.startY;
+  const dist = Math.hypot(dx, dy);
 
-                  // Much higher threshold to avoid “small movements” breaking PTT
-                  if (!d.moved && dist > 18) {
-                    d.moved = true;
+  // If the finger moves, cancel the pending hold-to-talk start.
+  if (!d.moved && dist > 18) {
+    d.moved = true;
 
-                    // cancel hold-to-talk if it was about to fire
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
+    if (d.holdTimer) {
+      clearTimeout(d.holdTimer);
+      d.holdTimer = null;
+    }
+    if (d.startedPtt) {
+      pttCancel();
+      d.startedPtt = false;
+    }
+  }
 
-                  // PTT is fixed bottom-center on mobile (no dragging)
-                  return;
-                }}
+  // Mobile requirement: PTT is fixed bottom-center (no dragging/docking).
+}}
                 onPointerUp={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  } catch {}
+  e.preventDefault();
+  try {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  } catch {}
 
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
+  const d = pttDragRef.current;
+  if (d.holdTimer) {
+    clearTimeout(d.holdTimer);
+    d.holdTimer = null;
+  }
 
-                  if (d.startedPtt) {
-                    pttUp();
-                  }
+  if (d.startedPtt) {
+    pttUp();
+  }
 
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
+  d.pointerId = null;
+  d.dragging = false;
+  d.moved = false;
+  d.startedPtt = false;
+}}
                 onPointerCancel={(e) => {
                   e.preventDefault();
                   const d = pttDragRef.current;
@@ -1651,7 +1666,7 @@ export default function RoomPage() {
                 title="Hold to talk"
               >
                 <div className="flex items-center justify-center text-center leading-tight">
-                  <div className={`text-xl ${micUiOn ? "text-emerald-200" : "text-red-200"}`}>🎙️</div>
+                  <div className="text-xl">🎙️</div>
                 </div>
               </button>
             </div>
