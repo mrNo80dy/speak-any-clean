@@ -1,314 +1,568 @@
 "use client";
 
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Video, Globe, Mic } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Card } from "@/components/ui/card";
+import {
+  Phone,
+  Video,
+  Users,
+  Headphones,
+  Plus,
+  MessageSquare,
+  Share2,
+  Search,
+} from "lucide-react";
 
 type RoomType = "audio" | "video";
+
+type Contact = {
+  id: string; // local id for now
+  name: string;
+};
+
+const LS_DISPLAY_NAME = "displayName";
+const LS_CONTACTS = "as_contacts_v1";
+const LS_LAST_LINK_BY_MODE = "as_last_link_by_mode_v1";
+const LS_CONTACT_THREAD_PREFIX = "as_contact_thread_v1:"; // + contactId => { audio?: roomId, video?: roomId }
+
+type Mode = "call" | "video" | "meet" | "listen";
+
+function safeJsonParse<T>(value: string | null, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function makeId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "?";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (a + b).toUpperCase();
+}
+
+async function shareOrCopy(url: string) {
+  if (typeof navigator !== "undefined" && "share" in navigator) {
+    try {
+      // @ts-ignore
+      await navigator.share({ url });
+      return { ok: true, method: "share" as const };
+    } catch {
+      // fall through
+    }
+  }
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url);
+    return { ok: true, method: "copy" as const };
+  }
+  window.prompt("Copy this link:", url);
+  return { ok: true, method: "prompt" as const };
+}
 
 export default function HomePage() {
   const router = useRouter();
 
-  const [roomName, setRoomName] = useState("");
-  const [roomIdOrCode, setRoomIdOrCode] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [joining, setJoining] = useState(false);
   const [displayName, setDisplayName] = useState("");
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [search, setSearch] = useState("");
 
-  // ✅ Creator must choose (NO default)
-  const [roomType, setRoomType] = useState<RoomType | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
-  // Load saved display name once (shared between create/join, PC/phone)
+  const [addOpen, setAddOpen] = useState(false);
+  const [newContactName, setNewContactName] = useState("");
+
+  const [contactOpen, setContactOpen] = useState(false);
+  const [activeContact, setActiveContact] = useState<Contact | null>(null);
+
+  const [busy, setBusy] = useState<
+    Mode | "contact-audio" | "contact-video" | null
+  >(null);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const saved = localStorage.getItem("displayName");
-    if (saved) setDisplayName(saved);
+
+    const savedName = localStorage.getItem(LS_DISPLAY_NAME);
+    if (savedName) setDisplayName(savedName);
+
+    const savedContacts = safeJsonParse<Contact[]>(
+      localStorage.getItem(LS_CONTACTS),
+      []
+    );
+    setContacts(savedContacts);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nameToSave = (displayName || "").trim() || "Guest";
+    localStorage.setItem(LS_DISPLAY_NAME, nameToSave);
+  }, [displayName]);
+
+  const filteredContacts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return contacts;
+    return contacts.filter((c) => c.name.toLowerCase().includes(q));
+  }, [contacts, search]);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 1800);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const saveContacts = (next: Contact[]) => {
+    setContacts(next);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(LS_CONTACTS, JSON.stringify(next));
+    }
+  };
+
+  const addContact = () => {
+    const name = newContactName.trim();
+    if (!name) return;
+    const next = [{ id: makeId(), name }, ...contacts];
+    saveContacts(next);
+    setNewContactName("");
+    setAddOpen(false);
+    showToast("Contact added");
+  };
+
+  const getOrigin = () => {
+    if (typeof window === "undefined") return "";
+    return window.location.origin;
+  };
 
   const generateRoomCode = () =>
     Math.random().toString(36).slice(2, 8).toUpperCase();
 
-  const saveDisplayName = () => {
-    const nameToSave = displayName.trim() || "Guest";
-    if (typeof window !== "undefined") {
-      localStorage.setItem("displayName", nameToSave);
-    }
-    return nameToSave;
+  const createRoom = async (room_type: RoomType, name: string) => {
+    const code = generateRoomCode();
+    const { data, error } = await supabase
+      .from("rooms")
+      .insert({
+        name,
+        code,
+        is_active: true,
+        room_type,
+      })
+      .select("id, code, room_type")
+      .single();
+
+    if (error) throw new Error(error.message);
+    if (!data?.id) throw new Error("Create failed: no id returned");
+    return data.id as string;
   };
 
-  const handleCreateRoom = async () => {
-    const name = roomName.trim();
-    if (!name) return;
+  const getLastLinkMap = (): Record<Mode, string | undefined> => {
+    if (typeof window === "undefined") return {} as any;
+    return safeJsonParse<Record<Mode, string | undefined>>(
+      localStorage.getItem(LS_LAST_LINK_BY_MODE),
+      {} as any
+    );
+  };
 
-    // ✅ Enforce explicit choice
-    if (!roomType) {
-      alert("Please choose Audio or Video.");
-      return;
-    }
+  const setLastLink = (mode: Mode, roomId: string) => {
+    if (typeof window === "undefined") return;
+    const m = getLastLinkMap();
+    m[mode] = roomId;
+    localStorage.setItem(LS_LAST_LINK_BY_MODE, JSON.stringify(m));
+  };
 
-    setCreating(true);
+  const shareModeLink = async (mode: Mode) => {
+    setBusy(mode);
     try {
-      console.log("[CreateRoom] start", { name, roomType });
+      const last = getLastLinkMap()[mode];
+      let roomId = last;
 
-      const code = generateRoomCode();
-      saveDisplayName();
+      if (!roomId) {
+        const room_type: RoomType =
+          mode === "video" || mode === "meet" ? "video" : "audio";
+        const pretty =
+          mode === "call"
+            ? "Call Link"
+            : mode === "video"
+            ? "Video Link"
+            : mode === "meet"
+            ? "Meet Link"
+            : "Listen Link";
 
-      // ✅ Save creator-enforced room_type in DB
-      const { data, error } = await supabase
-        .from("rooms")
-        .insert({
-          name,
-          code,
-          is_active: true,
-          room_type: roomType,
-        })
-        .select("id, code, room_type")
-        .single();
-
-      console.log("[CreateRoom] result", { data, error });
-
-      if (error) {
-        alert(`Create failed: ${error.message}`);
-        return;
-      }
-      if (!data?.id || !data?.code) {
-        alert("Create failed: no id/code returned from database");
-        return;
+        roomId = await createRoom(room_type, pretty);
+        setLastLink(mode, roomId);
       }
 
-      router.push(`/room/${data.id}`);
+      const url = `${getOrigin()}/room/${roomId}`;
+      const res = await shareOrCopy(url);
+      showToast(res.method === "share" ? "Share opened" : "Link copied");
     } catch (e: any) {
-      console.error("[CreateRoom] unexpected error", e);
-      alert(`Unexpected error creating room: ${e?.message ?? e}`);
+      alert(`Could not create/share link: ${e?.message ?? e}`);
     } finally {
-      setCreating(false);
+      setBusy(null);
     }
   };
 
-  const handleJoinRoom = async () => {
-    const value = roomIdOrCode.trim();
-    if (!value) return;
+  const getContactThread = (contactId: string): { audio?: string; video?: string } => {
+    if (typeof window === "undefined") return {};
+    return safeJsonParse<{ audio?: string; video?: string }>(
+      localStorage.getItem(LS_CONTACT_THREAD_PREFIX + contactId),
+      {}
+    );
+  };
 
-    setJoining(true);
+  const setContactThread = (contactId: string, next: { audio?: string; video?: string }) => {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(LS_CONTACT_THREAD_PREFIX + contactId, JSON.stringify(next));
+  };
+
+  const openContactActions = (c: Contact) => {
+    setActiveContact(c);
+    setContactOpen(true);
+  };
+
+  const startContactCall = async (kind: "audio" | "video") => {
+    if (!activeContact) return;
+    const key = kind === "audio" ? "contact-audio" : "contact-video";
+    setBusy(key);
+
     try {
-      console.log("[JoinRoom] value", value);
+      const thread = getContactThread(activeContact.id);
+      const existing = kind === "audio" ? thread.audio : thread.video;
+      let roomId = existing;
 
-      saveDisplayName();
-
-      const looksLikeUUID =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-          value
-        );
-
-      if (looksLikeUUID) {
-        router.push(`/room/${value}`);
-        return;
+      if (!roomId) {
+        const room_type: RoomType = kind;
+        const pretty = `${activeContact.name} (${kind === "audio" ? "Call" : "Video"})`;
+        roomId = await createRoom(room_type, pretty);
+        const updated = { ...thread, [kind]: roomId } as any;
+        setContactThread(activeContact.id, updated);
       }
 
-      const { data: room, error } = await supabase
-        .from("rooms")
-        .select("id")
-        .eq("code", value.toUpperCase())
-        .eq("is_active", true)
-        .maybeSingle();
-
-      console.log("[JoinRoom] result", { room, error });
-
-      if (error) {
-        alert(`Lookup failed: ${error.message}`);
-        return;
-      }
-      if (!room?.id) {
-        alert("Room not found. Check the ID/code and try again.");
-        return;
-      }
-
-      router.push(`/room/${room.id}`);
+      setContactOpen(false);
+      router.push(`/room/${roomId}`);
     } catch (e: any) {
-      console.error("[JoinRoom] unexpected error", e);
-      alert(`Unexpected error joining room: ${e?.message ?? e}`);
+      alert(`Could not start call: ${e?.message ?? e}`);
     } finally {
-      setJoining(false);
+      setBusy(null);
     }
   };
 
-  const onCreateKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleCreateRoom();
-  };
-  const onJoinKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleJoinRoom();
-  };
-
-  const createDisabled = creating || !roomName.trim() || !roomType;
+  const hasContacts = contacts.length > 0;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
-      <div className="w-full max-w-4xl">
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <div className="p-3 bg-indigo-600 rounded-xl">
-              <Video className="w-8 h-8 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Top */}
+      <div className="max-w-5xl mx-auto px-4 pt-8 pb-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-indigo-600 flex items-center justify-center shadow-sm">
+              <Video className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-4xl font-bold text-gray-900">Any-Speak</h1>
-          </div>
-          <p className="text-lg text-gray-600">
-            Real-time calls with live translation (audio or video)
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-6">
-          {/* Create Room */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Create Room</CardTitle>
-              <CardDescription>
-                The creator chooses Audio or Video. Joiners follow the room type.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="display-name-create">Your Name</Label>
-                <Input
-                  id="display-name-create"
-                  placeholder="How you appear in the room"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="room-name">Room Name</Label>
-                <Input
-                  id="room-name"
-                  placeholder="My Translation Room"
-                  value={roomName}
-                  onChange={(e) => setRoomName(e.target.value)}
-                  onKeyDown={onCreateKey}
-                />
-              </div>
-
-              {/* ✅ Room type picker (required) */}
-              <div className="space-y-2">
-                <Label>Room Type</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRoomType("audio")}
-                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                      roomType === "audio"
-                        ? "bg-indigo-600 text-white border-indigo-600"
-                        : "bg-white text-gray-900 border-gray-300"
-                    }`}
-                  >
-                    <Mic className="w-4 h-4" />
-                    Audio
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRoomType("video")}
-                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                      roomType === "video"
-                        ? "bg-indigo-600 text-white border-indigo-600"
-                        : "bg-white text-gray-900 border-gray-300"
-                    }`}
-                  >
-                    <Video className="w-4 h-4" />
-                    Video
-                  </button>
-                </div>
-
-                {roomType === null && (
-                  <div className="text-xs text-amber-700">
-                    Choose Audio or Video to enable Create.
-                  </div>
-                )}
-
-                <div className="text-xs text-gray-600">
-                  This locks the room’s type in the database.
-                </div>
-              </div>
-
-              <Button onClick={handleCreateRoom} disabled={createDisabled} className="w-full">
-                {creating
-                  ? "Creating..."
-                  : roomType === "video"
-                    ? "Create Video Room"
-                    : roomType === "audio"
-                      ? "Create Audio Room"
-                      : "Create Room"}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Join Room */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Join Room</CardTitle>
-              <CardDescription>
-                Enter a Room ID (UUID) or Room Code. Room type is enforced by the creator.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="display-name-join">Your Name</Label>
-                <Input
-                  id="display-name-join"
-                  placeholder="How you appear in the room"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="room-id">Room ID or Code</Label>
-                <Input
-                  id="room-id"
-                  placeholder="Paste the room ID or enter the 6-char code"
-                  value={roomIdOrCode}
-                  onChange={(e) => setRoomIdOrCode(e.target.value)}
-                  onKeyDown={onJoinKey}
-                />
-              </div>
-
-              <Button
-                onClick={handleJoinRoom}
-                disabled={joining || !roomIdOrCode.trim()}
-                variant="outline"
-                className="w-full bg-transparent"
-              >
-                {joining ? "Joining..." : "Join Room"}
-              </Button>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="mt-8 p-6 bg-white rounded-lg shadow-sm">
-          <div className="flex items-start gap-3">
-            <Globe className="w-5 h-5 text-indigo-600 mt-0.5" />
             <div>
-              <h3 className="font-semibold text-gray-900 mb-2">How it works</h3>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>• Create an Audio or Video room (creator sets the type)</li>
-                <li>• Join with the Room ID or 6-character code</li>
-                <li>• Speak naturally — captions translate in real-time</li>
-                <li>• Optionally hear translated speech (if enabled)</li>
-              </ul>
+              <div className="text-2xl font-semibold text-gray-900 leading-tight">
+                Any-Speak
+              </div>
+              <div className="text-sm text-gray-600">
+                Calls with live translation — audio or video
+              </div>
             </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="bg-white/70"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add
+            </Button>
+          </div>
+        </div>
+
+        {/* Search + Name */}
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <Card className="bg-white/70 border-white/40 p-3">
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-gray-500" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search contacts"
+                className="bg-white"
+              />
+            </div>
+          </Card>
+
+          <Card className="bg-white/70 border-white/40 p-3">
+            <div className="flex items-center gap-3">
+              <div className="text-xs text-gray-600 whitespace-nowrap">
+                Your name
+              </div>
+              <Input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="How you appear"
+                className="bg-white"
+              />
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="max-w-5xl mx-auto px-4 pb-24">
+        {!hasContacts ? (
+          <Card className="bg-white/75 border-white/40 p-6">
+            <div className="flex flex-col items-center text-center gap-3">
+              <div className="text-lg font-semibold text-gray-900">
+                No contacts yet
+              </div>
+              <div className="text-sm text-gray-600 max-w-md">
+                Add a contact, or use the buttons below to share a Call / Video /
+                Meet / Listen link.
+              </div>
+              <Button onClick={() => setAddOpen(true)} className="mt-2">
+                <Plus className="w-4 h-4 mr-2" />
+                Add contact
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+            {filteredContacts.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => openContactActions(c)}
+                className="group rounded-2xl bg-white/75 border border-white/40 hover:bg-white transition shadow-sm p-3 text-left"
+                type="button"
+                title={c.name}
+              >
+                <div className="w-12 h-12 rounded-full bg-indigo-600/15 flex items-center justify-center text-indigo-800 font-semibold">
+                  {initials(c.name)}
+                </div>
+                <div className="mt-2 text-sm font-medium text-gray-900 line-clamp-1">
+                  {c.name}
+                </div>
+                <div className="text-[11px] text-gray-500 mt-0.5">
+                  Tap for options
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom bar */}
+      <div className="fixed left-0 right-0 bottom-0 z-50">
+        <div className="max-w-5xl mx-auto px-4 pb-3">
+          <div className="rounded-3xl bg-white/85 backdrop-blur border border-white/40 shadow-lg px-4 py-3 flex items-center justify-between">
+            <BottomAction
+              label="Call"
+              icon={<Phone className="w-6 h-6" />}
+              onClick={() => shareModeLink("call")}
+              busy={busy === "call"}
+            />
+            <BottomAction
+              label="Video"
+              icon={<Video className="w-6 h-6" />}
+              onClick={() => shareModeLink("video")}
+              busy={busy === "video"}
+            />
+            <BottomAction
+              label="Meet"
+              icon={<Users className="w-6 h-6" />}
+              onClick={() => shareModeLink("meet")}
+              busy={busy === "meet"}
+            />
+            <BottomAction
+              label="Listen"
+              icon={<Headphones className="w-6 h-6" />}
+              onClick={() => shareModeLink("listen")}
+              busy={busy === "listen"}
+            />
+          </div>
+          <div className="mt-2 text-xs text-gray-500 text-center">
+            Tap a button to create/share a link. Tap a contact to call them
+            directly.
           </div>
         </div>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] px-3 py-2 rounded-xl bg-neutral-900/90 text-white text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+
+      {/* Add Contact Dialog */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add a contact</DialogTitle>
+            <DialogDescription>
+              This is local-only for now. Later we’ll sync contacts and keep a
+              persistent call thread per person.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div className="text-sm text-gray-700">Name</div>
+            <Input
+              value={newContactName}
+              onChange={(e) => setNewContactName(e.target.value)}
+              placeholder="Regina"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addContact();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setAddOpen(false)}
+              className="bg-transparent"
+            >
+              Cancel
+            </Button>
+            <Button onClick={addContact} disabled={!newContactName.trim()}>
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Contact Action Sheet */}
+      <Dialog open={contactOpen} onOpenChange={setContactOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{activeContact?.name ?? "Contact"}</DialogTitle>
+            <DialogDescription>
+              Call/video will always return to the same thread room for this
+              person (saved locally for now).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 gap-2">
+            <Button
+              onClick={() => startContactCall("audio")}
+              disabled={busy === "contact-audio"}
+              className="justify-start"
+            >
+              <Phone className="w-4 h-4 mr-2" />
+              {busy === "contact-audio" ? "Starting call..." : "Call"}
+            </Button>
+
+            <Button
+              onClick={() => startContactCall("video")}
+              disabled={busy === "contact-video"}
+              className="justify-start"
+              variant="outline"
+            >
+              <Video className="w-4 h-4 mr-2" />
+              {busy === "contact-video" ? "Starting video..." : "Video"}
+            </Button>
+
+            <Button
+              onClick={() => alert("Messaging is coming next.")}
+              className="justify-start"
+              variant="outline"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              Message (coming soon)
+            </Button>
+
+            <Button
+              onClick={async () => {
+                if (!activeContact) return;
+                try {
+                  const thread = getContactThread(activeContact.id);
+                  if (!thread.audio && !thread.video) {
+                    showToast("No thread yet — start a call first");
+                    return;
+                  }
+                  const roomId = thread.audio || thread.video!;
+                  const url = `${getOrigin()}/room/${roomId}`;
+                  const res = await shareOrCopy(url);
+                  showToast(res.method === "share" ? "Share opened" : "Link copied");
+                } catch (e: any) {
+                  alert(`Could not share: ${e?.message ?? e}`);
+                }
+              }}
+              className="justify-start"
+              variant="outline"
+            >
+              <Share2 className="w-4 h-4 mr-2" />
+              Share thread link
+            </Button>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setContactOpen(false)}
+              className="bg-transparent"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function BottomAction({
+  label,
+  icon,
+  onClick,
+  busy,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  busy?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex flex-col items-center justify-center gap-1 px-2 py-1 rounded-2xl text-gray-900 hover:bg-black/5 active:bg-black/10 transition min-w-[64px]"
+      aria-label={label}
+      disabled={!!busy}
+    >
+      <div
+        className={`w-12 h-12 rounded-full bg-indigo-600/10 flex items-center justify-center ${
+          busy ? "opacity-60" : ""
+        }`}
+      >
+        {icon}
+      </div>
+      <div className="text-[11px] font-medium text-gray-700">
+        {busy ? "..." : label}
+      </div>
+    </button>
   );
 }
