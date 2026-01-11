@@ -1086,7 +1086,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
         setCcOn((v) => !v);
         showCameraHud();
       }}
-      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[13px] text-white/95 shadow active:scale-[0.98] transition ${
+      className={`pointer-events-auto w-12 h-12 rounded-full bg-black/35 backdrop-blur-md border border-white/10 text-[14px] font-semibold tracking-wide text-white/95 shadow active:scale-[0.98] transition ${
         ccOn ? "ring-1 ring-white/25" : "opacity-90"
       }`}
       title="Closed captions"
@@ -1102,7 +1102,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
         toggleCamera();
         showMobileHud();
       }}
-      className={`pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[16px] text-white/95 shadow active:scale-[0.98] transition ${
+      className={`pointer-events-auto w-12 h-12 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition ${
         roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
       }`}
       disabled={roomType !== "video"}
@@ -1111,23 +1111,21 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
     >
       {camOn ? "📷" : "📷✕"}
     </button>
-
-    {/* Flip camera (desktop only; mobile flip lives above PiP) */}
-    {canFlip && !isMobile && (
+    {/* Desktop mic toggle (next to camera) */}
+    {!isMobile && (
       <button
         type="button"
-        onClick={() => {
-          flipCamera();
-          showMobileHud();
-        }}
-        className="pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
-        title="Switch camera"
-        aria-label="Switch camera"
-        disabled={!camOn}
+        onClick={() => void toggleMic()}
+        className={`pointer-events-auto w-12 h-12 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition ${
+          micUiOn ? "ring-1 ring-white/25" : "opacity-90"
+        }`}
+        title="Mic"
+        aria-label="Mic"
       >
-        🔄
+        {micUiOn ? "🎙️" : "🎙️✕"}
       </button>
     )}
+
 
     {/* Share */}
     <button
@@ -1152,7 +1150,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
           } catch {}
         }
       }}
-      className="pointer-events-auto w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      className="pointer-events-auto w-12 h-12 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
       title="Share"
       aria-label="Share"
     >
@@ -1166,7 +1164,7 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
         showMobileHud();
         void handleEndCall();
       }}
-      className="pointer-events-auto w-11 h-11 rounded-full bg-red-600/35 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      className="pointer-events-auto w-12 h-12 rounded-full bg-red-600/35 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
       title="End call"
       aria-label="End call"
     >
@@ -1593,36 +1591,8 @@ const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
 
         {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Desktop mic button (fix: no way to talk on PC) */}
-          {!isMobile && (
-            <div className="absolute left-3 pointer-events-auto"
-              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
-              <button
-                onClick={() => void toggleMic()}
-                className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
-                title="Live captions mic"
-              >
-                {micUiOn ? "🎙️ On" : "🎙️ Off"}
-              </button>
-            </div>
-          )}
+          
 
-          {/* Desktop-only camera toggle (mobile uses top pills) */}
-          {!isMobile && (
-            <div className="absolute right-3 pointer-events-auto"
-              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
-              <button
-                onClick={toggleCamera}
-                className={`${pillBase} ${camClass} ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                } bg-black/25 backdrop-blur-md border-white/10`}
-                disabled={roomType !== "video"}
-                title="Camera"
-              >
-                {camOn ? "📷" : "📷✕"}
-              </button>
-            </div>
-          )}
 
           {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
