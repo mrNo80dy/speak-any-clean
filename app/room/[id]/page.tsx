@@ -950,7 +950,7 @@ export default function RoomPage() {
   // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
   const PIP_INLINE_W = 110;
   const PIP_INLINE_H = 82;
-  const pipInline = isMobile && pttPx.dock === "bottom";
+  const pipInline = false; // Mobile PiP should stay far-left, not inline next to PTT
   const pipInlineStyle = useMemo(() => {
     if (!pipInline) return null;
     const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
