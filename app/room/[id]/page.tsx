@@ -1028,10 +1028,8 @@ export default function RoomPage() {
             </div>
           </div>
         )}
-
         {/* Top floating controls */}
-        <header className={/* Top floating controls (no pills) */}
-<header
+        <header
   className={`absolute top-3 left-0 right-0 z-20 pointer-events-none transition-opacity duration-200 ${
     isMobile && !mobileHudVisible ? "opacity-0" : "opacity-100"
   }`}
