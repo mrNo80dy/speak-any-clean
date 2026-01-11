@@ -1130,7 +1130,7 @@ export default function RoomPage() {
     </button>
   </div>
 </header>
-4">
+        
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1685,3 +1685,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
