@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, type FormEvent } from "react";
 import type React from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -41,10 +41,6 @@ type RoomInfo = {
   code: string | null;
   room_type: RoomType;
 };
-
-type GuestProfile = { client_id: string; display_name: string; avatar_url: string | null };
-
-type GuestProfileMap = Record<string, GuestProfile>;
 
 type PttDock = "bottom" | "left" | "right";
 
@@ -121,53 +117,42 @@ export default function RoomPage() {
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }, []);
 
-  // ---- Mobile HUD (hide most controls until touch) ------------
-  const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(() => {
-    // Hidden by default on mobile, visible by default on desktop.
-    if (typeof navigator === "undefined") return true;
-    const m = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    return !m;
-  });
-  const hudHideTimerRef = useRef<number | null>(null);
-  const showMobileHud = (ms = 2500) => {
+  // ---- Mobile HUD (top controls) --------------------------
+const [mobileHudVisible, setMobileHudVisible] = useState<boolean>(false);
+  const hudTimerRef = useRef<number | null>(null);
+  
+  const showMobileHud = useCallback(() => {
     if (!isMobile) return;
     setMobileHudVisible(true);
-    if (hudHideTimerRef.current) {
-      window.clearTimeout(hudHideTimerRef.current);
-      hudHideTimerRef.current = null;
-    }
-    hudHideTimerRef.current = window.setTimeout(() => {
-      setMobileHudVisible(false);
-    }, ms);
-  };
-  useEffect(() => {
+    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = window.setTimeout(() => setMobileHudVisible(false), 2500);
+  }, [isMobile]);
   
-  const getGuestDisplayName = (cid: string) => {
-    if (cid === clientId) return (displayNameRef.current || displayName || "You") as string;
-    const gp = guestProfiles[cid];
-    if (gp?.display_name) return gp.display_name;
-    return peerLabelsRef.current[cid] || cid.slice(0, 8);
-  };
-
-  const getGuestAvatarUrl = (cid: string) => {
-    if (cid === clientId) return avatarUrl;
-    return guestProfiles[cid]?.avatar_url ?? null;
-  };
-
-  const initialsFromName = (name: string) => {
-    const parts = (name || "").trim().split(/\s+/).filter(Boolean);
-    const a = parts[0]?.[0] || "?";
-    const b = parts.length > 1 ? parts[parts.length - 1]?.[0] : "";
-    return (a + b).toUpperCase();
-  };
-
-  return () => {
-      if (hudHideTimerRef.current) window.clearTimeout(hudHideTimerRef.current);
-      hudHideTimerRef.current = null;
+  useEffect(() => {
+    return () => {
+      if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
     };
   }, []);
+  
+  
 
-  // Stable per-tab clientId
+  // ---- Mobile Camera HUD (camera flip icon) --------------------------
+  const [cameraHudVisible, setCameraHudVisible] = useState<boolean>(false);
+  const cameraHudTimerRef = useRef<number | null>(null);
+
+  const showCameraHud = useCallback(() => {
+    if (!isMobile) return;
+    setCameraHudVisible(true);
+    if (cameraHudTimerRef.current) window.clearTimeout(cameraHudTimerRef.current);
+    cameraHudTimerRef.current = window.setTimeout(() => setCameraHudVisible(false), 2500);
+  }, [isMobile]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraHudTimerRef.current) window.clearTimeout(cameraHudTimerRef.current);
+    };
+  }, []);
+// Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const existing = sessionStorage.getItem("clientId");
@@ -190,6 +175,20 @@ export default function RoomPage() {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
+  // ---- Mobile PTT positioning (dockable) ----
+  const [pttDock, setPttDock] = useState<PttDock>("bottom");
+  const [pttT, setPttT] = useState<number>(0); // 0..1
+
+  const pttDockRef = useRef<PttDock>("bottom");
+  const pttTRef = useRef<number>(0);
+
+  useEffect(() => {
+    pttDockRef.current = pttDock;
+  }, [pttDock]);
+  useEffect(() => {
+    pttTRef.current = pttT;
+  }, [pttT]);
+
   const pttDragRef = useRef<{
     pointerId: number | null;
     startX: number;
@@ -210,6 +209,28 @@ export default function RoomPage() {
     dragStartedAtMs: 0,
   });
 
+  useEffect(() => {
+    if (!isMobile) return;
+    try {
+      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const d = parsed?.dock as PttDock | undefined;
+        const t = parsed?.t as number | undefined;
+        const okDock = d === "bottom" || d === "left" || d === "right";
+        if (okDock && typeof t === "number") {
+          setPttDock(d as PttDock);
+          setPttT(Math.min(1, Math.max(0, t)));
+          return;
+        }
+      }
+    } catch {}
+
+    // Default: bottom-left-ish
+    setPttDock("bottom");
+    setPttT(0);
+  }, [isMobile]);
+
   const displayNameRef = useRef<string>("You");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
@@ -219,8 +240,21 @@ export default function RoomPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
+
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [guestProfiles, setGuestProfiles] = useState<GuestProfileMap>({});
+
+  type GuestProfile = {
+    client_id: string;
+    display_name: string;
+    avatar_url: string | null;
+  };
+
+  const [guestProfiles, setGuestProfiles] = useState<GuestProfile[]>([]);
+  const guestProfileMap = useMemo(() => {
+    const m: Record<string, GuestProfile> = {};
+    for (const gp of guestProfiles) m[gp.client_id] = gp;
+    return m;
+  }, [guestProfiles]);
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
@@ -501,18 +535,14 @@ export default function RoomPage() {
     });
   }, [peerStreams, shouldMuteRawAudio]);
 
-  // ---- Load display name from localStorage -------------------
+  // ---- Load display name + avatar from localStorage -------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = localStorage.getItem("displayName");
     if (saved) setDisplayName(saved);
-  }, []);
 
-  // ---- Load avatar URL from localStorage ----------------------
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem("avatarUrl");
-    if (saved) setAvatarUrl(saved);
+    const av = localStorage.getItem("avatarUrl");
+    if (av) setAvatarUrl(av);
   }, []);
 
   // ---- Load room info (code + room_type) from Supabase -------
@@ -548,71 +578,61 @@ export default function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  // ---- Guest profile: upsert local + subscribe room profiles ----
+  // ---- Guest profile: upsert name/photo for this room (no auth required) ----
+  useEffect(() => {
+    if (!roomId) return;
+    const name = (displayName || "You").trim() || "You";
+    const payload = {
+      room_id: roomId,
+      client_id: clientId,
+      display_name: name,
+      avatar_url: avatarUrl,
+    };
+
+    (async () => {
+      try {
+        const { error } = await supabase
+          .from("room_guest_profiles")
+          .upsert(payload, { onConflict: "room_id,client_id" });
+        if (error) log("guest profile upsert error", { message: error.message });
+      } catch (e: any) {
+        log("guest profile upsert exception", { message: String(e?.message ?? e) });
+      }
+    })();
+  }, [roomId, clientId, displayName, avatarUrl]);
+
+  // ---- Guest profiles: subscribe + keep in sync ----
   useEffect(() => {
     if (!roomId) return;
 
     let cancelled = false;
 
-    // Initial fetch
-    (async () => {
-      const { data, error } = await supabase
-        .from("room_guest_profiles")
-        .select("client_id, display_name, avatar_url")
-        .eq("room_id", roomId);
+    const load = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("room_guest_profiles")
+          .select("client_id, display_name, avatar_url")
+          .eq("room_id", roomId);
 
-      if (cancelled) return;
-      if (error) {
-        log("guest profiles load error", { message: error.message });
-        return;
+        if (error) {
+          log("guest profiles load error", { message: error.message });
+          return;
+        }
+        if (!cancelled) setGuestProfiles((data as any) ?? []);
+      } catch (e: any) {
+        log("guest profiles load exception", { message: String(e?.message ?? e) });
       }
+    };
 
-      const map: GuestProfileMap = {};
-      (data || []).forEach((p: any) => {
-        if (!p?.client_id) return;
-        map[p.client_id] = {
-          client_id: p.client_id,
-          display_name: p.display_name || p.client_id.slice(0, 8),
-          avatar_url: p.avatar_url ?? null,
-        };
-      });
-      setGuestProfiles(map);
-    })();
+    void load();
 
     const channel = supabase
       .channel(`room_guest_profiles:${roomId}`)
       .on(
         "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "room_guest_profiles",
-          filter: `room_id=eq.${roomId}`,
-        },
-        (payload: any) => {
-          if (cancelled) return;
-
-          setGuestProfiles((prev) => {
-            const next = { ...prev };
-
-            if (payload.eventType === "DELETE") {
-              const oldRow = payload.old as any;
-              const cid = oldRow?.client_id;
-              if (cid && next[cid]) delete next[cid];
-              return next;
-            }
-
-            const row = payload.new as any;
-            const cid = row?.client_id;
-            if (!cid) return prev;
-
-            next[cid] = {
-              client_id: cid,
-              display_name: row.display_name || cid.slice(0, 8),
-              avatar_url: row.avatar_url ?? null,
-            };
-            return next;
-          });
+        { event: "*", schema: "public", table: "room_guest_profiles", filter: `room_id=eq.${roomId}` },
+        () => {
+          void load();
         }
       )
       .subscribe();
@@ -621,34 +641,7 @@ export default function RoomPage() {
       cancelled = true;
       supabase.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
-
-  // Upsert our local guest profile (name + avatar)
-  useEffect(() => {
-    if (!roomId) return;
-    if (typeof window === "undefined") return;
-
-    const name = (displayNameRef.current || displayName || "You").trim() || "You";
-    const avatar = avatarUrl || null;
-
-    // fire and forget
-    supabase
-      .from("room_guest_profiles")
-      .upsert(
-        {
-          room_id: roomId,
-          client_id: clientId,
-          display_name: name,
-          avatar_url: avatar,
-        },
-        { onConflict: "room_id,client_id" }
-      )
-      .then(({ error }) => {
-        if (error) log("guest profile upsert error", { message: error.message });
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, clientId, displayName, avatarUrl]);
 
   // ✅ STT send helper
   const sendFinalTranscript = async (finalText: string, recLang: string) => {
@@ -1008,9 +1001,7 @@ export default function RoomPage() {
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   // Mobile control sizing (avoid Tailwind dynamic class issues)
-  const PTT_SIZE = 76;
-
-  const online = rtStatus === "SUBSCRIBED";
+  const PTT_SIZE = 68; // tuned for mobile ergonomics
 
   const camClass = camOn
     ? "bg-neutral-100 text-neutral-900 border-neutral-300"
@@ -1037,43 +1028,67 @@ export default function RoomPage() {
     } catch {}
   };
 
-  // Mobile: keep PiP tucked inline to the left of the PTT button (lower-left, inline with PTT)
+  // ---- PTT dock layout helpers (mobile) ----------------------
+  const getPttLayout = () => {
+    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
+    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
+    const size = 64; // smaller, less ostentatious
+    const margin = 12;
+    const edgeZone = 44; // must be closer to edge
+
+    const xLeft = margin;
+    const xCenter = Math.round((w - size) / 2);
+    const xRight = Math.max(margin, w - size - margin);
+
+    const topPad = 92;
+    const bottomPad = showTextInput ? 210 : 150;
+    const minY = topPad;
+    const maxY = Math.max(minY, h - bottomPad - size);
+
+    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
+  };
+
+  const pttPx = useMemo(() => {
+  if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+
+  // Mobile requirement: PTT is ALWAYS fixed bottom-center (no docking/dragging).
+  const { xCenter } = getPttLayout();
+  return { dock: "bottom" as const, left: xCenter, top: 0 };
+}, [isMobile, showTextInput]);
+
+
+  // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
   const PIP_INLINE_W = 110;
   const PIP_INLINE_H = 82;
-  const pipInline = isMobile;
+  const pipInline = isMobile; // Mobile requirement: PiP fixed bottom-left inline with the PTT row
   const pipInlineStyle = useMemo(() => {
-    if (!pipInline) return null;
-    const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
-    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
-    const pttLeft = Math.round((w - PTT_SIZE) / 2);
-    const left = Math.max(12, pttLeft - PIP_INLINE_W - 12);
-    return {
-      position: "fixed" as const,
-      left,
-      bottom,
-      width: PIP_INLINE_W,
-      height: PIP_INLINE_H,
-      zIndex: 70,
-    };
-  }, [pipInline]);
+  if (!pipInline) return null;
+  const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
+  return {
+    position: "fixed" as const,
+    left: 12, // hard-left on mobile (inline with PTT row)
+    bottom,
+    width: PIP_INLINE_W,
+    height: PIP_INLINE_H,
+    zIndex: 70,
+  };
+}, [pipInline]);
 
-  const pipInlineFlipStyle = useMemo(() => {
-    if (!pipInline || !pipInlineStyle) return null;
-    return {
-      position: "fixed" as const,
-      left: (pipInlineStyle as any).left,
-      bottom: `calc(env(safe-area-inset-bottom) + 12px + ${PIP_INLINE_H + 8}px)`,
-      zIndex: 71,
-    };
-  }, [pipInline, pipInlineStyle]);
+
 
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
-      <div
-        className="relative h-full w-full overflow-hidden"
-        onPointerDownCapture={() => showMobileHud()}
-      >
+      <div className="relative h-full w-full overflow-hidden">
+{/* Mobile HUD wake zone: touch top portion to show controls */}
+{isMobile && (
+  <div
+    className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
+    style={{ height: "30vh" }}
+    onPointerDown={() => showMobileHud()}
+  />
+)}
+
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
@@ -1140,100 +1155,110 @@ export default function RoomPage() {
             </div>
           </div>
         )}
-
         {/* Top floating controls */}
         <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-200 ${
-            isMobile && !mobileHudVisible ? "opacity-0" : "opacity-100"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            {/* Left: Online status */}
-            <span
-              className={`pointer-events-auto px-3 py-1.5 rounded-full text-[11px] shadow backdrop-blur-md border border-white/10 ${
-                online ? "bg-emerald-600/55 text-white" : "bg-red-600/45 text-white"
-              }`}
-            >
-              {online ? "Online" : "Offline"}
-            </span>
+  className={`absolute top-3 left-0 right-0 z-20 pointer-events-none transition-opacity duration-200 ${
+    isMobile && !mobileHudVisible ? "opacity-0" : "opacity-100"
+  }`}
+>
+  <div className="flex items-center justify-center gap-3">
+    {/* CC */}
+    <button
+      type="button"
+      onClick={() => {
+        setCcOn((v) => !v);
+        showCameraHud();
+      }}
+      className={`pointer-events-auto w-12 h-12 rounded-full bg-black/35 backdrop-blur-md border border-white/10 text-[14px] font-semibold tracking-wide text-white/95 shadow active:scale-[0.98] transition ${
+        ccOn ? "ring-1 ring-white/25" : "opacity-90"
+      }`}
+      title="Closed captions"
+      aria-label="Closed captions"
+    >
+      CC
+    </button>
 
-            {/* Right: controls */}
-            <div className="flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow ${
-                ccOn ? "ring-1 ring-white/20" : "opacity-80"
-              }`}
-              title="Closed Captions"
-            >
-              CC
-            </button>
+    {/* Camera toggle */}
+    <button
+      type="button"
+      onClick={() => {
+        toggleCamera();
+        showMobileHud();
+      }}
+      className={`pointer-events-auto w-12 h-12 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition ${
+        roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+      }`}
+      disabled={roomType !== "video"}
+      title="Camera"
+      aria-label="Camera"
+    >
+      {camOn ? "📷" : "📷✕"}
+    </button>
+    {/* Desktop mic toggle (next to camera) */}
+    {!isMobile && (
+      <button
+        type="button"
+        onClick={() => void toggleMic()}
+        className={`pointer-events-auto w-12 h-12 rounded-full bg-black/10 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition ${
+          micUiOn ? "ring-1 ring-white/25" : "opacity-90"
+        }`}
+        title="Mic"
+        aria-label="Mic"
+      >
+        {micUiOn ? "🎙️" : "🎙️✕"}
+      </button>
+    )}
 
-            {/* Camera ON/OFF as a pill (mobile + desktop) */}
-            <button
-              type="button"
-              onClick={toggleCamera}
-              className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition ${
-                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-              }`}
-              disabled={roomType !== "video"}
-              title="Camera"
-            >
-              {camOn ? "📷" : "📷✕"}
-            </button>
 
-            {/* Flip camera (desktop only; mobile flip lives above PiP) */}
-            {canFlip && !isMobile && (
-              <button
-                type="button"
-                onClick={flipCamera}
-                className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
-                title="Switch camera"
-              >
-                🔄
-              </button>
-            )}
+    {/* Share */}
+    <button
+      type="button"
+      onClick={async () => {
+        showMobileHud();
+        try {
+          const url = window.location.href;
+          // @ts-ignore
+          if (navigator.share) {
+            // @ts-ignore
+            await navigator.share({ url, text: "Join my Any-Speak room" });
+          } else {
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          }
+        } catch {
+          try {
+            const url = window.location.href;
+            await navigator.clipboard.writeText(url);
+            log("copied room link", { url });
+          } catch {}
+        }
+      }}
+      className="pointer-events-auto w-12 h-12 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="Share"
+      aria-label="Share"
+    >
+      ⤴️
+    </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const url = window.location.href;
-                  // @ts-ignore
-                  if (navigator.share) {
-                    // @ts-ignore
-                    await navigator.share({ url, text: "Join my Any-Speak room" });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                    log("copied room link", { url });
-                  }
-                } catch {
-                  try {
-                    const url = window.location.href;
-                    await navigator.clipboard.writeText(url);
-                    log("copied room link", { url });
-                  } catch {}
-                }
-              }}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
-            >
-              ⤴️
-            </button>
+    {/* End call */}
+    <button
+      type="button"
+      onClick={() => {
+        showMobileHud();
+        void handleEndCall();
+      }}
+      className="pointer-events-auto w-12 h-12 rounded-full bg-red-600/35 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="End call"
+      aria-label="End call"
+    >
+      📴
+    </button>
+  </div>
+</header>
 
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-red-600/45 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
-              title="End call"
-            >
-              📴
-            </button>
-            </div>
-          </div>
-        </header>
-
-        <main className="absolute inset-0 pt-0 md:pt-14">
+        {/* Main stage */}
+        <main className="relative h-full w-full">
+        
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1327,7 +1352,7 @@ export default function RoomPage() {
 
           {/* STT status */}
           {sttStatus !== "ok" && (
-            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
+            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-amber-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={{ top: "calc(env(safe-area-inset-top) + 52px)" }}>
               {sttStatus === "unsupported"
                 ? "Live captions mic not supported on this device. Use Text."
                 : sttStatus === "error"
@@ -1337,52 +1362,13 @@ export default function RoomPage() {
           )}
 
           {isMobile && sttArmedNotListening && (
-            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
+            <div className="absolute top-14 left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10" style={{ top: "calc(env(safe-area-inset-top) + 52px)" }}>
               Captions paused. Hold to Talk.
             </div>
           )}
 
-          <div className="h-full w-full">
-            {/* Audio room: presence stage (names + avatars) */}
-            {roomType === "audio" && (
-              <div className="relative h-full w-full bg-neutral-900">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-full max-w-4xl px-6">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 place-items-center">
-                      {[clientId, ...peerIds].map((cid) => {
-                        const name = getGuestDisplayName(cid);
-                        const url = getGuestAvatarUrl(cid);
-                        return (
-                          <div key={cid} className="flex flex-col items-center gap-2">
-                            <div className="h-20 w-20 rounded-full overflow-hidden border border-white/10 bg-black/40 flex items-center justify-center">
-                              {url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={url}
-                                  alt={name}
-                                  className="h-full w-full object-cover"
-                                  referrerPolicy="no-referrer"
-                                />
-                              ) : (
-                                <div className="text-white/80 text-xl font-semibold">
-                                  {initialsFromName(name)}
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-xs text-white/80 max-w-[120px] text-center truncate">
-                              {cid === clientId ? "You" : name}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {roomType !== "audio" && (
-              <>
+          {roomType === "video" ? (
+            <div className="h-full w-full" onPointerDown={isMobile ? showCameraHud : undefined}>
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
@@ -1413,7 +1399,7 @@ export default function RoomPage() {
                       pipInline && pipInlineStyle
                         ? {
                             ...pipInlineStyle,
-                            opacity: pipVisible ? 1 : 0.15,
+                            opacity: pipVisible ? 1 : 0.25,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1425,7 +1411,7 @@ export default function RoomPage() {
                             // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
                             width: isMobile ? 148 : 160,
                             height: isMobile ? 100 : 96,
-                            opacity: pipVisible ? 1 : 0.15,
+                            opacity: pipVisible ? 1 : 0.25,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1443,30 +1429,41 @@ export default function RoomPage() {
                     {camOn ? (
                       <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/30">
+                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
                         Camera off
                       </div>
                     )}
                   </div>
                 )}
+              
+{/* Mobile: camera switch button just above PiP (fades with camera + HUD) */}
+{isMobile && roomType === "video" && canFlip && (
+  <div
+    className="fixed pointer-events-auto z-[80] transition-opacity duration-200"
+    style={{
+      left: 12,
+      bottom: `calc(env(safe-area-inset-bottom) + ${12 + PIP_INLINE_H + 10}px)`,
+      opacity: camOn && cameraHudVisible ? 1 : 0,
+    }}
+  >
+    <button
+      type="button"
+      onClick={() => {
+        flipCamera();
+        showMobileHud();
+      }}
+      disabled={!camOn}
+      className="w-11 h-11 rounded-full bg-black/5 backdrop-blur-md border border-white/10 text-[18px] text-white/95 shadow active:scale-[0.98] transition"
+      title="Switch camera"
+      aria-label="Switch camera"
+    >
+      🔄
+    </button>
+  </div>
+)}
 
-                {/* Mobile flip button: just above PiP, fades with camera + HUD */}
-                {isMobile && canFlip && pipInline && pipInlineFlipStyle && (
-                  <button
-                    type="button"
-                    onClick={flipCamera}
-                    className={`pointer-events-auto px-3 py-1.5 rounded-full bg-black/15 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition-opacity duration-200`}
-                    style={{
-                      ...(pipInlineFlipStyle as any),
-                      opacity: mobileHudVisible ? (camOn ? 1 : 0.35) : 0,
-                    }}
-                    title="Switch camera"
-                    disabled={!camOn}
-                  >
-                    🔄
-                  </button>
-                )}
-              </div>
+
+</div>
             )}
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
@@ -1587,6 +1584,50 @@ export default function RoomPage() {
               </div>
             )}
           </div>
+          ) : (
+            <div className="h-full w-full flex flex-col items-center justify-center px-4">
+              <div className="w-full max-w-xl">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {[clientId, ...peerIds].map((pid) => {
+                    const gp = guestProfileMap[pid];
+                    const name =
+                      pid === clientId
+                        ? gp?.display_name ?? (displayName || "You")
+                        : gp?.display_name ?? peerLabels[pid] ?? pid.slice(0, 8);
+                    const avatar = gp?.avatar_url ?? null;
+                    const initials = String(name || "?")
+                      .trim()
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((s) => s[0]?.toUpperCase() ?? "")
+                      .join("");
+
+                    return (
+                      <div
+                        key={pid}
+                        className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-3 flex flex-col items-center justify-center gap-2"
+                      >
+                        <div className="h-16 w-16 rounded-full overflow-hidden bg-black/40 flex items-center justify-center text-white/90 text-xl font-semibold">
+                          {avatar ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={avatar} alt={name} className="h-full w-full object-cover" />
+                          ) : (
+                            <span>{initials || "?"}</span>
+                          )}
+                        </div>
+                        <div className="text-white/90 text-sm text-center truncate w-full">{name}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 text-center text-white/70 text-xs">
+                  Audio room. Tap and hold to talk.
+                </div>
+              </div>
+            </div>
+          )}
+
 
           {/* Captions overlay */}
           {ccOn && messages.length > 0 && (
@@ -1594,7 +1635,7 @@ export default function RoomPage() {
               <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
 
               <div
-                className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
+                className="relative flex flex-col gap-1.5 px-3 pb-3"
                 style={{
                   paddingBottom: showTextInput
                     ? "calc(env(safe-area-inset-bottom) + 148px)"
@@ -1674,43 +1715,14 @@ export default function RoomPage() {
               </div>
             </form>
           )}
-              </>
-            )}
-
         </main>
 
         {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Desktop mic button (fix: no way to talk on PC) */}
-          {!isMobile && (
-            <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-              <button
-                onClick={() => void toggleMic()}
-                className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
-                title="Live captions mic"
-              >
-                {micUiOn ? "🎙️ On" : "🎙️ Off"}
-              </button>
-            </div>
-          )}
+          
 
-          {/* Desktop-only camera toggle (mobile uses top pills) */}
-          {!isMobile && (
-            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-              <button
-                onClick={toggleCamera}
-                className={`${pillBase} ${camClass} ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                } bg-black/25 backdrop-blur-md border-white/10`}
-                disabled={roomType !== "video"}
-                title="Camera"
-              >
-                {camOn ? "📷" : "📷✕"}
-              </button>
-            </div>
-          )}
 
-          {/* Mobile PTT (fixed bottom-center) */}
+          {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
@@ -1725,15 +1737,15 @@ export default function RoomPage() {
                   WebkitUserSelect: "none",
                 }}
                 className={`
-                  rounded-full
-                  border-4
-                  bg-transparent
-                  shadow-xl
-                  backdrop-blur-md
-                  active:scale-[0.98]
-                  transition
-                  ${micUiOn ? "border-emerald-300/80" : "border-red-300/80"}
-                `}
+  rounded-full
+  border-[6px]
+  shadow-xl
+  backdrop-blur-md
+  bg-transparent
+  active:scale-[0.98]
+  transition
+  ${micUiOn ? "border-emerald-300/70" : "border-red-300/70"}
+`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   try {
@@ -1762,52 +1774,50 @@ export default function RoomPage() {
                   }, 180);
                 }}
                 onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
+  const d = pttDragRef.current;
+  if (d.pointerId !== e.pointerId) return;
 
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
+  const dx = e.clientX - d.startX;
+  const dy = e.clientY - d.startY;
+  const dist = Math.hypot(dx, dy);
 
-                  // Much higher threshold to avoid “small movements” breaking PTT
-                  if (!d.moved && dist > 18) {
-                    d.moved = true;
+  // If the finger moves, cancel the pending hold-to-talk start.
+  if (!d.moved && dist > 18) {
+    d.moved = true;
 
-                    // cancel hold-to-talk if it was about to fire
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
+    if (d.holdTimer) {
+      clearTimeout(d.holdTimer);
+      d.holdTimer = null;
+    }
+    if (d.startedPtt) {
+      pttCancel();
+      d.startedPtt = false;
+    }
+  }
 
-                  // PTT is fixed bottom-center on mobile (no dragging)
-                  return;
-                }}
+  // Mobile requirement: PTT is fixed bottom-center (no dragging/docking).
+}}
                 onPointerUp={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  } catch {}
+  e.preventDefault();
+  try {
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  } catch {}
 
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
+  const d = pttDragRef.current;
+  if (d.holdTimer) {
+    clearTimeout(d.holdTimer);
+    d.holdTimer = null;
+  }
 
-                  if (d.startedPtt) {
-                    pttUp();
-                  }
+  if (d.startedPtt) {
+    pttUp();
+  }
 
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
+  d.pointerId = null;
+  d.dragging = false;
+  d.moved = false;
+  d.startedPtt = false;
+}}
                 onPointerCancel={(e) => {
                   e.preventDefault();
                   const d = pttDragRef.current;
@@ -1829,14 +1839,17 @@ export default function RoomPage() {
                 title="Hold to talk"
               >
                 <div className="flex items-center justify-center text-center leading-tight">
-                  <div className={`text-xl ${micUiOn ? "text-emerald-200" : "text-red-200"}`}>🎙️</div>
+                  <div className="text-xl">🎙️</div>
                 </div>
               </button>
             </div>
           )}
 
           {/* Optional: small text toggle (desktop + mobile) */}
-          <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+12px)] pointer-events-auto hidden">
+          <div
+            className="absolute left-3 top-3 pointer-events-auto hidden"
+            style={{ top: "calc(env(safe-area-inset-top) + 12px)" }}
+          >
             <button
               type="button"
               onClick={() => setShowTextInput((v) => !v)}
@@ -1850,3 +1863,4 @@ export default function RoomPage() {
     </div>
   );
 }
+
