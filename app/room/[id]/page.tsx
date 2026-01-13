@@ -222,16 +222,6 @@ useEffect(() => {
   const [joinToast, setJoinToast] = useState<string>("");
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
 
-  useEffect(() => {
-    if (roomType !== "audio") return;
-    const prev = prevPeerCountRef.current;
-    const cur = peerIds.length;
-    if (cur > prev) {
-      setJoinToast(cur === 1 ? "Someone joined" : `${cur} people are here`);
-      window.setTimeout(() => setJoinToast(""), 2500);
-    }
-    prevPeerCountRef.current = cur;
-  }, [peerIds.length, roomType]);
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -446,6 +436,16 @@ useEffect(() => {
 
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
+  useEffect(() => {
+    if (roomType !== "audio") return;
+    const prev = prevPeerCountRef.current;
+    const cur = peerIds.length;
+    if (cur > prev) {
+      setJoinToast(cur === 1 ? "Someone joined" : `${cur} people are here`);
+      window.setTimeout(() => setJoinToast(""), 2500);
+    }
+    prevPeerCountRef.current = cur;
+  }, [peerIds.length, roomType]);
 
   // ✅ Joiner camera choice for VIDEO rooms
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
@@ -1852,4 +1852,5 @@ useEffect(() => {
     </div>
   );
 }
+
 
