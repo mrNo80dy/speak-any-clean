@@ -113,8 +113,8 @@ export default function RoomPage() {
   const debugKey = debugEnabled ? "debug" : "normal";
 
   const isMobile = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
 // Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
@@ -1853,6 +1853,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
