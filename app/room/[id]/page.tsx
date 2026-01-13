@@ -223,12 +223,12 @@ useEffect(() => {
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
 
   useEffect(() => {
-    if (roomType !== \"audio\") return;
+    if (roomType !== "audio") return;
     const prev = prevPeerCountRef.current;
     const cur = peerIds.length;
     if (cur > prev) {
-      setJoinToast(cur === 1 ? \"Someone joined\" : `${cur} people are here`);
-      window.setTimeout(() => setJoinToast(\"\"), 2500);
+      setJoinToast(cur === 1 ? "Someone joined" : `${cur} people are here`);
+      window.setTimeout(() => setJoinToast(""), 2500);
     }
     prevPeerCountRef.current = cur;
   }, [peerIds.length, roomType]);
