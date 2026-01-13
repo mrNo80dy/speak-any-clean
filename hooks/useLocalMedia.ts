@@ -30,6 +30,7 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
 
   const acquire = useCallback(async () => {
     if (typeof navigator === "undefined") return null;
+    if (localStreamRef.current) return localStreamRef.current;
 
     const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
     const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
@@ -37,60 +38,35 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     // Favor smaller, more reliable capture settings to reduce bandwidth/relay usage.
     // Mobile: prefer portrait-ish capture.
     const videoConstraints: MediaTrackConstraints | false = opts.wantVideo
-      ? isMobile
-        ? {
-            width: { ideal: 1280 },
-            frameRate: { ideal: 24, max: 30 },
-            facingMode: "user",
-          }
-        : {
-            width: { ideal: 960 },
-            height: { ideal: 540 },
-            frameRate: { ideal: 24, max: 30 },
-          }
-      : false;
+    ? {
+        // Mobile-friendly default (cooler): ~540p @ 20–24fps
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 540, max: 720 },
+        frameRate: { ideal: 20, max: 24 },
+      }
+    : false;
 
-    const baseConstraints: MediaStreamConstraints = {
+    const constraints: MediaStreamConstraints = {
       audio: wantAudio,
       video: videoConstraints,
     };
 
-    // If we already have a stream, allow "upgrading" it (e.g. audio-only -> add video track)
-    const existing = localStreamRef.current;
-    if (existing) {
-      const hasAudio = existing.getAudioTracks().length > 0;
-      const hasVideo = existing.getVideoTracks().length > 0;
-
-      // Upgrade: add missing audio track
-      if (wantAudio && !hasAudio) {
-        try {
-          const a = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-          const at = a.getAudioTracks()[0];
-          if (at) existing.addTrack(at);
-        } catch {}
-      }
-
-      // Upgrade: add missing video track
-      if (opts.wantVideo && !hasVideo) {
-        try {
-          const v = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints || true });
-          const vt = v.getVideoTracks()[0];
-          if (vt) existing.addTrack(vt);
-        } catch {}
-      }
-
-      // Re-attach to any bound element
-      attachLocalVideo(localVideoElRef.current);
-      return existing;
-    }
-
-    // Fresh acquire
-    const stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
-
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
     localStreamRef.current = stream;
 
-    // Bind local preview if present
-    attachLocalVideo(localVideoElRef.current);
+    // Default all tracks OFF until caller enables them per UX rules.
+    const a = stream.getAudioTracks?.()[0] || null;
+    if (a) a.enabled = false;
+
+    const v = stream.getVideoTracks?.()[0] || null;
+    if (v) v.enabled = false;
+
+    // If we didn't request audio, reflect that in state
+    setMicOn(false);
+    setCamOn(false);
+
+    // Attach if the video element already exists
+    if (localVideoElRef.current) attachLocalVideo(localVideoElRef.current);
 
     return stream;
   }, [attachLocalVideo, opts.wantVideo, wantAudio]);
