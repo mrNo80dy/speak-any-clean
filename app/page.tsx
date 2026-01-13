@@ -214,9 +214,8 @@ export default function HomePage() {
         setLastLink(mode, roomId);
       }
 
-      const url = `${getOrigin()}/room/${roomId}`;
-      const res = await shareOrCopy(url);
-      showToast(res.method === "share" ? "Share opened" : "Link copied");
+      router.push(`/room/${roomId}?autoshare=1`);
+      showToast("Opening room…");
     } catch (e: any) {
       alert(`Could not create/share link: ${e?.message ?? e}`);
     } finally {
@@ -504,9 +503,8 @@ export default function HomePage() {
                     return;
                   }
                   const roomId = thread.audio || thread.video!;
-                  const url = `${getOrigin()}/room/${roomId}`;
-                  const res = await shareOrCopy(url);
-                  showToast(res.method === "share" ? "Share opened" : "Link copied");
+                  router.push(`/room/${roomId}?autoshare=1`);
+      showToast("Opening room…");
                 } catch (e: any) {
                   alert(`Could not share: ${e?.message ?? e}`);
                 }
