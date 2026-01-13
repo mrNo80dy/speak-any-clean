@@ -201,7 +201,7 @@ const setVideoQuality = useCallback(
       currentStream.addTrack(newTrack);
 
       // Replace on all peer connections
-      Object.values(peersRef.current || {}).forEach((peer) => {
+      Object.values(peersRef?.current || {}).forEach((peer) => {
         try {
           peer.pc.getSenders().forEach((sender) => {
             if (sender.track && sender.track.kind === "video") {
