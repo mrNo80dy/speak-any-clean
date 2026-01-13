@@ -135,8 +135,7 @@ useEffect(() => {
     if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
   };
 }, [isMobile, showHud]);
-  }, []);
-
+  
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -1853,6 +1852,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
