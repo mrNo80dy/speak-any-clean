@@ -127,6 +127,7 @@ const showHud = useCallback(() => {
   hudTimerRef.current = window.setTimeout(() => setHudVisible(false), 120000); // 2 min
 }, []);
 
+
 useEffect(() => {
   if (!isMobile) return;
   showHud();
@@ -1852,6 +1853,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
