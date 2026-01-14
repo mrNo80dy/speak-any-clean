@@ -1447,10 +1447,9 @@ useEffect(() => {
                       </button>
                     </div>
                   </div>
-                )}
+              )}
                   </div>
-              </div>
-            )}
+                )}
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
             {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
@@ -1898,6 +1897,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
