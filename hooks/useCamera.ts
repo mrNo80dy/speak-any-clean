@@ -3,7 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 
 type RoomType = "audio" | "video";
+type FacingMode = "user" | "environment";
 
+// Minimal peer shape we need for replacing tracks
 type AnySpeakPeer = { pc: RTCPeerConnection };
 
 type Args = {
@@ -11,17 +13,49 @@ type Args = {
   roomType: RoomType | null;
   joinCamOn: boolean | null;
 
-  // acquire should return the (possibly updated) local stream
+  // acquire should ensure localStreamRef.current is populated (and local preview attached by caller)
   acquire: () => Promise<MediaStream | null>;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
   setCamEnabled: (enabled: boolean) => void;
 
-  // Optional: if provided, we replace the outgoing track on all peer connections.
+  // Optional: replace outgoing video on all peer connections
   peersRef?: React.MutableRefObject<Map<string, AnySpeakPeer>>;
   log?: (msg: string, data?: any) => void;
 };
 
-type FacingMode = "user" | "environment";
+function getConstraints(isMobile: boolean, hd: boolean, facing: FacingMode): MediaTrackConstraints {
+  // Conservative defaults to reduce heat on phones
+  if (isMobile) {
+    if (hd) {
+      return {
+        facingMode: { ideal: facing },
+        width: { ideal: 1280, max: 1920 },
+        height: { ideal: 720, max: 1080 },
+        frameRate: { ideal: 24, max: 30 },
+      };
+    }
+    return {
+      facingMode: { ideal: facing },
+      width: { ideal: 960, max: 1280 },
+      height: { ideal: 540, max: 720 },
+      frameRate: { ideal: 20, max: 24 },
+    };
+  }
+
+  // Desktop
+  if (hd) {
+    return {
+      width: { ideal: 1920, max: 1920 },
+      height: { ideal: 1080, max: 1080 },
+      frameRate: { ideal: 30, max: 30 },
+    };
+  }
+  return {
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
+    frameRate: { ideal: 24, max: 30 },
+  };
+}
 
 export function useCamera({
   isMobile,
@@ -38,7 +72,33 @@ export function useCamera({
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("anyspeak.video.hd") === "1";
   });
+
   const switchingRef = useRef(false);
+
+  const replaceOutgoingOnPeers = useCallback(
+    (newTrack: MediaStreamTrack) => {
+      const map = peersRef?.current;
+      if (!map) return;
+
+      map.forEach(({ pc }) => {
+        try {
+          pc.getSenders().forEach((sender: RTCRtpSender) => {
+            if (sender.track && sender.track.kind === "video") {
+              sender.replaceTrack(newTrack).catch(() => {});
+            }
+          });
+        } catch {}
+      });
+    },
+    [peersRef]
+  );
+
+  const persistHd = useCallback((nextHd: boolean) => {
+    setHdEnabled(nextHd);
+    try {
+      window.localStorage.setItem("anyspeak.video.hd", nextHd ? "1" : "0");
+    } catch {}
+  }, []);
 
   const beforeConnect = useCallback(async () => {
     if (roomType !== "video") {
@@ -69,171 +129,108 @@ export function useCamera({
       try {
         await acquire();
       } catch {}
-      // default to selfie cam when turning back on
+      // default back to selfie when turning on
       setFacingMode("user");
     }
 
     setCamEnabled(next);
   }, [acquire, localStreamRef, roomType, setCamEnabled]);
 
+  const restartVideoTrack = useCallback(
+    async (nextFacing: FacingMode, nextHd: boolean) => {
+      const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+      if (!md?.getUserMedia) return;
+
+      const currentStream = localStreamRef.current;
+      if (!currentStream) return;
+
+      const oldTrack = currentStream.getVideoTracks?.()[0] ?? null;
+
+      const constraints = getConstraints(isMobile, nextHd, nextFacing);
+      const newStream = await md.getUserMedia({ video: constraints, audio: false });
+      const newTrack = newStream.getVideoTracks()[0] || null;
+      if (!newTrack) return;
+
+      if (oldTrack) {
+        try {
+          currentStream.removeTrack(oldTrack);
+        } catch {}
+        try {
+          oldTrack.stop();
+        } catch {}
+      }
+      try {
+        currentStream.addTrack(newTrack);
+      } catch {}
+
+      replaceOutgoingOnPeers(newTrack);
+      persistHd(nextHd);
+    },
+    [isMobile, localStreamRef, persistHd, replaceOutgoingOnPeers]
+  );
+
+  const applyQualityToExistingTrack = useCallback(
+    async (nextHd: boolean, facing: FacingMode) => {
+      const currentStream = localStreamRef.current;
+      const track = currentStream?.getVideoTracks?.()[0];
+      if (!track) return false;
+
+      // Not all browsers support applyConstraints reliably, but try it first.
+      if (typeof track.applyConstraints !== "function") return false;
+
+      try {
+        const constraints = getConstraints(isMobile, nextHd, facing);
+        await track.applyConstraints(constraints);
+        replaceOutgoingOnPeers(track);
+        persistHd(nextHd);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [isMobile, localStreamRef, persistHd, replaceOutgoingOnPeers]
+  );
+
+  const setVideoQuality = useCallback(
+    async (nextHd: boolean) => {
+      if (roomType !== "video") return;
+      if (switchingRef.current) return;
+      switchingRef.current = true;
+
+      try {
+        const ok = await applyQualityToExistingTrack(nextHd, facingMode);
+        if (!ok) {
+          await restartVideoTrack(facingMode, nextHd);
+        }
+        log?.("video quality changed", { hd: nextHd });
+      } catch (e) {
+        log?.("video quality change failed", { e: String(e) });
+      } finally {
+        switchingRef.current = false;
+      }
+    },
+    [applyQualityToExistingTrack, facingMode, log, restartVideoTrack, roomType]
+  );
+
   const flipCamera = useCallback(async () => {
-    // Only makes sense on mobile + in video rooms
     if (!isMobile) return;
     if (roomType !== "video") return;
     if (switchingRef.current) return;
 
-    const currentStream = localStreamRef.current;
-    const oldTrack = currentStream?.getVideoTracks?.()[0] ?? null;
-    if (!currentStream || !oldTrack) return;
-
-    // Some browsers allow applyConstraints; others require a new getUserMedia.
-    const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
     switchingRef.current = true;
+    const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
 
     try {
-      // Reliable path: always acquire a new track.
-      // (applyConstraints works on some devices, but is inconsistent and often breaks sizing)
-      const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
-      if (!md?.getUserMedia) return;
-
-      const newStream = await md.getUserMedia({
-        video: {
-          facingMode: { ideal: nextFacing },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-
-      const newTrack = newStream.getVideoTracks()[0];
-      if (!newTrack) return;
-
-      // Replace in local stream (keep the same MediaStream instance so all refs stay valid)
-      try {
-        currentStream.removeTrack(oldTrack);
-      } catch {}
-      try {
-        oldTrack.stop();
-      } catch {}
-      try {
-        currentStream.addTrack(newTrack);
-      } catch {}
-
-      // Replace on all peer connections (so the other side updates without re-offer)
-      if (peersRef?.current) {
-        peersRef.current.forEach(({ pc }) => {
-          try {
-            const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
-            if (sender) sender.replaceTrack(newTrack);
-          } catch {}
-        });
-      }
-
-      // Ensure the local preview refreshes immediately.
-      
+      // Prefer restarting track for facing-mode changes (most reliable)
+      await restartVideoTrack(nextFacing, hdEnabled);
       setFacingMode(nextFacing);
-      log?.("camera flip (new track)", { nextFacing });
+      log?.("camera flip", { nextFacing });
+    } catch (e) {
+      log?.("camera flip failed", { e: String(e) });
     } finally {
       switchingRef.current = false;
     }
-  }, [facingMode, isMobile, localStreamRef, peersRef, roomType, log]);
-
-  
-
-const getQualityConstraints = useCallback(
-  (hd: boolean, facing: FacingMode): MediaTrackConstraints => {
-    // Keep this conservative to reduce heat on phones.
-    if (isMobile) {
-      // Mobile: keep it cool. Cap FPS and keep MAX tight to avoid device overheating.
-      if (hd) {
-        return {
-          width: { ideal: 1280, max: 1280 },
-          height: { ideal: 720, max: 720 },
-          frameRate: { ideal: 24, max: 24 },
-          facingMode: facing,
-        };
-      }
-      return {
-        width: { ideal: 640, max: 640 },
-        height: { ideal: 360, max: 360 },
-        frameRate: { ideal: 20, max: 20 },
-        facingMode: facing,
-      };
-    }
-
-    // Desktop defaults
-    if (hd) {
-      return {
-        width: { ideal: 1280, max: 1280 },
-        height: { ideal: 720, max: 720 },
-        frameRate: { ideal: 30, max: 30 },
-      };
-    }
-    return {
-      width: { ideal: 960, max: 960 },
-      height: { ideal: 540, max: 540 },
-      frameRate: { ideal: 24, max: 24 },
-    };
-  },
-  [isMobile]
-);
-
-const setVideoQuality = useCallback(
-  async (nextHd: boolean) => {
-    if (roomType !== "video") return;
-    const currentStream = localStreamRef.current;
-    if (!currentStream) return;
-
-    const constraints = getQualityConstraints(nextHd, facingMode);
-
-    try {
-      // Prefer applying constraints to the existing track (less churn, fewer failures on mobile).
-      const oldTrack = currentStream.getVideoTracks?.()?.[0] ?? null;
-      if (!oldTrack) return;
-
-      let newTrack: MediaStreamTrack | null = null;
-
-      try {
-        await oldTrack.applyConstraints(constraints);
-        newTrack = oldTrack;
-      } catch {
-        // Some devices reject applyConstraints for resolution changes. Fall back to reacquire.
-        const md = navigator.mediaDevices;
-        const newStream = await md.getUserMedia({ video: constraints, audio: false });
-        newTrack = newStream.getVideoTracks()[0] || null;
-        if (!newTrack) return;
-
-        try {
-          currentStream.removeTrack(oldTrack);
-          oldTrack.stop();
-        } catch {}
-        currentStream.addTrack(newTrack);
-      }
-
-      // Replace on all peer connections
-      if (peersRef?.current) {
-        peersRef.current.forEach(({ pc }) => {
-          try {
-            pc.getSenders().forEach((sender: RTCRtpSender) => {
-              if (sender.track && sender.track.kind === "video") {
-                sender.replaceTrack(newTrack).catch(() => {});
-              }
-            });
-          } catch {}
-        });
-      }
-
-      setHdEnabled(nextHd);
-      try {
-        window.localStorage.setItem("anyspeak.video.hd", nextHd ? "1" : "0");
-      } catch {}
-      log?.("video quality changed", { hd: nextHd });
-    } catch (e) {
-      log?.("video quality change failed", { e: String(e) });
-    }
-  },
-  [facingMode, getQualityConstraints, localStreamRef, log, peersRef, roomType]
-);
+  }, [facingMode, hdEnabled, isMobile, log, restartVideoTrack, roomType]);
 
   const canFlip = isMobile && roomType === "video";
 
