@@ -1358,7 +1358,7 @@ useEffect(() => {
                               toggleCamera();
                               showPipControls();
                             }}
-                            className="w-10 h-10 rounded-xl bg-black/45 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                            className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
                             title="Camera"
                             aria-label="Camera"
                           >
@@ -1373,7 +1373,7 @@ useEffect(() => {
                                 flipCamera();
                                 showPipControls();
                               }}
-                              className="w-10 h-10 rounded-xl bg-black/45 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                              className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
                               title="Switch camera"
                               aria-label="Switch camera"
                             >
@@ -1392,7 +1392,7 @@ useEffect(() => {
                               } catch {}
                               showPipControls();
                             }}
-                            className={`w-10 h-10 rounded-xl bg-black/45 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
+                            className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
                               pipPinned ? "ring-1 ring-white/25" : "opacity-90"
                             }`}
                             title="Pin PiP"
@@ -1668,12 +1668,17 @@ useEffect(() => {
                 }}
                 className={`
                   rounded-full
-                  border
+                  border-[6px]
                   shadow-xl
                   backdrop-blur-md
+                  bg-transparent
                   active:scale-[0.98]
                   transition
-                  ${micUiOn ? "bg-emerald-600/65 border-emerald-300/30" : "bg-red-600/55 border-red-300/30"}
+                  ${
+                    micUiOn
+                      ? "border-emerald-400/80 active:bg-emerald-500/10"
+                      : "border-red-500/80 active:bg-red-500/10"
+                  }
                 `}
                 onPointerDown={(e) => {
                   e.preventDefault();
