@@ -220,7 +220,6 @@ useEffect(() => {
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const prevPeerCountRef = useRef<number>(0);
   const [joinPulse, setJoinPulse] = useState(false);
-  const joinPulseTimerRef = useRef<number | null>(null);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
 
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
@@ -232,22 +231,38 @@ useEffect(() => {
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
   // ---- Local preview (PiP) behavior -------------------------
-  // PiP stays visible by default. On PC it's draggable; on mobile it's fixed bottom-left.
-  // Controls for the PiP (pin/flip/cam) are *not* always visible: they only show when PiP is tapped.
   const pipRef = useRef<HTMLDivElement | null>(null);
+  const pipHideTimerRef = useRef<number | null>(null);
   const pipDraggingRef = useRef(false);
   const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
+  const [pipVisible, setPipVisible] = useState(true);
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
+    if (typeof window === "undefined") return false;
     const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
+    return v === "1";
   });
 
-  // PiP controls visibility (tap PiP / watermark to show)
+  // PiP controls (tap watermark to show; pin keeps them visible)
   const [pipControlsVisible, setPipControlsVisible] = useState(false);
   const pipControlsTimerRef = useRef<number | null>(null);
+
+  const showPipControls = useCallback(() => {
+    setPipControlsVisible(true);
+    if (pipControlsTimerRef.current) window.clearTimeout(pipControlsTimerRef.current);
+
+    // If not pinned, auto-hide after a few seconds
+    if (!pipPinned) {
+      pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3500);
+    }
+  }, [pipPinned]);
+
+  const hidePipControls = useCallback(() => {
+    if (pipControlsTimerRef.current) window.clearTimeout(pipControlsTimerRef.current);
+    pipControlsTimerRef.current = null;
+    setPipControlsVisible(false);
+  }, []);
 
   const [pipAspect, setPipAspect] = useState<number>(16 / 9);
   const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -295,26 +310,25 @@ useEffect(() => {
     return { w: Math.round(outW), h: Math.round(outH) };
   }, [vp.w, vp.h, pipAspect, isMobile]);
 
-  const clearPipControlsTimer = () => {
-    if (pipControlsTimerRef.current) {
-      window.clearTimeout(pipControlsTimerRef.current);
-      pipControlsTimerRef.current = null;
+  const clearPipTimer = () => {
+    if (pipHideTimerRef.current) {
+      window.clearTimeout(pipHideTimerRef.current);
+      pipHideTimerRef.current = null;
     }
   };
 
-  const showPipControls = useCallback(() => {
-    setPipControlsVisible(true);
-    clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
-  }, []);
+  const schedulePipHide = () => {
+    clearPipTimer();
+    pipHideTimerRef.current = window.setTimeout(() => {
+      setPipVisible(false);
+    }, 2500);
+  };
 
     // Set an initial position once we have a peer (1:1 view).
   // Mobile: start top-left (selfie-like preview area).
   // Desktop: start bottom-right, above the bottom dock.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Mobile PiP is fixed bottom-left (no stored position).
-    if (isMobile) return;
     if (pipPos) return;
     // Only relevant in 1:1 view (remote full + local PiP)
     if (peerIds.length !== 1) return;
@@ -325,10 +339,20 @@ useEffect(() => {
     const w = window.innerWidth || 360;
     const h = window.innerHeight || 640;
 
-    const x = Math.max(pad, w - pipDims.w - pad);
-    const y = Math.max(pad, h - pipDims.h - dock);
-    setPipPos({ x, y });
+    if (isMobile) {
+      // Clear the top controls/safe area.
+      const topPad = 76;
+      const x = pad;
+      const y = Math.max(pad, topPad);
+      setPipPos({ x, y });
+    } else {
+      const x = Math.max(pad, w - pipDims.w - pad);
+      const y = Math.max(pad, h - pipDims.h - dock);
+      setPipPos({ x, y });
+    }
 
+    setPipVisible(true);
+    schedulePipHide();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [peerIds.length, isMobile, pipDims.w, pipDims.h]);
 
@@ -360,14 +384,17 @@ useEffect(() => {
     return () => window.removeEventListener("resize", onResize);
   }, [pipPos]);
 
+  const pipShowNow = () => {
+    setPipVisible(true);
+    schedulePipHide();
+  };
+
   const pipOnPointerDown = (e: React.PointerEvent) => {
-    showPipControls();
-    if (isMobile) return; // mobile PiP is not draggable
+    pipShowNow();
     if (!pipPos) return;
 
     pipDraggingRef.current = true;
-    // keep controls visible while dragging
-    clearPipControlsTimer();
+    clearPipTimer();
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {}
@@ -401,23 +428,21 @@ useEffect(() => {
 
   const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
     if (!pipDraggingRef.current) {
-      showPipControls();
+      pipShowNow();
       return;
     }
     pipDraggingRef.current = false;
     try {
       (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     } catch {}
-    // fade controls back out
-    clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
+    schedulePipHide();
   };
 
   // (PiP initial position handled above)
 
 
   useEffect(() => {
-    return () => clearPipControlsTimer();
+    return () => clearPipTimer();
   }, []);
 
   // Captions / text stream
@@ -432,27 +457,28 @@ useEffect(() => {
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
   const playJoinChime = useCallback(() => {
+    if (typeof window === "undefined") return;
     try {
-      const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "sine";
-      o.frequency.value = 880;
-      g.gain.value = 0.0001;
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start();
-      const now = ctx.currentTime;
-      g.gain.exponentialRampToValueAtTime(0.06, now + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.20);
-      o.stop(now + 0.22);
-      setTimeout(() => {
-        try {
-          ctx.close();
-        } catch {}
-      }, 300);
+      const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as
+        | typeof AudioContext
+        | undefined;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.value = 0.001;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      // quick soft blip
+      gain.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.stop(ctx.currentTime + 0.2);
+      osc.onended = () => {
+        try { ctx.close(); } catch {}
+      };
     } catch {}
   }, []);
 
@@ -460,14 +486,16 @@ useEffect(() => {
     if (roomType !== "audio") return;
     const prev = prevPeerCountRef.current;
     const cur = peerIds.length;
+
     if (cur > prev) {
-      playJoinChime();
       setJoinPulse(true);
-      if (joinPulseTimerRef.current) window.clearTimeout(joinPulseTimerRef.current);
-      joinPulseTimerRef.current = window.setTimeout(() => setJoinPulse(false), 2000);
+      playJoinChime();
+      window.setTimeout(() => setJoinPulse(false), 1200);
     }
+
     prevPeerCountRef.current = cur;
   }, [peerIds.length, roomType, playJoinChime]);
+
 
   // ✅ Joiner camera choice for VIDEO rooms
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
@@ -1006,8 +1034,6 @@ useEffect(() => {
     return { dock: pttDock as "left" | "right", left: 0, top };
   }, [isMobile, pttDock, pttT, showTextInput]);
 
-
-
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
@@ -1079,7 +1105,6 @@ useEffect(() => {
           </div>
         )}
 
-        {/* Mobile: only the TOP strip brings HUD back (PTT should not pop it) */}
         {isMobile && (
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
@@ -1088,84 +1113,113 @@ useEffect(() => {
           />
         )}
 
-        {/* Top floating controls (icons only, no pills/words) */}
+        {/* Top HUD (icons only) */}
         <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
+          className={`absolute top-2 left-0 right-0 z-20 pointer-events-none transition-opacity duration-300 ${
             isMobile && !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
-          <div className="relative flex items-center justify-end gap-2">
-            {/* Audio join pulse (shows when someone joins an audio room) */}
-            {joinPulse && (
-              <div className="absolute left-0 top-0 pointer-events-none">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90">
-                  👤
+          <div className="relative flex items-center justify-center">
+            {/* Audio join indicator (no pill) */}
+            {roomType === "audio" && joinPulse && (
+              <div className="absolute left-3 top-1 pointer-events-none">
+                <div className="relative">
+                  <div className="h-3 w-3 rounded-full bg-emerald-300/90 animate-ping" />
+                  <div className="absolute top-0 left-0 h-3 w-3 rounded-full bg-emerald-300/90" />
                 </div>
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                ccOn ? "ring-1 ring-white/25" : "opacity-90"
-              }`}
-              title="Closed Captions"
-              aria-label="Closed Captions"
-            >
-              CC
-            </button>
+            <div className="pointer-events-auto flex items-center justify-center gap-2">
+              {/* Text chat / quick caption */}
+              <button
+                type="button"
+                onClick={() => {
+                  showHud();
+                  setShowTextInput((v) => !v);
+                }}
+                className={`w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center text-base ${
+                  showTextInput ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title="Text"
+                aria-label="Text"
+              >
+                💬
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                showHud();
-                setVideoQuality(!hdEnabled);
-              }}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
-              }`}
-              title={hdEnabled ? "HD" : "SD"}
-              aria-label="Toggle HD"
-            >
-              {hdEnabled ? "HD" : "SD"}
-            </button>
+              {/* Closed captions */}
+              <button
+                type="button"
+                onClick={() => {
+                  showHud();
+                  setCcOn((v) => !v);
+                }}
+                className={`w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center font-semibold ${
+                  ccOn ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title="Closed Captions"
+                aria-label="Closed Captions"
+              >
+                CC
+              </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const url = window.location.href;
-                  // @ts-ignore
-                  if (navigator.share) {
-                    // @ts-ignore
-                    await navigator.share({ url });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                  }
-                } catch {
+              {/* SD/HD (main video quality) */}
+              <button
+                type="button"
+                onClick={() => {
+                  showHud();
+                  setVideoQuality(!hdEnabled);
+                }}
+                className={`w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center font-semibold ${
+                  hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title={hdEnabled ? "HD" : "SD"}
+                aria-label={hdEnabled ? "HD" : "SD"}
+              >
+                {hdEnabled ? "HD" : "SD"}
+              </button>
+
+              {/* Share */}
+              <button
+                type="button"
+                onClick={async () => {
                   try {
                     const url = window.location.href;
-                    await navigator.clipboard.writeText(url);
+                    // @ts-ignore
+                    if (navigator.share) {
+                      // @ts-ignore
+                      await navigator.share({ url, text: "Join my Any-Speak room" });
+                    } else {
+                      await navigator.clipboard.writeText(url);
+                      log("copied room link", { url });
+                    }
                   } catch {}
-                }
-              }}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-              title="Share"
-              aria-label="Share"
-            >
-              ↗
-            </button>
+                  showHud();
+                }}
+                className="w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center text-lg opacity-95"
+                title="Share"
+                aria-label="Share"
+              >
+                ↗
+              </button>
 
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
-              title="Exit"
-              aria-label="Exit"
-            >
-              📴
-            </button>
+              {/* Exit */}
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    router.push("/");
+                  } catch {
+                    window.location.href = "/";
+                  }
+                }}
+                className="w-10 h-10 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center text-xl opacity-95"
+                title="Exit"
+                aria-label="Exit"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         </header>
 
@@ -1261,8 +1315,6 @@ useEffect(() => {
             </div>
           )}
 
-          {/* (Removed) STT status pills */}
-
           <div className="h-full w-full">
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
@@ -1289,120 +1341,113 @@ useEffect(() => {
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
-                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+                    className="pointer-events-auto fixed z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
                     style={
                       isMobile
                         ? {
-                            position: "fixed",
                             left: 12,
                             bottom: "calc(env(safe-area-inset-bottom) + 12px)",
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: 1,
-                            transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
                             WebkitUserSelect: "none",
                           }
                         : {
-                            position: "absolute",
                             left: pipPos?.x ?? 16,
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
-                            transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
                             WebkitUserSelect: "none",
                           }
                     }
-                    onPointerDown={pipOnPointerDown}
-                    onPointerMove={pipOnPointerMove}
-                    onPointerUp={pipOnPointerUpOrCancel}
-                    onPointerCancel={pipOnPointerUpOrCancel}
+                    onPointerDown={!isMobile ? pipOnPointerDown : undefined}
+                    onPointerMove={!isMobile ? pipOnPointerMove : undefined}
+                    onPointerUp={!isMobile ? pipOnPointerUpOrCancel : undefined}
+                    onPointerCancel={!isMobile ? pipOnPointerUpOrCancel : undefined}
                     title="Your camera"
                     aria-label="Your camera"
                   >
-                    {/* Local preview */}
                     {camOn ? (
                       <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-white/80 bg-black/60">
-                        <span className="text-lg">📷✕</span>
+                      <div className="h-full w-full flex items-center justify-center text-white/70 bg-black/60">
+                        <span className="text-2xl">📷✕</span>
                       </div>
                     )}
 
-                    {/* Watermark bottom-left (tap to show PiP controls) */}
+                    {/* Watermark (tap to show PiP controls) */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        showPipControls();
+                        if (pipControlsVisible) hidePipControls();
+                        else showPipControls();
                       }}
-                      className="absolute bottom-1 left-1 pointer-events-auto select-none text-[10px] px-2 py-1 rounded-lg bg-black/35 backdrop-blur border border-white/10 text-white/80"
-                      title="Controls"
-                      aria-label="PiP controls"
+                      className="absolute bottom-1.5 left-1.5 pointer-events-auto text-[10px] font-semibold tracking-wide text-white/80 bg-black/30 backdrop-blur-md border border-white/10 rounded-md px-2 py-1"
+                      title="Any-Speak"
+                      aria-label="Any-Speak"
                     >
                       Any-Speak
                     </button>
 
-                    {/* PiP controls overlay (camera/pin/flip) */}
-                    {pipControlsVisible && (
-                      <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none">
-                        <div className="flex items-center gap-2 pointer-events-auto">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleCamera();
-                              showPipControls();
-                            }}
-                            className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-                            title="Camera"
-                            aria-label="Camera"
-                          >
-                            {camOn ? "📷" : "📷✕"}
-                          </button>
+                    {/* PiP controls (camera + flip + pin) */}
+                    <div
+                      className={`absolute top-1.5 right-1.5 pointer-events-auto flex flex-col gap-1.5 transition-opacity duration-200 ${
+                        pipControlsVisible || pipPinned ? "opacity-100" : "opacity-0 pointer-events-none"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleCamera();
+                          showPipControls();
+                        }}
+                        className="w-8 h-8 rounded-full bg-black/35 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center text-base"
+                        title="Camera"
+                        aria-label="Camera"
+                      >
+                        {camOn ? "📷" : "📷✕"}
+                      </button>
 
-                          {isMobile && canFlip && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                flipCamera();
-                                showPipControls();
-                              }}
-                              className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-                              title="Switch camera"
-                              aria-label="Switch camera"
-                            >
-                              ↺
-                            </button>
-                          )}
+                      {canFlip && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            flipCamera();
+                            showPipControls();
+                          }}
+                          className="w-8 h-8 rounded-full bg-black/35 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center text-base"
+                          title="Switch camera"
+                          aria-label="Switch camera"
+                        >
+                          ↺
+                        </button>
+                      )}
 
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const next = !pipPinned;
-                              setPipPinned(next);
-                              try {
-                                window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
-                              } catch {}
-                              showPipControls();
-                            }}
-                            className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
-                              pipPinned ? "ring-1 ring-white/25" : "opacity-90"
-                            }`}
-                            title="Pin PiP"
-                            aria-label="Pin PiP"
-                          >
-                            📌
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !pipPinned;
+                          setPipPinned(next);
+                          try {
+                            window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
+                          } catch {}
+                          showPipControls();
+                        }}
+                        className={`w-8 h-8 rounded-full bg-black/35 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center text-base ${
+                          pipPinned ? "ring-1 ring-white/25" : "opacity-90"
+                        }`}
+                        title={pipPinned ? "PiP controls pinned" : "Pin PiP controls"}
+                        aria-label="Pin PiP controls"
+                      >
+                        📌
+                      </button>
+                    </div>
+                  </div>
+                )}
                   </div>
                 )}
               </div>
@@ -1474,6 +1519,7 @@ useEffect(() => {
                       onClick={() => setSpotlightId("local")}
                       className="relative h-20 md:h-24 aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-700/80 flex-shrink-0"
                     >
+
                     <video
                         data-local="1"
                         ref={attachLocalVideo}
@@ -1619,37 +1665,37 @@ useEffect(() => {
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Desktop mic button (fix: no way to talk on PC) */}
           {!isMobile && (
-            <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => void toggleMic()}
-                className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
-                title="Live captions mic"
+                className={`w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center text-lg ${
+                  micUiOn ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title="Mic"
+                aria-label="Mic"
               >
-                {micUiOn ? "🎙️ On" : "🎙️ Off"}
+                🎙️
               </button>
-            </div>
-          )}
-
-          {/* Desktop-only camera toggle (mobile uses top pills) */}
-          {!isMobile && (
-            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
               <button
-                onClick={toggleCamera}
-                className={`${pillBase} ${camClass} ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                } bg-black/25 backdrop-blur-md border-white/10`}
-                disabled={roomType !== "video"}
-                title="Camera"
+                type="button"
+                onClick={() => void toggleMic()}
+                className={`w-12 h-12 rounded-full bg-black/30 backdrop-blur-md border border-white/10 text-white/95 shadow flex items-center justify-center text-lg ${
+                  micUiOn ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title="Mic"
+                aria-label="Mic"
               >
-                {camOn ? "📷" : "📷✕"}
+                🎙️
               </button>
+
             </div>
           )}
 
           {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
             <div
-              className="fixed pointer-events-auto"
+              className={`fixed z-[80] flex items-center gap-3 transition-opacity duration-300 ${hudVisible ? "opacity-100" : "opacity-0 pointer-events-none"}`}
               style={
                 pttPx.dock === "bottom"
                   ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
@@ -1668,17 +1714,12 @@ useEffect(() => {
                 }}
                 className={`
                   rounded-full
-                  border-[6px]
+                  border-4
                   shadow-xl
                   backdrop-blur-md
-                  bg-transparent
                   active:scale-[0.98]
                   transition
-                  ${
-                    micUiOn
-                      ? "border-emerald-400/80 active:bg-emerald-500/10"
-                      : "border-red-500/80 active:bg-red-500/10"
-                  }
+                  ${micUiOn ? "bg-transparent border-emerald-300/80" : "bg-transparent border-red-300/80"}
                 `}
                 onPointerDown={(e) => {
                   e.preventDefault();
