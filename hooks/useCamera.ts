@@ -144,18 +144,19 @@ const getQualityConstraints = useCallback(
   (hd: boolean, facing: FacingMode): MediaTrackConstraints => {
     // Keep this conservative to reduce heat on phones.
     if (isMobile) {
+      // Mobile: keep it cool. Cap FPS and keep MAX tight to avoid device overheating.
       if (hd) {
         return {
-          width: { ideal: 1280, max: 1920 },
-          height: { ideal: 720, max: 1080 },
-          frameRate: { ideal: 24, max: 30 },
+          width: { ideal: 1280, max: 1280 },
+          height: { ideal: 720, max: 720 },
+          frameRate: { ideal: 24, max: 24 },
           facingMode: facing,
         };
       }
       return {
-        width: { ideal: 960, max: 1280 },
-        height: { ideal: 540, max: 720 },
-        frameRate: { ideal: 20, max: 24 },
+        width: { ideal: 640, max: 640 },
+        height: { ideal: 360, max: 360 },
+        frameRate: { ideal: 20, max: 20 },
         facingMode: facing,
       };
     }
@@ -163,15 +164,15 @@ const getQualityConstraints = useCallback(
     // Desktop defaults
     if (hd) {
       return {
-        width: { ideal: 1920, max: 1920 },
-        height: { ideal: 1080, max: 1080 },
+        width: { ideal: 1280, max: 1280 },
+        height: { ideal: 720, max: 720 },
         frameRate: { ideal: 30, max: 30 },
       };
     }
     return {
-      width: { ideal: 1280, max: 1280 },
-      height: { ideal: 720, max: 720 },
-      frameRate: { ideal: 24, max: 30 },
+      width: { ideal: 960, max: 960 },
+      height: { ideal: 540, max: 540 },
+      frameRate: { ideal: 24, max: 24 },
     };
   },
   [isMobile]
@@ -186,19 +187,28 @@ const setVideoQuality = useCallback(
     const constraints = getQualityConstraints(nextHd, facingMode);
 
     try {
-      const md = navigator.mediaDevices;
-      const newStream = await md.getUserMedia({ video: constraints, audio: false });
-      const newTrack = newStream.getVideoTracks()[0] || null;
-      if (!newTrack) return;
-
+      // Prefer applying constraints to the existing track (less churn, fewer failures on mobile).
       const oldTrack = currentStream.getVideoTracks?.()?.[0] ?? null;
-      if (oldTrack) {
+      if (!oldTrack) return;
+
+      let newTrack: MediaStreamTrack | null = null;
+
+      try {
+        await oldTrack.applyConstraints(constraints);
+        newTrack = oldTrack;
+      } catch {
+        // Some devices reject applyConstraints for resolution changes. Fall back to reacquire.
+        const md = navigator.mediaDevices;
+        const newStream = await md.getUserMedia({ video: constraints, audio: false });
+        newTrack = newStream.getVideoTracks()[0] || null;
+        if (!newTrack) return;
+
         try {
           currentStream.removeTrack(oldTrack);
           oldTrack.stop();
         } catch {}
+        currentStream.addTrack(newTrack);
       }
-      currentStream.addTrack(newTrack);
 
       // Replace on all peer connections
       if (peersRef?.current) {
