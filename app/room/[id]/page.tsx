@@ -14,7 +14,6 @@ import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 import FullBleedVideo from "@/components/FullBleedVideo";
-import RoomTopControls from "@/components/RoomTopControls";
 
 // Types
 type WebRTCPayload = {
@@ -114,46 +113,29 @@ export default function RoomPage() {
   const debugKey = debugEnabled ? "debug" : "normal";
 
   const isMobile = useMemo(() => {
-    if (typeof navigator === "undefined") return false;
-    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-  }, []);
+  if (typeof navigator === "undefined") return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}, []);
+
+// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
+const [hudVisible, setHudVisible] = useState(true);
+const hudTimerRef = useRef<number | null>(null);
+
+const showHud = useCallback(() => {
+  setHudVisible(true);
+  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), 120000); // 2 min
+}, []);
 
 
-  // ---- HUD (top controls): visible on entry, fades, returns on camera tap ----
-  const [hudVisible, setHudVisible] = useState(true);
-  const hudTimerRef = useRef<number | null>(null);
-
-  const showHud = useCallback(() => {
-    setHudVisible(true);
+useEffect(() => {
+  if (!isMobile) return;
+  showHud();
+  return () => {
     if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-    hudTimerRef.current = window.setTimeout(() => setHudVisible(false), 120000);
-  }, []);
-
-  useEffect(() => {
-    showHud();
-    
-  const handleShare = useCallback(async () => {
-    try {
-      const url = typeof window !== "undefined" ? window.location.href : "";
-      const data = { title: "Any-Speak", text: "Join my Any-Speak room", url };
-      // @ts-ignore
-      if (navigator?.share) {
-        // @ts-ignore
-        await navigator.share(data);
-      } else if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-return () => {
-      if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-    };
-  }, [showHud]);
-
-
+  };
+}, [isMobile, showHud]);
+  
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -236,7 +218,10 @@ return () => {
   const displayNameRef = useRef<string>("You");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
+  const prevPeerCountRef = useRef<number>(0);
+  const [joinToast, setJoinToast] = useState<string>("");
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
   const [connected, setConnected] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -253,6 +238,11 @@ return () => {
 
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipVisible, setPipVisible] = useState(true);
+  const [pipPinned, setPipPinned] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const v = window.localStorage.getItem("anyspeak.pip.pinned");
+    return v === null ? true : v === "1";
+  });
 
   const [pipAspect, setPipAspect] = useState<number>(16 / 9);
   const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -446,6 +436,16 @@ return () => {
 
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
+  useEffect(() => {
+    if (roomType !== "audio") return;
+    const prev = prevPeerCountRef.current;
+    const cur = peerIds.length;
+    if (cur > prev) {
+      setJoinToast(cur === 1 ? "Someone joined" : `${cur} people are here`);
+      window.setTimeout(() => setJoinToast(""), 2500);
+    }
+    prevPeerCountRef.current = cur;
+  }, [peerIds.length, roomType]);
 
   // ✅ Joiner camera choice for VIDEO rooms
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
@@ -645,7 +645,7 @@ return () => {
   }, [camOn, joinCamOn]);
 
 
-  const { beforeConnect, toggleCamera, flipCamera, canFlip } = useCamera({
+  const { beforeConnect, toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
     roomType,
     joinCamOn,
@@ -920,7 +920,7 @@ return () => {
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
   // Mobile control sizing (avoid Tailwind dynamic class issues)
-  const PTT_SIZE = 68; // tuned for mobile ergonomics
+  const PTT_SIZE = 76;
 
   const online = rtStatus === "SUBSCRIBED";
 
@@ -970,37 +970,42 @@ return () => {
   };
 
   const pttPx = useMemo(() => {
-  if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+    const { xLeft, xRight, minY, maxY } = getPttLayout();
 
-  // Mobile requirement: PTT is ALWAYS fixed bottom-center (no docking/dragging).
-  const { xCenter } = getPttLayout();
-  return { dock: "bottom" as const, left: xCenter, top: 0 };
-}, [isMobile, showTextInput]);
+    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+    const t = clamp01(pttT);
 
+    if (pttDock === "bottom") {
+      const left = Math.round(xLeft + (xRight - xLeft) * t);
+      return { dock: "bottom" as const, left, top: 0 };
+    }
+    const top = Math.round(minY + (maxY - minY) * t);
+    return { dock: pttDock as "left" | "right", left: 0, top };
+  }, [isMobile, pttDock, pttT, showTextInput]);
 
   // Mobile: keep PiP tucked inline to the left of the PTT button when PTT is bottom-docked
   const PIP_INLINE_W = 110;
   const PIP_INLINE_H = 82;
-  const pipInline = isMobile; // Mobile requirement: PiP fixed bottom-left inline with the PTT row
+  const pipInline = isMobile && pttPx.dock === "bottom";
   const pipInlineStyle = useMemo(() => {
-  if (!pipInline) return null;
-
-  // Mobile requirement: PiP fixed bottom-left (same bottom row as PTT).
-  return {
-    position: "fixed" as const,
-    left: 12,
-    bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-    width: PIP_INLINE_W,
-    height: PIP_INLINE_H,
-    zIndex: 70,
-  };
-}, [pipInline]);
-
+    if (!pipInline) return null;
+    const bottom = "calc(env(safe-area-inset-bottom) + 12px)";
+    const left = Math.max(12, pttPx.left - PIP_INLINE_W - 12);
+    return {
+      position: "fixed" as const,
+      left,
+      bottom,
+      width: PIP_INLINE_W,
+      height: PIP_INLINE_H,
+      zIndex: 70,
+    };
+  }, [pipInline, pttPx.left]);
 
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
-      <div className="relative h-full w-full overflow-hidden" onPointerDown={() => showHud()}>
+      <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
@@ -1031,24 +1036,116 @@ return () => {
                     bg-emerald-600/75
                     hover:bg-emerald-600
                     active:scale-[0.97]
-                    shadow<RoomTopControls
-        visible={hudVisible}
-        ccOn={ccOn}
-        onToggleCc={() => {
-          setCcOn((v) => !v);
-          showHud();
-        }}
-        hdEnabled={hdEnabled}
-        onToggleHd={() => {
-          setVideoQuality(hdEnabled ? "sd" : "hd");
-          showHud();
-        }}
-        onShare={() => {
-          handleShare();
-          showHud();
-        }}
-        onExit={() => router.push("/")}
-/>rl, text: "Join my Any-Speak room" });
+                    shadow-2xl
+                    backdrop-blur-md
+                    text-white text-3xl
+                    transition
+                  "
+                  title="Camera on"
+                  aria-label="Camera on"
+                >
+                  📷
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setJoinCamOn(false)}
+                  className="
+                    w-[96px] h-[96px]
+                    rounded-full
+                    flex items-center justify-center
+                    border border-white/10
+                    bg-white/10
+                    hover:bg-white/15
+                    active:scale-[0.97]
+                    shadow-2xl
+                    backdrop-blur-md
+                    text-white text-3xl
+                    transition
+                  "
+                  title="Camera off"
+                  aria-label="Camera off"
+                >
+                  📷✕
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isMobile && (
+          <div
+            className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
+            style={{ height: "30vh" }}
+            onPointerDown={() => showHud()}
+          />
+        )}
+
+        {/* Top floating controls */}
+        <header className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${isMobile && !hudVisible ? "opacity-0" : "opacity-100"}`}>
+          <div className="flex items-center justify-center gap-2">
+
+            {/* Controls */}
+            <div className="flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCcOn((v) => !v)}
+              className={`pointer-events-auto w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow ${
+                ccOn ? "ring-1 ring-white/20" : "opacity-80"
+              }`}
+              title="Closed Captions"
+            >
+              CC
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                showHud();
+                setVideoQuality(!hdEnabled);
+              }}
+              className={`pointer-events-auto w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow ${
+                hdEnabled ? "ring-1 ring-white/20" : "opacity-80"
+              }`}
+              title={hdEnabled ? "HD video" : "Standard video"}
+            >
+              {hdEnabled ? "HD" : "SD"}
+            </button>
+
+            {/* Camera ON/OFF as a pill (mobile + desktop) */}
+            <button
+              type="button"
+              onClick={toggleCamera}
+              className={`pointer-events-auto w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/95 shadow active:scale-[0.98] transition ${
+                roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+              }`}
+              disabled={roomType !== "video"}
+              title="Camera"
+            >
+              {camOn ? "📷" : "📷✕"}
+            </button>
+
+            {/* Flip camera (mobile only) */}
+            {canFlip && (
+              <button
+                type="button"
+                onClick={flipCamera}
+                className="pointer-events-auto w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/95 shadow active:scale-[0.98] transition"
+                title="Switch camera"
+              >
+                🔄
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const url = window.location.href;
+                  // @ts-ignore
+                  if (navigator.share) {
+                    // @ts-ignore
+                    await navigator.share({ url, text: "Join my Any-Speak room" });
                   } else {
                     await navigator.clipboard.writeText(url);
                     log("copied room link", { url });
@@ -1061,7 +1158,7 @@ return () => {
                   } catch {}
                 }
               }}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
+              className="pointer-events-auto w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow"
             >
               Share
             </button>
@@ -1069,7 +1166,7 @@ return () => {
             <button
               type="button"
               onClick={handleEndCall}
-              className="pointer-events-auto px-3 py-1.5 rounded-full bg-red-600/45 backdrop-blur-md border border-white/10 text-[11px] text-white/95 shadow active:scale-[0.98] transition"
+              className="pointer-events-auto w-12 h-12 rounded-full bg-red-600/45 backdrop-blur-md border border-white/10 text-white/95 shadow active:scale-[0.98] transition"
               title="End call"
             >
               📴
@@ -1169,197 +1266,6 @@ return () => {
               </div>
             </div>
           )}
-
-          {isMobile && sttArmedNotListening && (
-            <div className="absolute top-[calc(env(safe-area-inset-top)+52px)] left-3 z-20 text-[10px] md:text-xs text-sky-200 bg-black/45 backdrop-blur px-2 py-1 rounded-full border border-white/10">
-              Captions paused. Hold to Talk.
-            </div>
-          )}
-
-          <div className="h-full w-full">
-            {/* 0 peers: show local */}
-            {peerIds.length === 0 && (
-              <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-              </div>
-            )}
-
-            {/* 1 peer: remote full + local PiP */}
-            {peerIds.length === 1 && firstRemoteId && (
-              <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
-                <audio
-                  data-remote
-                  autoPlay
-                  ref={(el) => {
-                    if (!el || !firstRemoteId) return;
-                    const stream = peerStreams[firstRemoteId];
-                    if (!stream) return;
-                    if (el.srcObject !== stream) el.srcObject = stream;
-                  }}
-                />
-
-                {roomType === "video" && (
-                  <div
-                    ref={pipRef}
-                    className={`pointer-events-auto ${pipInline ? "fixed" : "absolute"} z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black`}
-                    style={
-                      pipInline && pipInlineStyle
-                        ? {
-                            ...pipInlineStyle,
-                            opacity: pipVisible ? 1 : 0.25,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
-                        : {
-                            left: pipPos?.x ?? 16,
-                            top: pipPos?.y ?? 16,
-                            // Phone-to-phone: make PiP portrait-ish; otherwise keep the 16:9 preview
-                            width: isMobile ? 148 : 160,
-                            height: isMobile ? 100 : 96,
-                            opacity: pipVisible ? 1 : 0.25,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
-                    }
-                    onPointerDown={pipInline ? undefined : pipOnPointerDown}
-                    onPointerMove={pipInline ? undefined : pipOnPointerMove}
-                    onPointerUp={pipInline ? undefined : pipOnPointerUpOrCancel}
-                    onPointerCancel={pipInline ? undefined : pipOnPointerUpOrCancel}
-                    onClick={() => pipShowNow()}
-                    title="Your camera"
-                    aria-label="Your camera"
-                  >
-                    {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-                    ) : (
-                      <div className="h-full w-full flex items-center justify-center text-[11px] text-white/80 bg-black/60">
-                        Camera off
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
-            {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
-              <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
-                {/* local tile */}
-                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                    <span>You</span>
-                  </div>
-                </div>
-
-                {peerIds.map((pid) => (
-                  <div
-                    key={pid}
-                    className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]"
-                  >
-                    <FullBleedVideo stream={peerStreams[pid] ?? null} />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (!el || !stream) return;
-                        if (el.srcObject !== stream) el.srcObject = stream;
-                      }}
-                    />
-                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                      <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 5+ participants: spotlight mode */}
-            {totalParticipants >= 5 && (
-              <div className="flex flex-col h-full w-full">
-                <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
-                  {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-                  ) : (
-                    <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
-                      <audio
-                        data-remote
-                        autoPlay
-                        ref={(el) => {
-                          const stream = peerStreams[spotlightId];
-                          if (!el || !stream) return;
-                          if (el.srcObject !== stream) el.srcObject = stream;
-                        }}
-                      />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="mt-2 flex gap-2 overflow-x-auto px-2 pb-3">
-                  {spotlightId !== "local" && (
-                    <button
-                      type="button"
-                      onClick={() => setSpotlightId("local")}
-                      className="relative h-20 md:h-24 aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-700/80 flex-shrink-0"
-                    >
-                      <video
-                        data-local="1"
-                        ref={attachLocalVideo}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="h-full w-full object-contain bg-black"
-                      />
-                    </button>
-                  )}
-
-                  {peerIds.map((pid) => {
-                    const isSpot = pid === spotlightId;
-                    return (
-                      <button
-                        key={pid}
-                        type="button"
-                        onClick={() => setSpotlightId(pid)}
-                        className={`relative h-20 md:h-24 aspect-video rounded-xl overflow-hidden flex-shrink-0 border ${
-                          isSpot ? "border-emerald-500" : "border-neutral-700/80"
-                        } bg-neutral-900`}
-                      >
-                        <video
-                          autoPlay
-                          playsInline
-                          className="h-full w-full object-contain bg-black"
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
-                          }}
-                        />
-                        <audio
-                          data-remote
-                          autoPlay
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (!el || !stream) return;
-                            if (el.srcObject !== stream) el.srcObject = stream;
-                          }}
-                        />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                          <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
                 </div>
               </div>
             )}
@@ -1488,7 +1394,13 @@ return () => {
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
-              style={{ left: "50%", transform: "translateX(-50%)", bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+              style={
+                pttPx.dock === "bottom"
+                  ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
+                  : pttPx.dock === "left"
+                  ? { left: 12, top: pttPx.top }
+                  : { right: 12, top: pttPx.top }
+              }
             >
               <button
                 style={{
@@ -1499,15 +1411,14 @@ return () => {
                   WebkitUserSelect: "none",
                 }}
                 className={`
-  rounded-full
-  border-[6px]
-  shadow-xl
-  backdrop-blur-md
-  bg-transparent
-  active:scale-[0.98]
-  transition
-  ${micUiOn ? "border-emerald-300/70" : "border-red-300/70"}
-`}
+                  rounded-full
+                  border-[6px]
+                  shadow-xl ring-1 ring-white/10
+                  backdrop-blur-md
+                  active:scale-[0.98]
+                  transition
+                  ${micUiOn ? "bg-transparent border-emerald-300/50" : "bg-transparent border-red-300/50"}
+                `}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   try {
@@ -1536,50 +1447,114 @@ return () => {
                   }, 180);
                 }}
                 onPointerMove={(e) => {
-  const d = pttDragRef.current;
-  if (d.pointerId !== e.pointerId) return;
+                  const d = pttDragRef.current;
+                  if (d.pointerId !== e.pointerId) return;
 
-  const dx = e.clientX - d.startX;
-  const dy = e.clientY - d.startY;
-  const dist = Math.hypot(dx, dy);
+                  const dx = e.clientX - d.startX;
+                  const dy = e.clientY - d.startY;
+                  const dist = Math.hypot(dx, dy);
 
-  // If the finger moves, cancel the pending hold-to-talk start.
-  if (!d.moved && dist > 18) {
-    d.moved = true;
+                  // Much higher threshold to avoid “small movements” breaking PTT
+                  if (!d.moved && dist > 18) {
+                    d.moved = true;
 
-    if (d.holdTimer) {
-      clearTimeout(d.holdTimer);
-      d.holdTimer = null;
-    }
-    if (d.startedPtt) {
-      pttCancel();
-      d.startedPtt = false;
-    }
-  }
+                    // cancel hold-to-talk if it was about to fire
+                    if (d.holdTimer) {
+                      clearTimeout(d.holdTimer);
+                      d.holdTimer = null;
+                    }
+                    if (d.startedPtt) {
+                      pttCancel();
+                      d.startedPtt = false;
+                    }
+                  }
 
-  // Mobile requirement: PTT is fixed bottom-center (no dragging/docking).
-}}
+                  // Don’t actually drag unless user clearly intends to
+                  if (!d.dragging && dist > 32) {
+                    d.dragging = true;
+                  }
+                  if (!d.dragging) return;
+
+                  const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
+
+                  // Only switch docks if REALLY near an edge
+                  const nearLeft = e.clientX <= edgeZone;
+                  const nearRight = e.clientX >= w - size - edgeZone;
+
+                  const nextDock: PttDock = nearLeft ? "left" : nearRight ? "right" : "bottom";
+
+                  if (nextDock !== pttDockRef.current) {
+                    setPttDock(nextDock);
+                    pttDockRef.current = nextDock;
+                  }
+
+                  if (nextDock === "bottom") {
+                    const centerX = e.clientX - size / 2;
+                    const t = (centerX - xLeft) / (xRight - xLeft || 1);
+                    setPttT(Math.min(1, Math.max(0, t)));
+                  } else {
+                    const centerY = e.clientY - size / 2;
+                    const t = (centerY - minY) / (maxY - minY || 1);
+                    setPttT(Math.min(1, Math.max(0, t)));
+                  }
+                }}
                 onPointerUp={(e) => {
-  e.preventDefault();
-  try {
-    e.currentTarget.releasePointerCapture(e.pointerId);
-  } catch {}
+                  e.preventDefault();
+                  try {
+                    e.currentTarget.releasePointerCapture(e.pointerId);
+                  } catch {}
 
-  const d = pttDragRef.current;
-  if (d.holdTimer) {
-    clearTimeout(d.holdTimer);
-    d.holdTimer = null;
-  }
+                  const d = pttDragRef.current;
+                  if (d.holdTimer) {
+                    clearTimeout(d.holdTimer);
+                    d.holdTimer = null;
+                  }
 
-  if (d.startedPtt) {
-    pttUp();
-  }
+                  if (d.dragging) {
+                    const { xLeft, xCenter, xRight } = getPttLayout();
 
-  d.pointerId = null;
-  d.dragging = false;
-  d.moved = false;
-  d.startedPtt = false;
-}}
+                    // Snap bottom dock to left/center/right
+                    if (pttDockRef.current === "bottom") {
+                      const x = pttPx.left;
+                      const candidates = [xLeft, xCenter, xRight];
+                      let best = candidates[0];
+                      let bestDist = Math.abs(x - best);
+                      for (const c of candidates.slice(1)) {
+                        const dd = Math.abs(x - c);
+                        if (dd < bestDist) {
+                          bestDist = dd;
+                          best = c;
+                        }
+                      }
+
+                      const newT =
+                        best === xLeft
+                          ? 0
+                          : best === xRight
+                          ? 1
+                          : (xCenter - xLeft) / (xRight - xLeft || 1);
+
+                      setPttT(newT);
+                      try {
+                        localStorage.setItem("anyspeak_ptt_dock_v1", JSON.stringify({ dock: "bottom", t: newT }));
+                      } catch {}
+                    } else {
+                      try {
+                        localStorage.setItem(
+                          "anyspeak_ptt_dock_v1",
+                          JSON.stringify({ dock: pttDockRef.current, t: pttTRef.current })
+                        );
+                      } catch {}
+                    }
+                  } else if (d.startedPtt) {
+                    pttUp();
+                  }
+
+                  d.pointerId = null;
+                  d.dragging = false;
+                  d.moved = false;
+                  d.startedPtt = false;
+                }}
                 onPointerCancel={(e) => {
                   e.preventDefault();
                   const d = pttDragRef.current;
@@ -1612,7 +1587,7 @@ return () => {
             <button
               type="button"
               onClick={() => setShowTextInput((v) => !v)}
-              className="px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
+              className="w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow"
             >
               {showTextInput ? "Text ✕" : "Text"}
             </button>
@@ -1622,3 +1597,10 @@ return () => {
     </div>
   );
 }
+
+
+
+
+
+
+
