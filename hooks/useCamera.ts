@@ -201,16 +201,17 @@ const setVideoQuality = useCallback(
       currentStream.addTrack(newTrack);
 
       // Replace on all peer connections
-      Object.values(peersRef?.current || {}).forEach((peer) => {
-        try {
-          peer?.pc?.getSenders().forEach((sender: RTCRtpSender) => {
-  if (sender.track && sender.track.kind === "video") {
-    sender.replaceTrack(newTrack).catch(() => {});
-  }
-});
-
-        } catch {}
-      });
+      if (peersRef?.current) {
+        peersRef.current.forEach(({ pc }) => {
+          try {
+            pc.getSenders().forEach((sender: RTCRtpSender) => {
+              if (sender.track && sender.track.kind === "video") {
+                sender.replaceTrack(newTrack).catch(() => {});
+              }
+            });
+          } catch {}
+        });
+      }
 
       setHdEnabled(nextHd);
       try {
