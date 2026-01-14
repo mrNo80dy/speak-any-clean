@@ -1266,7 +1266,6 @@ useEffect(() => {
               </div>
             </div>
           )}
-          </div>
 
           {/* Captions overlay */}
           {ccOn && messages.length > 0 && (
@@ -1594,6 +1593,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
