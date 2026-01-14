@@ -1,11 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type RoomType = "audio" | "video";
-type FacingMode = "user" | "environment";
 
-// Minimal peer shape we need for replacing tracks
 type AnySpeakPeer = { pc: RTCPeerConnection };
 
 type Args = {
@@ -13,48 +11,54 @@ type Args = {
   roomType: RoomType | null;
   joinCamOn: boolean | null;
 
-  // acquire should ensure localStreamRef.current is populated (and local preview attached by caller)
+  // acquire should return the (possibly updated) local stream
   acquire: () => Promise<MediaStream | null>;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
   setCamEnabled: (enabled: boolean) => void;
 
-  // Optional: replace outgoing video on all peer connections
+  // Optional: if provided, we replace the outgoing track on all peer connections.
   peersRef?: React.MutableRefObject<Map<string, AnySpeakPeer>>;
   log?: (msg: string, data?: any) => void;
 };
 
-function getConstraints(isMobile: boolean, hd: boolean, facing: FacingMode): MediaTrackConstraints {
-  // Conservative defaults to reduce heat on phones
-  if (isMobile) {
-    if (hd) {
-      return {
-        facingMode: { ideal: facing },
-        width: { ideal: 1280, max: 1920 },
-        height: { ideal: 720, max: 1080 },
-        frameRate: { ideal: 24, max: 30 },
-      };
+type FacingMode = "user" | "environment";
+
+type VideoDevice = { deviceId: string; label: string };
+
+function isLikelyBuiltIn(label: string) {
+  const s = (label || "").toLowerCase();
+  return (
+    s.includes("integrated") ||
+    s.includes("built-in") ||
+    s.includes("builtin") ||
+    s.includes("facetime") ||
+    s.includes("imaging") ||
+    s.includes("hd webcam") ||
+    s.includes("internal")
+  );
+}
+
+function pickPreferredDevice(devs: VideoDevice[]) {
+  if (!devs.length) return null;
+
+  // If we saved a specific camera last time, prefer it.
+  try {
+    const saved = localStorage.getItem("anyspeak.videoDeviceId") || "";
+    if (saved) {
+      const match = devs.find((d) => d.deviceId === saved);
+      if (match) return match.deviceId;
     }
-    return {
-      facingMode: { ideal: facing },
-      width: { ideal: 960, max: 1280 },
-      height: { ideal: 540, max: 720 },
-      frameRate: { ideal: 20, max: 24 },
-    };
+  } catch {}
+
+  // If labels are available, prefer a non-built-in camera when present.
+  const labeled = devs.filter((d) => (d.label || "").trim().length > 0);
+  if (labeled.length) {
+    const external = labeled.find((d) => !isLikelyBuiltIn(d.label));
+    if (external) return external.deviceId;
   }
 
-  // Desktop
-  if (hd) {
-    return {
-      width: { ideal: 1920, max: 1920 },
-      height: { ideal: 1080, max: 1080 },
-      frameRate: { ideal: 30, max: 30 },
-    };
-  }
-  return {
-    width: { ideal: 1280, max: 1280 },
-    height: { ideal: 720, max: 720 },
-    frameRate: { ideal: 24, max: 30 },
-  };
+  // Fallback: first device.
+  return devs[0].deviceId;
 }
 
 export function useCamera({
@@ -68,37 +72,115 @@ export function useCamera({
   log,
 }: Args) {
   const [facingMode, setFacingMode] = useState<FacingMode>("user");
-  const [hdEnabled, setHdEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("anyspeak.video.hd") === "1";
-  });
-
+  const [hdEnabled, setHdEnabled] = useState<boolean>(!isMobile);
   const switchingRef = useRef(false);
 
-  const replaceOutgoingOnPeers = useCallback(
-    (newTrack: MediaStreamTrack) => {
-      const map = peersRef?.current;
-      if (!map) return;
+  const [videoDevices, setVideoDevices] = useState<VideoDevice[]>([]);
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null);
 
-      map.forEach(({ pc }) => {
-        try {
-          pc.getSenders().forEach((sender: RTCRtpSender) => {
-            if (sender.track && sender.track.kind === "video") {
-              sender.replaceTrack(newTrack).catch(() => {});
-            }
-          });
-        } catch {}
-      });
+  const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
+
+  const refreshDevices = useCallback(async (): Promise<VideoDevice[]> => {
+    if (!md?.enumerateDevices) return [];
+    try {
+      const all = await md.enumerateDevices();
+      const vids = all
+        .filter((d) => d.kind === "videoinput")
+        .map((d) => ({ deviceId: d.deviceId, label: d.label || "" }));
+      setVideoDevices(vids);
+
+      // Try to detect which device we're currently using.
+      const vt = localStreamRef.current?.getVideoTracks?.()?.[0];
+      const settings: any = vt?.getSettings ? vt.getSettings() : {};
+      const currentId = (settings?.deviceId as string | undefined) || null;
+      if (currentId) setActiveDeviceId(currentId);
+      return vids;
+    } catch {
+      return [];
+    }
+  }, [localStreamRef, md]);
+
+  // Refresh device list after the first permission grant (or whenever we toggle on).
+  useEffect(() => {
+    void refreshDevices();
+  }, [refreshDevices]);
+
+  const canFlip = useMemo(() => {
+    if (roomType !== "video") return false;
+    // Mobile: facingMode flip.
+    if (isMobile) return true;
+    // Desktop: only show if more than 1 camera is available.
+    return videoDevices.length >= 2;
+  }, [isMobile, roomType, videoDevices.length]);
+
+  const replaceVideoTrack = useCallback(
+    async (constraints: MediaTrackConstraints) => {
+      if (!md?.getUserMedia) return;
+
+      const currentStream = localStreamRef.current;
+      const oldTrack = currentStream?.getVideoTracks?.()?.[0] ?? null;
+      if (!currentStream) return;
+
+      const newStream = await md.getUserMedia({ video: constraints, audio: false });
+      const newTrack = newStream.getVideoTracks()[0] || null;
+      if (!newTrack) return;
+
+      try {
+        if (oldTrack) currentStream.removeTrack(oldTrack);
+      } catch {}
+      try {
+        oldTrack?.stop();
+      } catch {}
+      try {
+        currentStream.addTrack(newTrack);
+      } catch {}
+
+      // Replace on all peer connections so remote updates without renegotiation.
+      if (peersRef?.current) {
+        peersRef.current.forEach(({ pc }) => {
+          try {
+            const sender = pc.getSenders().find((s) => s.track?.kind === "video");
+            if (sender) sender.replaceTrack(newTrack);
+          } catch {}
+        });
+      }
+
+      // Persist device choice when applicable.
+      try {
+        const st: any = newTrack.getSettings ? newTrack.getSettings() : {};
+        const did = (st?.deviceId as string | undefined) || null;
+        if (did) {
+          setActiveDeviceId(did);
+          localStorage.setItem("anyspeak.videoDeviceId", did);
+        }
+      } catch {}
+
+      void refreshDevices();
     },
-    [peersRef]
+    [localStreamRef, md, peersRef, refreshDevices]
   );
 
-  const persistHd = useCallback((nextHd: boolean) => {
-    setHdEnabled(nextHd);
-    try {
-      window.localStorage.setItem("anyspeak.video.hd", nextHd ? "1" : "0");
-    } catch {}
-  }, []);
+  const ensurePreferredDesktopCamera = useCallback(async () => {
+    if (isMobile) return;
+    if (roomType !== "video") return;
+    if (!md?.getUserMedia || !md?.enumerateDevices) return;
+
+    // Make sure we have permission so labels/deviceIds are populated.
+    const vids = await refreshDevices();
+    const devId = pickPreferredDevice(vids.length ? vids : videoDevices);
+    if (!devId) return;
+
+    // If already using it, nothing to do.
+    if (activeDeviceId && activeDeviceId === devId) return;
+
+    await replaceVideoTrack({
+      deviceId: { exact: devId },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      frameRate: { ideal: 24, max: 30 },
+    });
+    log?.("camera select (desktop)", { deviceId: devId });
+  }, [activeDeviceId, isMobile, log, md, refreshDevices, replaceVideoTrack, roomType, videoDevices]);
 
   const beforeConnect = useCallback(async () => {
     if (roomType !== "video") {
@@ -106,17 +188,21 @@ export function useCamera({
       return;
     }
 
-    if (joinCamOn) {
-      try {
-        await acquire();
-        setCamEnabled(true);
-      } catch {
-        setCamEnabled(false);
-      }
-    } else {
+    if (!joinCamOn) {
+      setCamEnabled(false);
+      return;
+    }
+
+    try {
+      await acquire();
+      setCamEnabled(true);
+
+      // Desktop: after we have a stream, prefer the saved/external camera.
+      await ensurePreferredDesktopCamera();
+    } catch {
       setCamEnabled(false);
     }
-  }, [acquire, joinCamOn, roomType, setCamEnabled]);
+  }, [acquire, ensurePreferredDesktopCamera, joinCamOn, roomType, setCamEnabled]);
 
   const toggleCamera = useCallback(async () => {
     if (roomType !== "video") return;
@@ -129,118 +215,112 @@ export function useCamera({
       try {
         await acquire();
       } catch {}
-      // default back to selfie when turning on
+
+      // Default to selfie cam when turning back on.
       setFacingMode("user");
+
+      // Desktop: immediately switch to the preferred device if available.
+      await ensurePreferredDesktopCamera();
     }
 
     setCamEnabled(next);
-  }, [acquire, localStreamRef, roomType, setCamEnabled]);
-
-  const restartVideoTrack = useCallback(
-    async (nextFacing: FacingMode, nextHd: boolean) => {
-      const md = typeof navigator !== "undefined" ? navigator.mediaDevices : undefined;
-      if (!md?.getUserMedia) return;
-
-      const currentStream = localStreamRef.current;
-      if (!currentStream) return;
-
-      const oldTrack = currentStream.getVideoTracks?.()[0] ?? null;
-
-      const constraints = getConstraints(isMobile, nextHd, nextFacing);
-      const newStream = await md.getUserMedia({ video: constraints, audio: false });
-      const newTrack = newStream.getVideoTracks()[0] || null;
-      if (!newTrack) return;
-
-      if (oldTrack) {
-        try {
-          currentStream.removeTrack(oldTrack);
-        } catch {}
-        try {
-          oldTrack.stop();
-        } catch {}
-      }
-      try {
-        currentStream.addTrack(newTrack);
-      } catch {}
-
-      replaceOutgoingOnPeers(newTrack);
-      persistHd(nextHd);
-    },
-    [isMobile, localStreamRef, persistHd, replaceOutgoingOnPeers]
-  );
-
-  const applyQualityToExistingTrack = useCallback(
-    async (nextHd: boolean, facing: FacingMode) => {
-      const currentStream = localStreamRef.current;
-      const track = currentStream?.getVideoTracks?.()[0];
-      if (!track) return false;
-
-      // Not all browsers support applyConstraints reliably, but try it first.
-      if (typeof track.applyConstraints !== "function") return false;
-
-      try {
-        const constraints = getConstraints(isMobile, nextHd, facing);
-        await track.applyConstraints(constraints);
-        replaceOutgoingOnPeers(track);
-        persistHd(nextHd);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [isMobile, localStreamRef, persistHd, replaceOutgoingOnPeers]
-  );
-
-  const setVideoQuality = useCallback(
-    async (nextHd: boolean) => {
-      if (roomType !== "video") return;
-      if (switchingRef.current) return;
-      switchingRef.current = true;
-
-      try {
-        const ok = await applyQualityToExistingTrack(nextHd, facingMode);
-        if (!ok) {
-          await restartVideoTrack(facingMode, nextHd);
-        }
-        log?.("video quality changed", { hd: nextHd });
-      } catch (e) {
-        log?.("video quality change failed", { e: String(e) });
-      } finally {
-        switchingRef.current = false;
-      }
-    },
-    [applyQualityToExistingTrack, facingMode, log, restartVideoTrack, roomType]
-  );
+  }, [acquire, ensurePreferredDesktopCamera, localStreamRef, roomType, setCamEnabled]);
 
   const flipCamera = useCallback(async () => {
-    if (!isMobile) return;
     if (roomType !== "video") return;
     if (switchingRef.current) return;
 
+    const currentStream = localStreamRef.current;
+    const oldTrack = currentStream?.getVideoTracks?.()[0] ?? null;
+    if (!currentStream || !oldTrack) return;
+
     switchingRef.current = true;
-    const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
 
     try {
-      // Prefer restarting track for facing-mode changes (most reliable)
-      await restartVideoTrack(nextFacing, hdEnabled);
-      setFacingMode(nextFacing);
-      log?.("camera flip", { nextFacing });
-    } catch (e) {
-      log?.("camera flip failed", { e: String(e) });
+      if (!md?.getUserMedia) return;
+
+      // Mobile: flip between user/environment.
+      if (isMobile) {
+        const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
+        await replaceVideoTrack({
+          facingMode: { ideal: nextFacing },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        });
+        setFacingMode(nextFacing);
+        log?.("camera flip (mobile)", { nextFacing });
+        return;
+      }
+
+      // Desktop: cycle through available cameras.
+      const vids = await refreshDevices();
+      const list = vids.length ? vids : videoDevices;
+      const ids = list.map((d) => d.deviceId).filter(Boolean);
+      if (ids.length < 2) return;
+
+      const current = activeDeviceId || pickPreferredDevice(list) || ids[0];
+      const idx = Math.max(0, ids.indexOf(current));
+      const nextId = ids[(idx + 1) % ids.length];
+
+      await replaceVideoTrack({
+        deviceId: { exact: nextId },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 24, max: 30 },
+      });
+      log?.("camera flip (desktop)", { nextId });
     } finally {
       switchingRef.current = false;
     }
-  }, [facingMode, hdEnabled, isMobile, log, restartVideoTrack, roomType]);
-
-  const canFlip = isMobile && roomType === "video";
+  }, [
+    activeDeviceId,
+    facingMode,
+    isMobile,
+    localStreamRef,
+    log,
+    md,
+    refreshDevices,
+    replaceVideoTrack,
+    roomType,
+    videoDevices,
+  ]);
 
   return {
     beforeConnect,
     toggleCamera,
     flipCamera,
     canFlip,
-    facingMode,
     hdEnabled,
     setVideoQuality,
+    facingMode,
   };
 }
+  const setVideoQuality = useCallback(
+    async (mode: "sd" | "hd") => {
+      const wantHd = mode === "hd";
+      setHdEnabled(wantHd);
+
+      const constraints: MediaTrackConstraints = wantHd
+        ? {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 24, max: 30 },
+          }
+        : {
+            width: { ideal: 640 },
+            height: { ideal: 360 },
+            frameRate: { ideal: 15, max: 20 },
+          };
+
+      if (isMobile) {
+        constraints.facingMode = facingMode;
+      } else if (activeDeviceId) {
+        constraints.deviceId = { exact: activeDeviceId };
+      }
+
+      await replaceVideoTrack(constraints);
+    },
+    [activeDeviceId, facingMode, isMobile, replaceVideoTrack]
+  );
+
+
