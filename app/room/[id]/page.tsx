@@ -1266,9 +1266,6 @@ useEffect(() => {
               </div>
             </div>
           )}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Captions overlay */}
