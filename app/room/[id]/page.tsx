@@ -954,6 +954,20 @@ useEffect(() => {
 
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Bind srcObject directly so remote video always updates when the stream appears/changes.
+  useEffect(() => {
+    const el = remoteVideoRef.current;
+    if (!el) return;
+    if (!firstRemoteStream) return;
+    if (el.srcObject !== firstRemoteStream) {
+      el.srcObject = firstRemoteStream as any;
+    }
+    // Some mobile browsers need an explicit play() after srcObject is set.
+    el.play().catch(() => {});
+  }, [firstRemoteStream]);
+
   const totalParticipants = peerIds.length + 1;
 
   const pillBase =
@@ -1301,7 +1315,13 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             {/* 1 peer: remote full + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="absolute inset-0 h-full w-full object-contain"
+                />
                 <audio
                   data-remote
                   autoPlay
@@ -1489,7 +1509,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
+                      <FullBleedVideo key={`spot-${spotlightId}`} stream={peerStreams[spotlightId] ?? null} fit="contain" />
                       <audio
                         data-remote
                         autoPlay
@@ -1762,7 +1782,6 @@ onPointerCancel={() => {
     </div>
   );
 }
-
 
 
 
