@@ -117,42 +117,59 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// HUD: visible on entry, fades, returns when top area/video touched (mobile) or mouse near top (desktop).
-const HUD_ENTRY_MS = 8000;
-const HUD_INTERACT_MS = 3000;
-
+// Unified HUD visibility (PC + mobile)
+// - On entry: show for 8s
+// - After interaction: show for 3s
+// - Desktop: mouse near top or bottom brings it back
+// - Mobile: tap brings it back
 const [hudVisible, setHudVisible] = useState(true);
 const hudTimerRef = useRef<number | null>(null);
-const lastHudShowRef = useRef<number>(0);
+const hudModeRef = useRef<"initial" | "after">("initial");
 
-const showHud = useCallback((ms: number = HUD_INTERACT_MS) => {
-  setHudVisible(true);
-  lastHudShowRef.current = Date.now();
-  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+const clearHudTimer = () => {
+  if (hudTimerRef.current) {
+    window.clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = null;
+  }
+};
+
+const armHudAutoHide = (ms: number) => {
+  clearHudTimer();
   hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
+};
+
+const showHudInitial = useCallback(() => {
+  hudModeRef.current = "initial";
+  setHudVisible(true);
+  armHudAutoHide(8000);
+}, []);
+
+const showHudAfterInteraction = useCallback(() => {
+  hudModeRef.current = "after";
+  setHudVisible(true);
+  armHudAutoHide(3000);
 }, []);
 
 useEffect(() => {
-  // Show on entry for all devices
-  showHud(HUD_ENTRY_MS);
-  return () => {
-    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  };
-}, [showHud]);
+  // show on mount
+  showHudInitial();
+  return () => clearHudTimer();
+}, [showHudInitial]);
 
 useEffect(() => {
-  // Desktop: moving mouse near the top brings HUD back
-  if (isMobile) return;
+  if (typeof window === "undefined") return;
+  // Desktop: reveal when cursor approaches top/bottom edges
   const onMove = (e: MouseEvent) => {
-    if (e.clientY > 88) return;
-    const now = Date.now();
-    if (now - lastHudShowRef.current < 250) return; // avoid spamming
-    showHud(HUD_INTERACT_MS);
+    if (isMobile) return;
+    const y = e.clientY ?? 0;
+    const h = window.innerHeight || 0;
+    if (y <= 120 || y >= h - 160) showHudAfterInteraction();
   };
-  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mousemove", onMove, { passive: true });
   return () => window.removeEventListener("mousemove", onMove);
-}, [isMobile, showHud]);
-  
+}, [isMobile, showHudAfterInteraction]);
+
+
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -176,61 +193,8 @@ useEffect(() => {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
-  // ---- Mobile PTT positioning (dockable) ----
-  const [pttDock, setPttDock] = useState<PttDock>("bottom");
-  const [pttT, setPttT] = useState<number>(0); // 0..1
-
-  const pttDockRef = useRef<PttDock>("bottom");
-  const pttTRef = useRef<number>(0);
-
-  useEffect(() => {
-    pttDockRef.current = pttDock;
-  }, [pttDock]);
-  useEffect(() => {
-    pttTRef.current = pttT;
-  }, [pttT]);
-
-  const pttDragRef = useRef<{
-    pointerId: number | null;
-    startX: number;
-    startY: number;
-    moved: boolean;
-    dragging: boolean;
-    startedPtt: boolean;
-    holdTimer: any;
-    dragStartedAtMs: number;
-  }>({
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    moved: false,
-    dragging: false,
-    startedPtt: false,
-    holdTimer: null,
-    dragStartedAtMs: 0,
-  });
-
-  useEffect(() => {
-    if (!isMobile) return;
-    try {
-      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const d = parsed?.dock as PttDock | undefined;
-        const t = parsed?.t as number | undefined;
-        const okDock = d === "bottom" || d === "left" || d === "right";
-        if (okDock && typeof t === "number") {
-          setPttDock(d as PttDock);
-          setPttT(Math.min(1, Math.max(0, t)));
-          return;
-        }
-      }
-    } catch {}
-
-    // Default: bottom-left-ish
-    setPttDock("bottom");
-    setPttT(0);
-  }, [isMobile]);
+    // ---- PTT (fixed) -----------------------------------------
+  // PTT is fixed bottom-center on all devices. No dragging/docking.
 
   const displayNameRef = useRef<string>("You");
 
@@ -257,10 +221,9 @@ useEffect(() => {
 
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    // Default: NOT pinned (PiP should fade unless user pins it)
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined") return true;
     const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? false : v === "1";
+    return v === null ? true : v === "1";
   });
 
   // PiP controls visibility (tap PiP / watermark to show)
@@ -291,7 +254,7 @@ useEffect(() => {
 
     // Size caps
     const maxW = isMobile ? Math.min(w * 0.42, 200) : 220;
-    const maxH = isMobile ? Math.min(Math.max(h, w) * 0.28, 220) : 140;
+    const maxH = isMobile ? Math.min(h * 0.28, 220) : 140;
     const minW = isMobile ? 110 : 160;
 
     let outW = maxW;
@@ -312,6 +275,11 @@ useEffect(() => {
 
     return { w: Math.round(outW), h: Math.round(outH) };
   }, [vp.w, vp.h, pipAspect, isMobile]);
+
+  // PiP visibility (Option C)
+  const pipVisible = pipPinned || hudVisible || pipControlsVisible;
+  const pipFaded = !pipPinned && !pipVisible;
+
 
   const clearPipControlsTimer = () => {
     if (pipControlsTimerRef.current) {
@@ -380,7 +348,7 @@ useEffect(() => {
 
   const pipOnPointerDown = (e: React.PointerEvent) => {
     showPipControls();
-    if (isMobile) { showHud(HUD_INTERACT_MS); return; } // mobile PiP is not draggable
+    if (isMobile) return; // mobile PiP is not draggable
     if (!pipPos) return;
 
     pipDraggingRef.current = true;
@@ -444,17 +412,17 @@ useEffect(() => {
 
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
-
   const textInputElRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!showTextInput) return;
-    // Focus input immediately when opening
+    // focus next tick so keyboard opens immediately
     const t = window.setTimeout(() => {
-      textInputElRef.current?.focus();
+      try { textInputElRef.current?.focus(); } catch {}
     }, 0);
     return () => window.clearTimeout(t);
   }, [showTextInput]);
+
   const [textInput, setTextInput] = useState("");
   const [ccOn, setCcOn] = useState(false);
 
@@ -737,6 +705,7 @@ useEffect(() => {
   });
 
   const micUiOn = isMobile ? sttListening : sttListening; // desktop uses STT too (button below)
+  const micArmedUi = sttListening || sttArmedNotListening;
 
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
@@ -970,13 +939,11 @@ useEffect(() => {
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
-  // Control sizing
-  const PTT_SIZE = 76;
-  const PTT_SIZE_DESKTOP = Math.round(PTT_SIZE * 1.2); // user requested larger on PC
-  const pttSize = isMobile ? PTT_SIZE : PTT_SIZE_DESKTOP;
-  const iconBtnSize = isMobile ? 44 : 54;
-
-  const micArmedUi = sttListening || sttArmedNotListening;
+  // Control sizing (avoid Tailwind dynamic class issues)
+  const PTT_SIZE_MOBILE = 76;
+  const PTT_SIZE_DESKTOP = 92;
+  const PTT_SIZE = isMobile ? PTT_SIZE_MOBILE : PTT_SIZE_DESKTOP;
+  const AUX_BTN = isMobile ? 46 : 56;
 
   const online = rtStatus === "SUBSCRIBED";
 
@@ -1005,42 +972,7 @@ useEffect(() => {
     } catch {}
   };
 
-  // ---- PTT dock layout helpers (mobile) ----------------------
-  const getPttLayout = () => {
-    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
-    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
-    const size = 64; // smaller, less ostentatious
-    const margin = 12;
-    const edgeZone = 44; // must be closer to edge
-
-    const xLeft = margin;
-    const xCenter = Math.round((w - size) / 2);
-    const xRight = Math.max(margin, w - size - margin);
-
-    const topPad = 92;
-    const bottomPad = showTextInput ? 210 : 150;
-    const minY = topPad;
-    const maxY = Math.max(minY, h - bottomPad - size);
-
-    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
-  };
-
-  const pttPx = useMemo(() => {
-    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
-    const { xLeft, xRight, minY, maxY } = getPttLayout();
-
-    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
-    const t = clamp01(pttT);
-
-    if (pttDock === "bottom") {
-      const left = Math.round(xLeft + (xRight - xLeft) * t);
-      return { dock: "bottom" as const, left, top: 0 };
-    }
-    const top = Math.round(minY + (maxY - minY) * t);
-    return { dock: pttDock as "left" | "right", left: 0, top };
-  }, [isMobile, pttDock, pttT, showTextInput]);
-
-
+  
 
   // ---- Render -----------------------------------------------
   return (
@@ -1118,15 +1050,13 @@ useEffect(() => {
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
             style={{ height: "30vh" }}
-            onPointerDown={() => showHud(HUD_INTERACT_MS)}
+            onPointerDown={() => showHudAfterInteraction()}
           />
         )}
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            !hudVisible ? "opacity-0" : "opacity-100"
-          }`}
+          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${hudVisible ? "opacity-100" : "opacity-0"}`}
         >
           <div className="relative flex items-center justify-center gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
@@ -1153,7 +1083,7 @@ useEffect(() => {
             <button
               type="button"
               onClick={() => {
-                showHud(HUD_INTERACT_MS);
+                showHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
@@ -1188,7 +1118,7 @@ useEffect(() => {
               title="Share"
               aria-label="Share"
             >
-              ⤴️
+              ↗
             </button>
 
             <button
@@ -1321,88 +1251,43 @@ useEffect(() => {
                 />
 
                 {roomType === "video" && (
-                  <>
-                    {/* PiP ghost outline when faded (matches PiP shape) */}
-                    {!pipPinned && !hudVisible && (
-                      <div
-                        className="pointer-events-auto z-20 rounded-2xl"
-                        style={
-                          isMobile
-                            ? {
-                                position: "fixed",
-                                left: 12,
-                                bottom: `calc(env(safe-area-inset-bottom) + 12px + ${pttSize + 12}px)`,
-                                width: pipDims.w,
-                                height: pipDims.h,
-                                border: "2px solid rgba(255,255,255,0.18)",
-                                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
-                                background: "rgba(0,0,0,0.10)",
-                              }
-                            : {
-                                position: "absolute",
-                                left: pipPos?.x ?? 16,
-                                top: pipPos?.y ?? 16,
-                                width: pipDims.w,
-                                height: pipDims.h,
-                                border: "2px solid rgba(255,255,255,0.18)",
-                                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
-                                background: "rgba(0,0,0,0.10)",
-                              }
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          showHud();
-                          showPipControls();
-                        }}
-                        title="Show PiP"
-                        aria-label="Show PiP"
-                      />
-                    )}
-
-                    <div
-                      ref={pipRef}
-                      className="z-30 rounded-2xl overflow-hidden shadow-xl"
-                      style={
-                        isMobile
-                          ? {
-                              position: "fixed",
-                              left: 12,
-                              bottom: `calc(env(safe-area-inset-bottom) + 12px + ${pttSize + 12}px)`,
-                              width: pipDims.w,
-                              height: pipDims.h,
-                              opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
-                              transition: "opacity 250ms ease",
-                              touchAction: "none",
-                              userSelect: "none",
-                              WebkitUserSelect: "none",
-                              pointerEvents: pipPinned || hudVisible ? ("auto" as any) : ("none" as any),
-                            }
-                          : {
-                              position: "absolute",
-                              left: pipPos?.x ?? 16,
-                              top: pipPos?.y ?? 16,
-                              width: pipDims.w,
-                              height: pipDims.h,
-                              opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
-                              transition: "opacity 250ms ease",
-                              touchAction: "none",
-                              userSelect: "none",
-                              WebkitUserSelect: "none",
-                              pointerEvents: pipPinned || hudVisible ? ("auto" as any) : ("none" as any),
-                            }
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showHud();
-                        showPipControls();
-                      }}
-                      onPointerDown={pipOnPointerDown}
-                      onPointerMove={pipOnPointerMove}
-                      onPointerUp={pipOnPointerUpOrCancel}
-                      onPointerCancel={pipOnPointerUpOrCancel}
-                      title="Your camera"
-                      aria-label="Your camera"
-                    >
+                  <div
+                    ref={pipRef}
+                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+                    style={
+                      isMobile
+                        ? {
+                            position: "fixed",
+                            left: 12,
+                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+                            width: pipDims.w,
+                            height: pipDims.h,
+                            opacity: 1,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                        : {
+                            position: "absolute",
+                            left: pipPos?.x ?? 16,
+                            top: pipPos?.y ?? 16,
+                            width: pipDims.w,
+                            height: pipDims.h,
+                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                    }
+                    onPointerDown={pipOnPointerDown}
+                    onPointerMove={pipOnPointerMove}
+                    onPointerUp={pipOnPointerUpOrCancel}
+                    onPointerCancel={pipOnPointerUpOrCancel}
+                    title="Your camera"
+                    aria-label="Your camera"
+                  >
                     {/* Local preview */}
                     {camOn ? (
                       <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
@@ -1412,10 +1297,38 @@ useEffect(() => {
                       </div>
                     )}
 
-                    {/* PiP controls overlay (pin + mobile flip only) */}
+                    {/* Watermark bottom-left (tap to show PiP controls) */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        showPipControls();
+                      }}
+                      className="absolute bottom-1 left-1 pointer-events-auto select-none text-[10px] px-2 py-1 rounded-lg bg-black/35 backdrop-blur border border-white/10 text-white/80"
+                      title="Controls"
+                      aria-label="PiP controls"
+                    >
+                      Any-Speak
+                    </button>
+
+                    {/* PiP controls overlay (camera/pin/flip) */}
                     {pipControlsVisible && (
                       <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none">
                         <div className="flex items-center gap-2 pointer-events-auto">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleCamera();
+                              showPipControls();
+                            }}
+                            className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                            title="Camera"
+                            aria-label="Camera"
+                          >
+                            {camOn ? "📷" : "📷✕"}
+                          </button>
+
                           {isMobile && canFlip && (
                             <button
                               type="button"
@@ -1454,8 +1367,7 @@ useEffect(() => {
                         </div>
                       </div>
                     )}
-                    </div>
-                  </>
+                  </div>
                 )}
               </div>
             )}
@@ -1647,8 +1559,335 @@ useEffect(() => {
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="fixed pointer-events-auto inset-x-0 flex justify-center"
-              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${pttSize + 24}px)` }}
+              className="pointer-events-auto fixed inset-x-0 flex justify-center"
+              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 18}px)` }}
+            >
+              <div className="flex gap-2 w-[92%] max-w-xl">
+                <input
+                  ref={textInputElRef}
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  placeholder="Type a quick caption…"
+                  className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-3 py-2 rounded-full text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
+                  Send
+                </button>
+              </div>
+ {roomType === "video" && (
+  <>
+    {/* PiP ghost outline (same shape) when faded */}
+    {pipFaded && (
+      <div
+        className="pointer-events-auto z-20 rounded-2xl border border-white/20 bg-black/0"
+        style={{
+          position: "fixed",
+          left: 12,
+          bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 24}px)`,
+          width: pipDims.w,
+          height: pipDims.h,
+          opacity: 0.22,
+          transition: "opacity 250ms ease",
+        }}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          showPipControls();
+          showHudAfterInteraction();
+        }}
+        aria-label="Show PiP"
+        title="Show PiP"
+      />
+    )}
+
+    <div
+      ref={pipRef}
+      className="pointer-events-auto z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+      style={{
+        position: "fixed",
+        left: 12,
+        bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 24}px)`,
+        width: pipDims.w,
+        height: pipDims.h,
+        opacity: pipPinned ? 1 : pipVisible ? 1 : 0,
+        transition: "opacity 250ms ease",
+        touchAction: "none",
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        showPipControls();
+        showHudAfterInteraction();
+      }}
+      title="Your camera"
+      aria-label="Your camera"
+    >
+      {/* Local preview */}
+      {camOn ? (
+        <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+      ) : (
+        <div className="h-full w-full flex items-center justify-center text-white/80 bg-black/60">
+          <span className="text-lg">📷✕</span>
+        </div>
+      )}
+
+      {/* PiP controls overlay (vertical stack: pin + flip) */}
+      {pipControlsVisible && (
+        <div className="absolute inset-0 flex items-start justify-end p-2 pointer-events-none">
+          <div className="flex flex-col gap-2 pointer-events-auto">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                const next = !pipPinned;
+                setPipPinned(next);
+                try {
+                  window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
+                } catch {}
+                showPipControls();
+                showHudAfterInteraction();
+              }}
+              className={`w-10 h-10 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
+                pipPinned ? "ring-1 ring-white/25" : "opacity-90"
+              }`}
+              title={pipPinned ? "Unpin PiP" : "Pin PiP"}
+              aria-label="Pin PiP"
+            >
+              📌
+            </button>
+
+            {isMobile && canFlip && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  flipCamera();
+                  showPipControls();
+                  showHudAfterInteraction();
+                }}
+                className="w-10 h-10 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                title="Switch camera"
+                aria-label="Switch camera"
+              >
+                ↺
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  </>
+)}
+ntrols();
+                            }}
+                            className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
+                              pipPinned ? "ring-1 ring-white/25" : "opacity-90"
+                            }`}
+                            title="Pin PiP"
+                            aria-label="Pin PiP"
+                          >
+                            📌
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
+            {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
+              <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
+                {/* local tile */}
+                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                    <span>You</span>
+                  </div>
+                </div>
+
+                {peerIds.map((pid) => (
+                  <div
+                    key={pid}
+                    className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]"
+                  >
+                    <FullBleedVideo stream={peerStreams[pid] ?? null} />
+                    <audio
+                      data-remote
+                      autoPlay
+                      ref={(el) => {
+                        const stream = peerStreams[pid];
+                        if (!el || !stream) return;
+                        if (el.srcObject !== stream) el.srcObject = stream;
+                      }}
+                    />
+                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                      <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 5+ participants: spotlight mode */}
+            {totalParticipants >= 5 && (
+              <div className="flex flex-col h-full w-full">
+                <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
+                  {spotlightId === "local" ? (
+                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                  ) : (
+                    <>
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
+                      <audio
+                        data-remote
+                        autoPlay
+                        ref={(el) => {
+                          const stream = peerStreams[spotlightId];
+                          if (!el || !stream) return;
+                          if (el.srcObject !== stream) el.srcObject = stream;
+                        }}
+                      />
+                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
+                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="mt-2 flex gap-2 overflow-x-auto px-2 pb-3">
+                  {spotlightId !== "local" && (
+                    <button
+                      type="button"
+                      onClick={() => setSpotlightId("local")}
+                      className="relative h-20 md:h-24 aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-700/80 flex-shrink-0"
+                    >
+                    <video
+                        data-local="1"
+                        ref={attachLocalVideo}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="h-full w-full object-contain bg-black"
+                      />
+                    </button>
+                  )}
+
+                  {peerIds.map((pid) => {
+                    const isSpot = pid === spotlightId;
+                    return (
+                      <button
+                        key={pid}
+                        type="button"
+                        onClick={() => setSpotlightId(pid)}
+                        className={`relative h-20 md:h-24 aspect-video rounded-xl overflow-hidden flex-shrink-0 border ${
+                          isSpot ? "border-emerald-500" : "border-neutral-700/80"
+                        } bg-neutral-900`}
+                      >
+                        <video
+                          autoPlay
+                          playsInline
+                          className="h-full w-full object-contain bg-black"
+                          ref={(el) => {
+                            const stream = peerStreams[pid];
+                            if (el && stream && el.srcObject !== stream) {
+                              el.srcObject = stream;
+                            }
+                          }}
+                        />
+                        <audio
+                          data-remote
+                          autoPlay
+                          ref={(el) => {
+                            const stream = peerStreams[pid];
+                            if (!el || !stream) return;
+                            if (el.srcObject !== stream) el.srcObject = stream;
+                          }}
+                        />
+                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
+                          <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Captions overlay */}
+          {ccOn && messages.length > 0 && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+              <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/55 via-black/15 to-transparent" />
+
+              <div
+                className="relative flex flex-col gap-1.5 px-3 pb-[calc(env(safe-area-inset-bottom)+10px)]"
+                style={{
+                  paddingBottom: showTextInput
+                    ? "calc(env(safe-area-inset-bottom) + 148px)"
+                    : "calc(env(safe-area-inset-bottom) + 108px)",
+                }}
+              >
+                {messages.slice(-effectiveCaptionLines).map((m, idx, arr) => {
+                  const isNewest = idx === arr.length - 1;
+
+                  return (
+                    <div key={m.id} className={`flex ${m.isLocal ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={`
+                          max-w-[74%]
+                          rounded-2xl
+                          border border-white/10
+                          bg-black/30
+                          backdrop-blur-md
+                          shadow
+                          ${isNewest ? "px-3 py-2.5" : "px-2.5 py-2"}
+                        `}
+                        style={{
+                          opacity: isNewest ? 1 : 0.65,
+                          transform: isNewest ? "scale(1)" : "scale(0.98)",
+                          transformOrigin: m.isLocal ? "right bottom" : "left bottom",
+                        }}
+                      >
+                        <div
+                          className="flex items-center justify-between gap-2 mb-0.5"
+                          style={{ opacity: isNewest ? 0.7 : 0.35 }}
+                        >
+                          <span className="truncate text-[9px] text-white/70">
+                            {m.isLocal ? "You" : m.fromName}
+                          </span>
+                          <span className="shrink-0 text-[9px] text-white/60">
+                            {m.originalLang}→{m.translatedLang}
+                          </span>
+                        </div>
+
+                        <div
+                          className={`${isNewest ? "text-[13px]" : "text-[12px]"} leading-snug text-white/95 overflow-hidden`}
+                          style={{
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: isNewest ? 3 : 2,
+                          }}
+                        >
+                          {m.translatedText}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Manual text input */}
+          {showTextInput && (
+            <form
+              onSubmit={handleTextSubmit}
+              className="pointer-events-auto fixed inset-x-0 flex justify-center"
+              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 18}px)` }}
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
@@ -1667,121 +1906,110 @@ useEffect(() => {
               </div>
             </form>
           )}
-        </main>
+ {/* Controls overlay */}
+<div className="fixed inset-0 z-50 pointer-events-none">
+  {/* Bottom-center PTT (always visible ring) */}
+  <div
+    className="fixed left-1/2 -translate-x-1/2 pointer-events-auto transition-opacity duration-300"
+    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+  >
+    <button
+      type="button"
+      aria-label="Push to talk"
+      title={micArmedUi ? "Hold to talk" : "Mic muted"}
+      style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+      className={`
+        rounded-full
+        border-[6px]
+        shadow-xl
+        backdrop-blur-md
+        bg-transparent
+        active:scale-[0.98]
+        transition
+        ${micArmedUi ? "border-emerald-400/80 active:bg-emerald-500/10" : "border-white/25"}
+      `}
+      onPointerDown={(e) => {
+        if (!micArmedUi) return; // Option A: indicator only when muted
+        e.preventDefault();
+        try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+        pttDown();
+        showHudAfterInteraction();
+      }}
+      onPointerUp={(e) => {
+        if (!micArmedUi) return;
+        e.preventDefault();
+        try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+        pttUp();
+        showHudAfterInteraction();
+      }}
+      onPointerCancel={() => {
+        if (!micArmedUi) return;
+        pttCancel();
+        showHudAfterInteraction();
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div className="flex items-center justify-center text-center leading-tight">
+        {micArmedUi ? <div className="text-2xl">🎙️</div> : null}
+      </div>
+    </button>
+  </div>
 
-        {/* Controls overlay */}
-        <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Bottom control zone (mobile + desktop parity)
-              - PTT centered (only when mic is armed)
-              - Mic / Camera / Text icons to the right
-              - All fade with HUD, but mic toggle always available */}
+  {/* Bottom-right vertical stack: Mic / Camera / Text */}
+  <div
+    className="fixed pointer-events-auto transition-opacity duration-300"
+    style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+  >
+    <div className="flex flex-col gap-3 items-center">
+      <button
+        type="button"
+        onClick={() => {
+          void toggleMic();
+          showHudAfterInteraction();
+        }}
+        style={{ width: AUX_BTN, height: AUX_BTN }}
+        className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition"
+        title={micArmedUi ? "Mute mic" : "Unmute mic"}
+        aria-label="Mic"
+      >
+        {micArmedUi ? "🎙️" : "🎙️✕"}
+      </button>
 
-          <div
-            className={`fixed left-1/2 -translate-x-1/2 pointer-events-auto flex items-center gap-3 transition-opacity duration-200 ${
-              hudVisible ? "opacity-100" : "opacity-0"
-            }`}
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-            onMouseMove={() => {
-              if (!isMobile) showHud();
-            }}
-            onClick={() => {
-              showHud();
-            }}
-          >
-            {/* PTT (only when mic is armed) */}
-            {micArmedUi && (
-              <button
-                type="button"
-                style={{ width: pttSize, height: pttSize }}
-                className={`rounded-full border-[6px] shadow-xl backdrop-blur-md bg-transparent active:scale-[0.98] transition ${
-                  sttListening ? "border-emerald-400/90 active:bg-emerald-500/10" : "border-emerald-300/70"
-                }`}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                  } catch {}
-                  showHud();
-                  pttDown();
-                }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  try {
-                    e.currentTarget.releasePointerCapture(e.pointerId);
-                  } catch {}
-                  showHud();
-                  pttUp();
-                }}
-                onPointerCancel={(e) => {
-                  e.preventDefault();
-                  showHud();
-                  pttCancel();
-                }}
-                onContextMenu={(e) => e.preventDefault()}
-                aria-label="Push to talk"
-                title="Hold to talk"
-              >
-                <div className="flex items-center justify-center text-center leading-tight">
-                  <div className={isMobile ? "text-xl" : "text-2xl"}>🎙️</div>
-                </div>
-              </button>
-            )}
+      <button
+        type="button"
+        onClick={() => {
+          if (roomType === "video") toggleCamera();
+          showHudAfterInteraction();
+        }}
+        style={{ width: AUX_BTN, height: AUX_BTN }}
+        disabled={roomType !== "video"}
+        className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition ${
+          roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+        }`}
+        title="Camera"
+        aria-label="Camera"
+      >
+        {camOn ? "📷" : "📷✕"}
+      </button>
 
-            {/* Right-side icon cluster */}
-            <div className="flex items-center gap-3">
-              {/* Mic toggle (always visible; when OFF, PTT disappears) */}
-              <button
-                type="button"
-                onClick={() => {
-                  showHud();
-                  void toggleMic();
-                }}
-                style={{ width: iconBtnSize, height: iconBtnSize }}
-                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
-                  micArmedUi ? "" : "opacity-90"
-                }`}
-                title={micArmedUi ? "Mute mic" : "Unmute mic"}
-                aria-label="Mic toggle"
-              >
-                <span className={isMobile ? "text-xl" : "text-2xl"}>{micArmedUi ? "🎙️" : "🎙️✕"}</span>
-              </button>
-
-              {/* Camera toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (roomType !== "video") return;
-                  showHud();
-                  toggleCamera();
-                }}
-                style={{ width: iconBtnSize, height: iconBtnSize }}
-                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                }`}
-                disabled={roomType !== "video"}
-                title="Camera"
-                aria-label="Camera"
-              >
-                <span className={isMobile ? "text-xl" : "text-2xl"}>{camOn ? "📷" : "📷✕"}</span>
-              </button>
-
-              {/* Text toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  showHud();
-                  setShowTextInput((v) => !v);
-                }}
-                style={{ width: iconBtnSize, height: iconBtnSize }}
-                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
-                  showTextInput ? "ring-2 ring-white/20" : ""
-                }`}
-                title={showTextInput ? "Close text" : "Text"}
-                aria-label="Text"
-              >
-                <span className={isMobile ? "text-xl" : "text-2xl"}>💬</span>
-              </button>
-            </div>
+      <button
+        type="button"
+        onClick={() => {
+          setShowTextInput((v) => !v);
+          showHudAfterInteraction();
+        }}
+        style={{ width: AUX_BTN, height: AUX_BTN }}
+        className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition"
+        title={showTextInput ? "Close text" : "Send text"}
+        aria-label="Text"
+      >
+        💬
+      </button>
+    </div>
+  </div>
+</div>
+put ? "Text ✕" : "Text"}
+            </button>
           </div>
         </div>
       </div>
