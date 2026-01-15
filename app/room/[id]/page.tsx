@@ -117,58 +117,41 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// HUD: floating controls (and PiP visibility when not pinned).
-  // Behavior:
-  // - On entry: visible for ~8s.
-  // - After interaction: visible for ~3s.
-  // - Desktop: reappears when mouse moves near the top.
-  const [hudVisible, setHudVisible] = useState(true);
-  const hudTimerRef = useRef<number | null>(null);
+// HUD: visible on entry, fades, returns when top area/video touched (mobile) or mouse near top (desktop).
+const HUD_ENTRY_MS = 8000;
+const HUD_INTERACT_MS = 3000;
 
-  const clearHudTimer = useCallback(() => {
-    if (hudTimerRef.current) {
-      window.clearTimeout(hudTimerRef.current);
-      hudTimerRef.current = null;
-    }
-  }, []);
+const [hudVisible, setHudVisible] = useState(true);
+const hudTimerRef = useRef<number | null>(null);
+const lastHudShowRef = useRef<number>(0);
 
-  const scheduleHudHide = useCallback(
-    (ms: number) => {
-      clearHudTimer();
-      hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
-    },
-    [clearHudTimer]
-  );
+const showHud = useCallback((ms: number = HUD_INTERACT_MS) => {
+  setHudVisible(true);
+  lastHudShowRef.current = Date.now();
+  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
+}, []);
 
-  const showHud = useCallback(
-    (ms: number) => {
-      setHudVisible(true);
-      scheduleHudHide(ms);
-    },
-    [scheduleHudHide]
-  );
+useEffect(() => {
+  // Show on entry for all devices
+  showHud(HUD_ENTRY_MS);
+  return () => {
+    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+  };
+}, [showHud]);
 
-  // Initial show (both desktop + mobile)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    showHud(8000);
-    return () => clearHudTimer();
-  }, [showHud, clearHudTimer]);
-
-  // Desktop: mouse near top shows HUD
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (isMobile) return;
-
-    const onMove = (e: MouseEvent) => {
-      if (e.clientY <= 90) showHud(3000);
-    };
-
-    window.addEventListener("mousemove", onMove, { passive: true });
-    return () => window.removeEventListener("mousemove", onMove);
-  }, [isMobile, showHud]);
-
-  // Mobile: tapping top area shows HUD (we keep your top-strip overlay below)
+useEffect(() => {
+  // Desktop: moving mouse near the top brings HUD back
+  if (isMobile) return;
+  const onMove = (e: MouseEvent) => {
+    if (e.clientY > 88) return;
+    const now = Date.now();
+    if (now - lastHudShowRef.current < 250) return; // avoid spamming
+    showHud(HUD_INTERACT_MS);
+  };
+  window.addEventListener("mousemove", onMove);
+  return () => window.removeEventListener("mousemove", onMove);
+}, [isMobile, showHud]);
   
   // Stable per-tab clientId
   const clientId = useMemo(() => {
@@ -307,7 +290,7 @@ export default function RoomPage() {
 
     // Size caps
     const maxW = isMobile ? Math.min(w * 0.42, 200) : 220;
-    const maxH = isMobile ? Math.min(h * 0.28, 220) : 140;
+    const maxH = isMobile ? Math.min(Math.max(h, w) * 0.28, 220) : 140;
     const minW = isMobile ? 110 : 160;
 
     let outW = maxW;
@@ -339,42 +322,8 @@ export default function RoomPage() {
   const showPipControls = useCallback(() => {
     setPipControlsVisible(true);
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
   }, []);
-
-  // PiP visibility (fades away unless pinned)
-  const [pipVisible, setPipVisible] = useState(true);
-  const pipVisibleTimerRef = useRef<number | null>(null);
-
-  const clearPipVisibleTimer = useCallback(() => {
-    if (pipVisibleTimerRef.current) {
-      window.clearTimeout(pipVisibleTimerRef.current);
-      pipVisibleTimerRef.current = null;
-    }
-  }, []);
-
-  const schedulePipHide = useCallback(
-    (ms: number) => {
-      clearPipVisibleTimer();
-      pipVisibleTimerRef.current = window.setTimeout(() => setPipVisible(false), ms);
-    },
-    [clearPipVisibleTimer]
-  );
-
-  const showPipAfterInteraction = useCallback(() => {
-    setPipVisible(true);
-    showPipAfterInteraction();
-    if (!pipPinned) schedulePipHide(3000);
-  }, [pipPinned, schedulePipHide, showPipControls]);
-
-  // Initial PiP show/hide
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setPipVisible(true);
-    if (!pipPinned) schedulePipHide(8000);
-    return () => clearPipVisibleTimer();
-  }, [pipPinned, schedulePipHide, clearPipVisibleTimer]);
-
 
     // Set an initial position once we have a peer (1:1 view).
   // Mobile: start top-left (selfie-like preview area).
@@ -430,7 +379,7 @@ export default function RoomPage() {
 
   const pipOnPointerDown = (e: React.PointerEvent) => {
     showPipControls();
-    if (isMobile) return; // mobile PiP is not draggable
+    if (isMobile) { showHud(HUD_INTERACT_MS); return; } // mobile PiP is not draggable
     if (!pipPos) return;
 
     pipDraggingRef.current = true;
@@ -478,7 +427,7 @@ export default function RoomPage() {
     } catch {}
     // fade controls back out
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
   };
 
   // (PiP initial position handled above)
@@ -494,14 +443,18 @@ export default function RoomPage() {
 
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
-  const [textInput, setTextInput] = useState("");
-  const textInputRef = useRef<HTMLInputElement | null>(null);
+
+  const textInputElRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!showTextInput) return;
-    const t = window.setTimeout(() => textInputRef.current?.focus(), 0);
+    // Focus input immediately when opening
+    const t = window.setTimeout(() => {
+      textInputElRef.current?.focus();
+    }, 0);
     return () => window.clearTimeout(t);
   }, [showTextInput]);
+  const [textInput, setTextInput] = useState("");
   const [ccOn, setCcOn] = useState(false);
 
   // ✅ Enforced room mode (from DB)
@@ -1159,17 +1112,17 @@ export default function RoomPage() {
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
             style={{ height: "30vh" }}
-            onPointerDown={() => showHud(3000)}
+            onPointerDown={() => showHud(HUD_INTERACT_MS)}
           />
         )}
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
           className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            !hudVisible ? "opacity-0" : "opacity-100"
+            isMobile && !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
-          <div className="relative flex items-center justify-center gap-2">
+          <div className="relative flex items-center justify-end gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
@@ -1194,7 +1147,7 @@ export default function RoomPage() {
             <button
               type="button"
               onClick={() => {
-                showHud(3000);
+                showHud(HUD_INTERACT_MS);
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
@@ -1244,7 +1197,7 @@ export default function RoomPage() {
           </div>
         </header>
 
-        <main className="absolute inset-0 pt-0">
+        <main className="absolute inset-0 pt-0 md:pt-14">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1364,16 +1317,16 @@ export default function RoomPage() {
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
-                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden shadow-xl"
+          className="pointer-events-auto z-30 rounded-2xl overflow-hidden shadow-xl"
                     style={
                       isMobile
                         ? {
                             position: "fixed",
                             left: 12,
-                            bottom: "calc(env(safe-area-inset-bottom) + 12px + 96px)",
+                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : pipVisible ? 1 : 0,
+                            opacity: 1,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1385,7 +1338,7 @@ export default function RoomPage() {
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : pipVisible ? 1 : 0,
+                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1396,10 +1349,6 @@ export default function RoomPage() {
                     onPointerMove={pipOnPointerMove}
                     onPointerUp={pipOnPointerUpOrCancel}
                     onPointerCancel={pipOnPointerUpOrCancel}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      showPipAfterInteraction();
-                    }}
                     title="Your camera"
                     aria-label="Your camera"
                   >
@@ -1674,11 +1623,12 @@ export default function RoomPage() {
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
+              className="fixed pointer-events-auto inset-x-0 flex justify-center"
+              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 24}px)` }}
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
-                  ref={textInputRef}
+                  ref={textInputElRef}
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   placeholder="Type a quick caption…"
@@ -1921,25 +1871,24 @@ export default function RoomPage() {
                 </div>
               </button>
             </div>
+          )}
 
           {/* Mobile: Send text (bottom-right, icon) */}
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
-              style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 18px)" }}
+              style={{ right: 12, bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 18}px)` }}
             >
               <button
                 type="button"
                 onClick={() => setShowTextInput((v) => !v)}
-                className="w-12 h-12 rounded-2xl bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition"
+                className="w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white text-xl shadow-xl active:scale-[0.98] transition"
                 title="Send text"
                 aria-label="Send text"
               >
                 💬
               </button>
             </div>
-          )}
-
           )}
 
           {/* Optional: small text toggle (desktop + mobile) */}
