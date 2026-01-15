@@ -117,121 +117,61 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
+
+// HUD: floating top controls (and PiP visibility when not pinned).
+// Behavior:
+// - On entry: visible for ~8s.
+// - After interaction: visible for ~3s.
+// - Desktop: reappears when mouse moves near the top.
 const [hudVisible, setHudVisible] = useState(true);
 const hudTimerRef = useRef<number | null>(null);
+const hudInteractedRef = useRef(false);
 
-const showHud = useCallback(() => {
-  setHudVisible(true);
-  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), 120000); // 2 min
+const clearHudTimer = useCallback(() => {
+  if (hudTimerRef.current) {
+    window.clearTimeout(hudTimerRef.current);
+    hudTimerRef.current = null;
+  }
 }, []);
 
+const scheduleHudHide = useCallback(
+  (ms: number) => {
+    clearHudTimer();
+    hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
+  },
+  [clearHudTimer]
+);
 
+const showHudInitial = useCallback(() => {
+  setHudVisible(true);
+  scheduleHudHide(8000);
+}, [scheduleHudHide]);
+
+const showHudAfterInteraction = useCallback(() => {
+  hudInteractedRef.current = true;
+  setHudVisible(true);
+  scheduleHudHide(3000);
+}, [scheduleHudHide]);
+
+// Initial show
 useEffect(() => {
-  if (!isMobile) return;
-  showHud();
-  return () => {
-    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+  if (typeof window === "undefined") return;
+  showHudInitial();
+  return () => clearHudTimer();
+}, [showHudInitial, clearHudTimer]);
+
+// Desktop: show when mouse is near the top
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  const onMove = (e: MouseEvent) => {
+    // Hotzone at the top
+    if (e.clientY <= 96) showHudAfterInteraction();
   };
-}, [isMobile, showHud]);
-  
-  // Stable per-tab clientId
-  const clientId = useMemo(() => {
-    if (typeof window === "undefined") return "server";
-    const existing = sessionStorage.getItem("clientId");
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    sessionStorage.setItem("clientId", id);
-    return id;
-  }, []);
+  window.addEventListener("mousemove", onMove, { passive: true });
+  return () => window.removeEventListener("mousemove", onMove);
+}, [showHudAfterInteraction]);
 
-  // ---- Refs / state -----------------------------------------
-  const peersRef = useRef<Map<string, Peer>>(new Map());
-  const peerLabelsRef = useRef<Record<string, string>>({});
-  const shouldSpeakTranslatedRef = useRef(false);
-  const shouldMuteRawAudioRef = useRef(true);
-
-  // Track if user manually touched mic so we don't "helpfully" auto-mute later
-  const userTouchedMicRef = useRef(false);
-
-  const micOnRef = useRef(false);
-  const micArmedRef = useRef(false); // user intent (armed)
-  const pttHeldRef = useRef(false);
-
-  // ---- Mobile PTT positioning (dockable) ----
-  const [pttDock, setPttDock] = useState<PttDock>("bottom");
-  const [pttT, setPttT] = useState<number>(0); // 0..1
-
-  const pttDockRef = useRef<PttDock>("bottom");
-  const pttTRef = useRef<number>(0);
-
-  useEffect(() => {
-    pttDockRef.current = pttDock;
-  }, [pttDock]);
-  useEffect(() => {
-    pttTRef.current = pttT;
-  }, [pttT]);
-
-  const pttDragRef = useRef<{
-    pointerId: number | null;
-    startX: number;
-    startY: number;
-    moved: boolean;
-    dragging: boolean;
-    startedPtt: boolean;
-    holdTimer: any;
-    dragStartedAtMs: number;
-  }>({
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    moved: false,
-    dragging: false,
-    startedPtt: false,
-    holdTimer: null,
-    dragStartedAtMs: 0,
-  });
-
-  useEffect(() => {
-    if (!isMobile) return;
-    try {
-      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const d = parsed?.dock as PttDock | undefined;
-        const t = parsed?.t as number | undefined;
-        const okDock = d === "bottom" || d === "left" || d === "right";
-        if (okDock && typeof t === "number") {
-          setPttDock(d as PttDock);
-          setPttT(Math.min(1, Math.max(0, t)));
-          return;
-        }
-      }
-    } catch {}
-
-    // Default: bottom-left-ish
-    setPttDock("bottom");
-    setPttT(0);
-  }, [isMobile]);
-
-  const displayNameRef = useRef<string>("You");
-
-  const [peerIds, setPeerIds] = useState<string[]>([]);
-  const prevPeerCountRef = useRef<number>(0);
-  const [joinPulse, setJoinPulse] = useState(false);
-  const joinPulseTimerRef = useRef<number | null>(null);
-  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
-
-  const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
-  const [connected, setConnected] = useState(false);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
-  const [displayName, setDisplayName] = useState<string>("You");
-
-  const [spotlightId, setSpotlightId] = useState<string>("local");
-
-  // ---- Local preview (PiP) behavior -------------------------
+// ---- Local preview (PiP) behavior -------------------------
   // PiP stays visible by default. On PC it's draggable; on mobile it's fixed bottom-left.
   // Controls for the PiP (pin/flip/cam) are *not* always visible: they only show when PiP is tapped.
   const pipRef = useRef<HTMLDivElement | null>(null);
@@ -242,12 +182,13 @@ useEffect(() => {
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
+    return v === null ? false : v === "1";
   });
 
   // PiP controls visibility (tap PiP / watermark to show)
   const [pipControlsVisible, setPipControlsVisible] = useState(false);
   const pipControlsTimerRef = useRef<number | null>(null);
+
 
   const [pipAspect, setPipAspect] = useState<number>(16 / 9);
   const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -272,8 +213,14 @@ useEffect(() => {
     const ar = pipAspect && pipAspect > 0 ? pipAspect : 16 / 9; // width / height
 
     // Size caps
-    const maxW = isMobile ? Math.min(w * 0.42, 200) : 220;
-    const maxH = isMobile ? Math.min(h * 0.28, 220) : 140;
+    const isLandscapeMobile = isMobile && w > h;
+
+    const maxW = isMobile
+      ? Math.min(w * (isLandscapeMobile ? 0.30 : 0.42), isLandscapeMobile ? 240 : 200)
+      : 220;
+    const maxH = isMobile
+      ? Math.min(h * (isLandscapeMobile ? 0.45 : 0.28), isLandscapeMobile ? 240 : 220)
+      : 140;
     const minW = isMobile ? 110 : 160;
 
     let outW = maxW;
@@ -305,8 +252,43 @@ useEffect(() => {
   const showPipControls = useCallback(() => {
     setPipControlsVisible(true);
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
   }, []);
+
+// PiP visibility (when not pinned): fades away, comes back when tapped.
+const [pipVisible, setPipVisible] = useState(true);
+const pipVisibleTimerRef = useRef<number | null>(null);
+
+const clearPipVisibleTimer = useCallback(() => {
+  if (pipVisibleTimerRef.current) {
+    window.clearTimeout(pipVisibleTimerRef.current);
+    pipVisibleTimerRef.current = null;
+  }
+}, []);
+
+const schedulePipHide = useCallback(
+  (ms: number) => {
+    clearPipVisibleTimer();
+    pipVisibleTimerRef.current = window.setTimeout(() => setPipVisible(false), ms);
+  },
+  [clearPipVisibleTimer]
+);
+
+const showPipAfterInteraction = useCallback(() => {
+  setPipVisible(true);
+  showPipControls();
+  if (!pipPinned) schedulePipHide(3000);
+}, [pipPinned, schedulePipHide, showPipControls]);
+
+// Initial PiP show/hide behavior
+useEffect(() => {
+  if (typeof window === "undefined") return;
+  setPipVisible(true);
+  if (!pipPinned) schedulePipHide(8000);
+  return () => clearPipVisibleTimer();
+}, [pipPinned, schedulePipHide, clearPipVisibleTimer]);
+
+
 
     // Set an initial position once we have a peer (1:1 view).
   // Mobile: start top-left (selfie-like preview area).
@@ -361,7 +343,7 @@ useEffect(() => {
   }, [pipPos]);
 
   const pipOnPointerDown = (e: React.PointerEvent) => {
-    showPipControls();
+    showPipAfterInteraction();
     if (isMobile) return; // mobile PiP is not draggable
     if (!pipPos) return;
 
@@ -410,7 +392,7 @@ useEffect(() => {
     } catch {}
     // fade controls back out
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
   };
 
   // (PiP initial position handled above)
@@ -427,6 +409,23 @@ useEffect(() => {
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const textInputRef = useRef<HTMLInputElement | null>(null);
+
+useEffect(() => {
+  if (!showTextInput) return;
+  // Autofocus so user can type immediately
+  const t = window.setTimeout(() => {
+    const el = textInputRef.current;
+    if (!el) return;
+    el.focus();
+    try {
+      const v = el.value ?? "";
+      el.setSelectionRange(v.length, v.length);
+    } catch {}
+  }, 0);
+  return () => window.clearTimeout(t);
+}, [showTextInput]);
+
   const [ccOn, setCcOn] = useState(false);
 
   // ✅ Enforced room mode (from DB)
@@ -1011,7 +1010,7 @@ useEffect(() => {
   // ---- Render -----------------------------------------------
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
-      <div className="relative h-full w-full overflow-hidden">
+      <div className="relative h-full w-full overflow-hidden" onPointerDown={() => showHudAfterInteraction()}>
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
           <div className="absolute inset-0 z-50">
@@ -1084,17 +1083,17 @@ useEffect(() => {
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
             style={{ height: "30vh" }}
-            onPointerDown={() => showHud()}
+            onPointerDown={() => showHudAfterInteraction()}
           />
         )}
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
           className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            isMobile && !hudVisible ? "opacity-0" : "opacity-100"
+            !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
-          <div className="relative flex items-center justify-end gap-2">
+          <div className="relative flex items-center justify-center gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
@@ -1119,7 +1118,7 @@ useEffect(() => {
             <button
               type="button"
               onClick={() => {
-                showHud();
+                showHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
@@ -1169,7 +1168,7 @@ useEffect(() => {
           </div>
         </header>
 
-        <main className="absolute inset-0 pt-0 md:pt-14">
+        <main className="absolute inset-0">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1289,15 +1288,17 @@ useEffect(() => {
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
-                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden shadow-xl"
                     style={
                       isMobile
                         ? {
                             position: "fixed",
                             left: 12,
-                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+                            bottom: `calc(env(safe-area-inset-bottom) + 12px + ${PTT_SIZE + 20}px)`,
                             width: pipDims.w,
                             height: pipDims.h,
+                            opacity: pipPinned ? 1 : pipVisible ? 1 : 0,
+                            transition: "opacity 250ms ease",
                             opacity: 1,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
@@ -1310,7 +1311,7 @@ useEffect(() => {
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
+                            opacity: pipPinned ? 1 : pipVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1338,7 +1339,7 @@ useEffect(() => {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        showPipControls();
+                        showPipAfterInteraction();
                       }}
                       className="absolute bottom-1 left-1 pointer-events-auto select-none text-[10px] px-2 py-1 rounded-lg bg-black/35 backdrop-blur border border-white/10 text-white/80"
                       title="Controls"
@@ -1387,6 +1388,12 @@ useEffect(() => {
                               e.stopPropagation();
                               const next = !pipPinned;
                               setPipPinned(next);
+                              if (next) {
+                                setPipVisible(true);
+                                clearPipVisibleTimer();
+                              } else {
+                                schedulePipHide(3000);
+                              }
                               try {
                                 window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
                               } catch {}
@@ -1595,10 +1602,14 @@ useEffect(() => {
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
+              className="pointer-events-auto absolute inset-x-0 flex justify-center"
+              style={{
+                bottom: `calc(env(safe-area-inset-bottom) + 12px + ${PTT_SIZE + 20}px)`
+              }}
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
+                  ref={textInputRef}
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   placeholder="Type a quick caption…"
@@ -1645,6 +1656,26 @@ useEffect(() => {
               </button>
             </div>
           )}
+
+
+{/* Send text (always available, even if mic is off) */}
+<div
+  className="fixed pointer-events-auto"
+  style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+>
+  <button
+    type="button"
+    onClick={() => {
+      setShowTextInput((v) => !v);
+      showHudAfterInteraction();
+    }}
+    className="w-14 h-14 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98]"
+    title="Send text"
+    aria-label="Send text"
+  >
+    💬
+  </button>
+</div>
 
           {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
           {isMobile && (
@@ -1842,17 +1873,6 @@ useEffect(() => {
               </button>
             </div>
           )}
-
-          {/* Optional: small text toggle (desktop + mobile) */}
-          <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+12px)] pointer-events-auto hidden">
-            <button
-              type="button"
-              onClick={() => setShowTextInput((v) => !v)}
-              className="px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
-            >
-              {showTextInput ? "Text ✕" : "Text"}
-            </button>
-          </div>
         </div>
       </div>
     </div>
