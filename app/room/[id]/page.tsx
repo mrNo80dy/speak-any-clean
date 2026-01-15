@@ -1653,25 +1653,23 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               title={micUiOn ? "Hold to talk" : "Mic muted"}
               style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
               className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} bg-black/30 backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
-              onPointerDown={(e) => {
-                if (!micUiOn) return; // Option A: indicator only when muted
-                e.preventDefault();
-                try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-                pttDown();
-                showHudAfterInteraction();
-              }}
-              onPointerUp={(e) => {
-                if (!micUiOn) return;
-                e.preventDefault();
-                try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-                pttUp();
-                showHudAfterInteraction();
-              }}
-              onPointerCancel={() => {
-                if (!micUiOn) return;
-                pttCancel();
-                showHudAfterInteraction();
-              }}
+             onPointerDown={(e) => {
+  if (!micUiOn) return; // Option A: indicator only when muted
+  e.preventDefault();
+  try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+  pttDown();
+}}
+onPointerUp={(e) => {
+  if (!micUiOn) return;
+  e.preventDefault();
+  try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+  pttUp();
+}}
+onPointerCancel={() => {
+  if (!micUiOn) return;
+  pttCancel();
+}}
+
               onContextMenu={(e) => e.preventDefault()}
             >
               {/* Mic icon disappears when muted */}
@@ -1740,6 +1738,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
 
 
 
