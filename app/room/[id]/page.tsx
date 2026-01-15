@@ -1681,23 +1681,6 @@ useEffect(() => {
     </div>
   </>
 )}
-ntrols();
-                            }}
-                            className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
-                              pipPinned ? "ring-1 ring-white/25" : "opacity-90"
-                            }`}
-                            title="Pin PiP"
-                            aria-label="Pin PiP"
-                          >
-                            📌
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
             {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
