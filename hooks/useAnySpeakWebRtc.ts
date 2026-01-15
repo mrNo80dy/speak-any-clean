@@ -37,6 +37,28 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
   // ---- ICE candidate queue (pre-SDP safety)
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
+  // Camera startup can be slightly delayed (especially on mobile). If we create an
+  // offer/answer before the local video track exists, the SDP may omit video and the
+  // remote side will never receive it. This waits briefly for a video track when a
+  // local stream exists.
+  const waitForLocalVideoTrack = useCallback(async () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    // If we have no local stream yet, nothing to wait for.
+    if (!localStreamRef.current) return;
+
+    // If camera is intentionally off, don't block.
+    const hasAnyVideo = localStreamRef.current.getVideoTracks().length > 0;
+    if (hasAnyVideo) return;
+
+    // Wait up to ~1s for the camera track to appear.
+    for (let i = 0; i < 20; i++) {
+      if (!localStreamRef.current) return;
+      if (localStreamRef.current.getVideoTracks().length > 0) return;
+      await sleep(50);
+    }
+  }, [localStreamRef]);
+
   const clearPendingIce = useCallback(() => {
     pendingIceRef.current.clear();
   }, []);
@@ -169,6 +191,10 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
     async (toId: string, channel: RealtimeChannel) => {
       const { pc } = getOrCreatePeer(toId, channel);
 
+      // Ensure the local video track is present before creating the offer.
+      // Prevents SDP omitting video due to camera startup race.
+      await waitForLocalVideoTrack();
+
       if (localStreamRef.current) {
         const haveKinds = new Set(
           pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
@@ -194,7 +220,7 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
 
       log("sent offer", { to: toId });
     },
-    [clientId, getOrCreatePeer, isMobile, localStreamRef, log]
+    [clientId, getOrCreatePeer, isMobile, localStreamRef, log, waitForLocalVideoTrack]
   );
 
   const handleOffer = useCallback(
@@ -203,6 +229,10 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushIce(fromId);
+
+      // Ensure the local video track is present before creating the answer.
+      // Prevents SDP omitting video due to camera startup race.
+      await waitForLocalVideoTrack();
 
       if (localStreamRef.current) {
         const haveKinds = new Set(
@@ -226,7 +256,7 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
 
       log("sent answer", { to: fromId });
     },
-    [clientId, flushIce, getOrCreatePeer, isMobile, localStreamRef, log]
+    [clientId, flushIce, getOrCreatePeer, isMobile, localStreamRef, log, waitForLocalVideoTrack]
   );
 
   const handleAnswer = useCallback(
