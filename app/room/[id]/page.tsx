@@ -117,59 +117,27 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// Unified HUD visibility (PC + mobile)
-// - On entry: show for 8s
-// - After interaction: show for 3s
-// - Desktop: mouse near top or bottom brings it back
-// - Mobile: tap brings it back
+// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
 const [hudVisible, setHudVisible] = useState(true);
 const hudTimerRef = useRef<number | null>(null);
-const hudModeRef = useRef<"initial" | "after">("initial");
 
-const clearHudTimer = () => {
-  if (hudTimerRef.current) {
-    window.clearTimeout(hudTimerRef.current);
-    hudTimerRef.current = null;
-  }
-};
-
-const armHudAutoHide = (ms: number) => {
-  clearHudTimer();
+const showHudFor = useCallback((ms: number) => {
+  setHudVisible(true);
+  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
   hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
-};
-
-const showHudInitial = useCallback(() => {
-  hudModeRef.current = "initial";
-  setHudVisible(true);
-  armHudAutoHide(8000);
 }, []);
 
-const showHudAfterInteraction = useCallback(() => {
-  hudModeRef.current = "after";
-  setHudVisible(true);
-  armHudAutoHide(3000);
-}, []);
+const showHudInitial = useCallback(() => showHudFor(8000), [showHudFor]);
+const showHudAfterInteraction = useCallback(() => showHudFor(3000), [showHudFor]);
+
 
 useEffect(() => {
-  // show on mount
   showHudInitial();
-  return () => clearHudTimer();
-}, [showHudInitial]);
-
-useEffect(() => {
-  if (typeof window === "undefined") return;
-  // Desktop: reveal when cursor approaches top/bottom edges
-  const onMove = (e: MouseEvent) => {
-    if (isMobile) return;
-    const y = e.clientY ?? 0;
-    const h = window.innerHeight || 0;
-    if (y <= 120 || y >= h - 160) showHudAfterInteraction();
+  return () => {
+    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
   };
-  window.addEventListener("mousemove", onMove, { passive: true });
-  return () => window.removeEventListener("mousemove", onMove);
-}, [isMobile, showHudAfterInteraction]);
-
-
+}, [showHudInitial]);
+  
   // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
@@ -193,8 +161,61 @@ useEffect(() => {
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
 
-    // ---- PTT (fixed) -----------------------------------------
-  // PTT is fixed bottom-center on all devices. No dragging/docking.
+  // ---- Mobile PTT positioning (dockable) ----
+  const [pttDock, setPttDock] = useState<PttDock>("bottom");
+  const [pttT, setPttT] = useState<number>(0); // 0..1
+
+  const pttDockRef = useRef<PttDock>("bottom");
+  const pttTRef = useRef<number>(0);
+
+  useEffect(() => {
+    pttDockRef.current = pttDock;
+  }, [pttDock]);
+  useEffect(() => {
+    pttTRef.current = pttT;
+  }, [pttT]);
+
+  const pttDragRef = useRef<{
+    pointerId: number | null;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    dragging: boolean;
+    startedPtt: boolean;
+    holdTimer: any;
+    dragStartedAtMs: number;
+  }>({
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    moved: false,
+    dragging: false,
+    startedPtt: false,
+    holdTimer: null,
+    dragStartedAtMs: 0,
+  });
+
+  useEffect(() => {
+    if (!isMobile) return;
+    try {
+      const saved = localStorage.getItem("anyspeak_ptt_dock_v1");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const d = parsed?.dock as PttDock | undefined;
+        const t = parsed?.t as number | undefined;
+        const okDock = d === "bottom" || d === "left" || d === "right";
+        if (okDock && typeof t === "number") {
+          setPttDock(d as PttDock);
+          setPttT(Math.min(1, Math.max(0, t)));
+          return;
+        }
+      }
+    } catch {}
+
+    // Default: bottom-left-ish
+    setPttDock("bottom");
+    setPttT(0);
+  }, [isMobile]);
 
   const displayNameRef = useRef<string>("You");
 
@@ -276,11 +297,6 @@ useEffect(() => {
     return { w: Math.round(outW), h: Math.round(outH) };
   }, [vp.w, vp.h, pipAspect, isMobile]);
 
-  // PiP visibility (Option C)
-  const pipVisible = pipPinned || hudVisible || pipControlsVisible;
-  const pipFaded = !pipPinned && !pipVisible;
-
-
   const clearPipControlsTimer = () => {
     if (pipControlsTimerRef.current) {
       window.clearTimeout(pipControlsTimerRef.current);
@@ -291,7 +307,7 @@ useEffect(() => {
   const showPipControls = useCallback(() => {
     setPipControlsVisible(true);
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
   }, []);
 
     // Set an initial position once we have a peer (1:1 view).
@@ -396,7 +412,7 @@ useEffect(() => {
     } catch {}
     // fade controls back out
     clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 3000);
+    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
   };
 
   // (PiP initial position handled above)
@@ -412,17 +428,6 @@ useEffect(() => {
 
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
-  const textInputElRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!showTextInput) return;
-    // focus next tick so keyboard opens immediately
-    const t = window.setTimeout(() => {
-      try { textInputElRef.current?.focus(); } catch {}
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [showTextInput]);
-
   const [textInput, setTextInput] = useState("");
   const [ccOn, setCcOn] = useState(false);
 
@@ -705,7 +710,6 @@ useEffect(() => {
   });
 
   const micUiOn = isMobile ? sttListening : sttListening; // desktop uses STT too (button below)
-  const micArmedUi = sttListening || sttArmedNotListening;
 
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
@@ -939,11 +943,9 @@ useEffect(() => {
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
-  // Control sizing (avoid Tailwind dynamic class issues)
-  const PTT_SIZE_MOBILE = 76;
-  const PTT_SIZE_DESKTOP = 92;
-  const PTT_SIZE = isMobile ? PTT_SIZE_MOBILE : PTT_SIZE_DESKTOP;
-  const AUX_BTN = isMobile ? 46 : 56;
+  // Mobile control sizing (avoid Tailwind dynamic class issues)
+  const PTT_SIZE = 76;
+const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
   const online = rtStatus === "SUBSCRIBED";
 
@@ -972,11 +974,54 @@ useEffect(() => {
     } catch {}
   };
 
-  
+  // ---- PTT dock layout helpers (mobile) ----------------------
+  const getPttLayout = () => {
+    const w = typeof window !== "undefined" ? window.innerWidth || 360 : 360;
+    const h = typeof window !== "undefined" ? window.innerHeight || 640 : 640;
+    const size = 64; // smaller, less ostentatious
+    const margin = 12;
+    const edgeZone = 44; // must be closer to edge
+
+    const xLeft = margin;
+    const xCenter = Math.round((w - size) / 2);
+    const xRight = Math.max(margin, w - size - margin);
+
+    const topPad = 92;
+    const bottomPad = showTextInput ? 210 : 150;
+    const minY = topPad;
+    const maxY = Math.max(minY, h - bottomPad - size);
+
+    return { w, h, size, margin, edgeZone, xLeft, xCenter, xRight, minY, maxY };
+  };
+
+  const pttPx = useMemo(() => {
+    if (!isMobile) return { left: 12, top: 0, dock: "bottom" as const };
+    const { xLeft, xRight, minY, maxY } = getPttLayout();
+
+    const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
+    const t = clamp01(pttT);
+
+    if (pttDock === "bottom") {
+      const left = Math.round(xLeft + (xRight - xLeft) * t);
+      return { dock: "bottom" as const, left, top: 0 };
+    }
+    const top = Math.round(minY + (maxY - minY) * t);
+    return { dock: pttDock as "left" | "right", left: 0, top };
+  }, [isMobile, pttDock, pttT, showTextInput]);
+
+
 
   // ---- Render -----------------------------------------------
   return (
-    <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden">
+<div
+      className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden"
+      onMouseMove={(e) => {
+        if (isMobile) return;
+        const y = e.clientY;
+        const h = window.innerHeight || 0;
+        if (y < 96 || y > h - 96) showHudAfterInteraction();
+      }}
+    >
       <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
@@ -1056,9 +1101,11 @@ useEffect(() => {
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${hudVisible ? "opacity-100" : "opacity-0"}`}
+          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
+            isMobile && !hudVisible ? "opacity-0" : "opacity-100"
+          }`}
         >
-          <div className="relative flex items-center justify-center gap-2">
+          <div className="relative flex items-center justify-end gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
@@ -1250,6 +1297,45 @@ useEffect(() => {
                   }}
                 />
 
+                {roomType === "video" && !pipPinned && !hudVisible && (
+                  <div
+                    className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
+                    style={
+                      isMobile
+                        ? {
+                            position: "fixed",
+                            left: 12,
+                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+                            width: pipDims.w,
+                            height: pipDims.h,
+                            opacity: 1,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                        : {
+                            position: "absolute",
+                            left: pipPos?.x ?? 16,
+                            top: pipPos?.y ?? 16,
+                            width: pipDims.w,
+                            height: pipDims.h,
+                            opacity: 1,
+                            transition: "opacity 250ms ease",
+                            touchAction: "none",
+                            userSelect: "none",
+                            WebkitUserSelect: "none",
+                          }
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showPipControls();
+                      showHudAfterInteraction();
+                    }}
+                    aria-label="Show PiP"
+                    title="Show PiP"
+                  />
+                )}
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
@@ -1281,6 +1367,7 @@ useEffect(() => {
                             WebkitUserSelect: "none",
                           }
                     }
+                    onClick={(e) => { e.stopPropagation(); showPipControls(); }}
                     onPointerDown={pipOnPointerDown}
                     onPointerMove={pipOnPointerMove}
                     onPointerUp={pipOnPointerUpOrCancel}
@@ -1297,54 +1384,10 @@ useEffect(() => {
                       </div>
                     )}
 
-                    {/* Watermark bottom-left (tap to show PiP controls) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showPipControls();
-                      }}
-                      className="absolute bottom-1 left-1 pointer-events-auto select-none text-[10px] px-2 py-1 rounded-lg bg-black/35 backdrop-blur border border-white/10 text-white/80"
-                      title="Controls"
-                      aria-label="PiP controls"
-                    >
-                      Any-Speak
-                    </button>
-
                     {/* PiP controls overlay (camera/pin/flip) */}
                     {pipControlsVisible && (
                       <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none">
-                        <div className="flex items-center gap-2 pointer-events-auto">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleCamera();
-                              showPipControls();
-                            }}
-                            className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-                            title="Camera"
-                            aria-label="Camera"
-                          >
-                            {camOn ? "📷" : "📷✕"}
-                          </button>
-
-                          {isMobile && canFlip && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                flipCamera();
-                                showPipControls();
-                              }}
-                              className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-                              title="Switch camera"
-                              aria-label="Switch camera"
-                            >
-                              ↺
-                            </button>
-                          )}
-
+                        <div className="flex flex-col items-center gap-2 pointer-events-auto">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1364,6 +1407,22 @@ useEffect(() => {
                           >
                             📌
                           </button>
+
+                          {isMobile && canFlip && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                flipCamera();
+                                showPipControls();
+                              }}
+                              className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                              title="Switch camera"
+                              aria-label="Switch camera"
+                            >
+                              ↺
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1371,126 +1430,6 @@ useEffect(() => {
                 )}
               </div>
             )}
-
-            {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
-            {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
-              <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
-                {/* local tile */}
-                <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-                  <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                    <span>You</span>
-                  </div>
-                </div>
-
-                {peerIds.map((pid) => (
-                  <div
-                    key={pid}
-                    className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]"
-                  >
-                    <FullBleedVideo stream={peerStreams[pid] ?? null} />
-                    <audio
-                      data-remote
-                      autoPlay
-                      ref={(el) => {
-                        const stream = peerStreams[pid];
-                        if (!el || !stream) return;
-                        if (el.srcObject !== stream) el.srcObject = stream;
-                      }}
-                    />
-                    <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                      <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* 5+ participants: spotlight mode */}
-            {totalParticipants >= 5 && (
-              <div className="flex flex-col h-full w-full">
-                <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
-                  {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
-                  ) : (
-                    <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
-                      <audio
-                        data-remote
-                        autoPlay
-                        ref={(el) => {
-                          const stream = peerStreams[spotlightId];
-                          if (!el || !stream) return;
-                          if (el.srcObject !== stream) el.srcObject = stream;
-                        }}
-                      />
-                      <div className="absolute bottom-3 left-3 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
-                        <span>{peerLabels[spotlightId] ?? spotlightId.slice(0, 8)}</span>
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="mt-2 flex gap-2 overflow-x-auto px-2 pb-3">
-                  {spotlightId !== "local" && (
-                    <button
-                      type="button"
-                      onClick={() => setSpotlightId("local")}
-                      className="relative h-20 md:h-24 aspect-video bg-neutral-900 rounded-xl overflow-hidden border border-neutral-700/80 flex-shrink-0"
-                    >
-                    <video
-                        data-local="1"
-                        ref={attachLocalVideo}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="h-full w-full object-contain bg-black"
-                      />
-                    </button>
-                  )}
-
-                  {peerIds.map((pid) => {
-                    const isSpot = pid === spotlightId;
-                    return (
-                      <button
-                        key={pid}
-                        type="button"
-                        onClick={() => setSpotlightId(pid)}
-                        className={`relative h-20 md:h-24 aspect-video rounded-xl overflow-hidden flex-shrink-0 border ${
-                          isSpot ? "border-emerald-500" : "border-neutral-700/80"
-                        } bg-neutral-900`}
-                      >
-                        <video
-                          autoPlay
-                          playsInline
-                          className="h-full w-full object-contain bg-black"
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (el && stream && el.srcObject !== stream) {
-                              el.srcObject = stream;
-                            }
-                          }}
-                        />
-                        <audio
-                          data-remote
-                          autoPlay
-                          ref={(el) => {
-                            const stream = peerStreams[pid];
-                            if (!el || !stream) return;
-                            if (el.srcObject !== stream) el.srcObject = stream;
-                          }}
-                        />
-                        <div className="absolute bottom-1 left-1 text-[10px] bg-neutral-900/70 px-1.5 py-0.5 rounded flex items-center gap-1">
-                          <span>{peerLabels[pid] ?? pid.slice(0, 8)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
 
             {/* 2-4 participants: simple grid (prevents accidental duplicate render / weird zoom) */}
             {totalParticipants >= 2 && totalParticipants <= 4 && peerIds.length >= 2 && (
@@ -1679,14 +1618,13 @@ useEffect(() => {
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="pointer-events-auto fixed inset-x-0 flex justify-center"
-              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 18}px)` }}
+              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
-                  ref={textInputElRef}
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
+                  autoFocus
                   placeholder="Type a quick caption…"
                   className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
                 />
@@ -1699,109 +1637,86 @@ useEffect(() => {
               </div>
             </form>
           )}
- {/* Controls overlay */}
-<div className="fixed inset-0 z-50 pointer-events-none">
-  {/* Bottom-center PTT (always visible ring) */}
-  <div
-    className="fixed left-1/2 -translate-x-1/2 pointer-events-auto transition-opacity duration-300"
-    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
-  >
-    <button
-      type="button"
-      aria-label="Push to talk"
-      title={micArmedUi ? "Hold to talk" : "Mic muted"}
-      style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-      className={`
-        rounded-full
-        border-[6px]
-        shadow-xl
-        backdrop-blur-md
-        bg-transparent
-        active:scale-[0.98]
-        transition
-        ${micArmedUi ? "border-emerald-400/80 active:bg-emerald-500/10" : "border-white/25"}
-      `}
-      onPointerDown={(e) => {
-        if (!micArmedUi) return; // Option A: indicator only when muted
-        e.preventDefault();
-        try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-        pttDown();
-        showHudAfterInteraction();
-      }}
-      onPointerUp={(e) => {
-        if (!micArmedUi) return;
-        e.preventDefault();
-        try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-        pttUp();
-        showHudAfterInteraction();
-      }}
-      onPointerCancel={() => {
-        if (!micArmedUi) return;
-        pttCancel();
-        showHudAfterInteraction();
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      <div className="flex items-center justify-center text-center leading-tight">
-        {micArmedUi ? <div className="text-2xl">🎙️</div> : null}
-      </div>
-    </button>
-  </div>
+        </main>
 
-  {/* Bottom-right vertical stack: Mic / Camera / Text */}
-  <div
-    className="fixed pointer-events-auto transition-opacity duration-300"
-    style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
-  >
-    <div className="flex flex-col gap-3 items-center">
-      <button
-        type="button"
-        onClick={() => {
-          void toggleMic();
-          showHudAfterInteraction();
-        }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
-        className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition"
-        title={micArmedUi ? "Mute mic" : "Unmute mic"}
-        aria-label="Mic"
-      >
-        {micArmedUi ? "🎙️" : "🎙️✕"}
-      </button>
+        {/* Controls overlay */}
+        <div className="fixed inset-0 z-50 pointer-events-none">
+          {/* Bottom-center PTT (always visible ring) */}
+          <div
+            className="fixed left-1/2 -translate-x-1/2 pointer-events-auto transition-opacity duration-300"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+            onPointerDown={() => showHudAfterInteraction()}
+          >
+            <button
+              type="button"
+              aria-label="Push to talk"
+              title={micUiOn ? "Hold to talk" : "Mic muted"}
+              style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
+              className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} bg-black/30 backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
+              onPointerDown={(e) => {
+                if (!micUiOn) return; // Option A: indicator only when muted
+                e.preventDefault();
+                try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+                pttDown();
+                showHudAfterInteraction();
+              }}
+              onPointerUp={(e) => {
+                if (!micUiOn) return;
+                e.preventDefault();
+                try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+                pttUp();
+                showHudAfterInteraction();
+              }}
+              onPointerCancel={() => {
+                if (!micUiOn) return;
+                pttCancel();
+                showHudAfterInteraction();
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {/* Mic icon disappears when muted */}
+              {micUiOn && <span className="text-2xl">🎙️</span>}
+            </button>
+          </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          if (roomType === "video") toggleCamera();
-          showHudAfterInteraction();
-        }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
-        disabled={roomType !== "video"}
-        className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition ${
-          roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-        }`}
-        title="Camera"
-        aria-label="Camera"
-      >
-        {camOn ? "📷" : "📷✕"}
-      </button>
+          {/* Bottom-right vertical stack: Mic / Camera / Text */}
+          <div
+            className="fixed right-3 pointer-events-auto flex flex-col items-center gap-2 transition-opacity duration-300"
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+            onPointerDown={() => showHudAfterInteraction()}
+          >
+            <button
+              type="button"
+              onClick={() => { void toggleMic(); showHudAfterInteraction(); }}
+              style={{ width: AUX_BTN, height: AUX_BTN }}
+              className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"}`}
+              title={micUiOn ? "Mute mic" : "Unmute mic"}
+              aria-label="Mic toggle"
+            >
+              {micUiOn ? "🎙️" : "🎙️✕"}
+            </button>
 
-      <button
-        type="button"
-        onClick={() => {
-          setShowTextInput((v) => !v);
-          showHudAfterInteraction();
-        }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
-        className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center active:scale-[0.98] transition"
-        title={showTextInput ? "Close text" : "Send text"}
-        aria-label="Text"
-      >
-        💬
-      </button>
-    </div>
-  </div>
-</div>
-put ? "Text ✕" : "Text"}
+            <button
+              type="button"
+              onClick={() => { toggleCamera(); showHudAfterInteraction(); }}
+              disabled={roomType !== "video"}
+              style={{ width: AUX_BTN, height: AUX_BTN }}
+              className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+              title="Camera"
+              aria-label="Camera toggle"
+            >
+              {camOn ? "📷" : "📷✕"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setShowTextInput((v) => !v); showHudAfterInteraction(); }}
+              style={{ width: AUX_BTN, height: AUX_BTN }}
+              className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+              title={showTextInput ? "Close text" : "Send text"}
+              aria-label="Text"
+            >
+              💬
             </button>
           </div>
         </div>
@@ -1809,10 +1724,6 @@ put ? "Text ✕" : "Text"}
     </div>
   );
 }
-
-
-
-
 
 
 
