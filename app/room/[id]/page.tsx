@@ -1674,19 +1674,16 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                 e.preventDefault();
                 try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
                 pttDown();
-                showBottomHudAfterInteraction();
               }}
               onPointerUp={(e) => {
                 if (!micUiOn) return;
                 e.preventDefault();
                 try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
                 pttUp();
-                showBottomHudAfterInteraction();
               }}
               onPointerCancel={() => {
                 if (!micUiOn) return;
                 pttCancel();
-                showBottomHudAfterInteraction();
               }}
               onContextMenu={(e) => e.preventDefault()}
             >
@@ -1695,61 +1692,67 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             </button>
           </div>
 
-         {/* Bottom-right vertical stack: Mic / Camera / Text */}
-<div
-  className={`fixed right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-    bottomHudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-  }`}
-  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-  onPointerDown={() => showBottomHudAfterInteraction()}
->
-  {!isMobile && (
-    <button
-      type="button"
-      onClick={() => {
-        void toggleMic();
-        showBottomHudAfterInteraction();
-      }}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
-      className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
-        micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
-      }`}
-      title={micUiOn ? "Mute mic" : "Unmute mic"}
-      aria-label="Mic toggle"
-    >
-      {micUiOn ? "🎙️" : "🎙️✕"}
-    </button>
-  )}
+         {/* Bottom-right wake zone (independent from top strip). Same footprint as PiP. */}
+          <div
+            className="fixed right-0 bottom-0 z-[55] pointer-events-auto"
+            style={{ width: pipDims.w + 24, height: pipDims.h + 24 }}
+            onPointerDown={() => showBottomHudAfterInteraction()}
+          >
+            {/* Bottom-right vertical stack: Mic / Camera / Text */}
+            <div
+              className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
+                bottomHudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+              }`}
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+            >
+              {!isMobile && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void toggleMic();
+                    showBottomHudAfterInteraction();
+                  }}
+                  style={{ width: AUX_BTN, height: AUX_BTN }}
+                  className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
+                    micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+                  }`}
+                  title={micUiOn ? "Mute mic" : "Unmute mic"}
+                  aria-label="Mic toggle"
+                >
+                  {micUiOn ? "🎙️" : "🎙️✕"}
+                </button>
+              )}
 
-  <button
-    type="button"
-    onClick={() => {
-      toggleCamera();
-      showBottomHudAfterInteraction();
-    }}
-    disabled={roomType !== "video"}
-    style={{ width: AUX_BTN, height: AUX_BTN }}
-    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
-    title="Camera"
-    aria-label="Camera toggle"
-  >
-    {camOn ? "📷" : "📷✕"}
-  </button>
+              <button
+                type="button"
+                onClick={() => {
+                  toggleCamera();
+                  showBottomHudAfterInteraction();
+                }}
+                disabled={roomType !== "video"}
+                style={{ width: AUX_BTN, height: AUX_BTN }}
+                className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+                title="Camera"
+                aria-label="Camera toggle"
+              >
+                {camOn ? "📷" : "📷✕"}
+              </button>
 
-  <button
-    type="button"
-    onClick={() => {
-      setShowTextInput((v) => !v);
-      showBottomHudAfterInteraction();
-    }}
-    style={{ width: AUX_BTN, height: AUX_BTN }}
-    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
-    title={showTextInput ? "Close text" : "Send text"}
-    aria-label="Text"
-  >
-    💬
-  </button>
-</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTextInput((v) => !v);
+                  showBottomHudAfterInteraction();
+                }}
+                style={{ width: AUX_BTN, height: AUX_BTN }}
+                className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+                title={showTextInput ? "Close text" : "Send text"}
+                aria-label="Text"
+              >
+                💬
+              </button>
+            </div>
+          </div>
 
         </div>
       </div>
