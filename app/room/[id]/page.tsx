@@ -257,9 +257,10 @@ useEffect(() => {
 
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
+    // Default: NOT pinned (PiP should fade unless user pins it)
+    if (typeof window === "undefined") return false;
     const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
+    return v === null ? false : v === "1";
   });
 
   // PiP controls visibility (tap PiP / watermark to show)
@@ -969,8 +970,13 @@ useEffect(() => {
   const pillBase =
     "inline-flex items-center justify-center px-4 py-1 rounded-full text-xs md:text-sm font-medium border transition-colors";
 
-  // Mobile control sizing (avoid Tailwind dynamic class issues)
+  // Control sizing
   const PTT_SIZE = 76;
+  const PTT_SIZE_DESKTOP = Math.round(PTT_SIZE * 1.2); // user requested larger on PC
+  const pttSize = isMobile ? PTT_SIZE : PTT_SIZE_DESKTOP;
+  const iconBtnSize = isMobile ? 44 : 54;
+
+  const micArmedUi = sttListening || sttArmedNotListening;
 
   const online = rtStatus === "SUBSCRIBED";
 
@@ -1315,43 +1321,88 @@ useEffect(() => {
                 />
 
                 {roomType === "video" && (
-                  <div
-                    ref={pipRef}
-          className="pointer-events-auto z-30 rounded-2xl overflow-hidden shadow-xl"
-                    style={
-                      isMobile
-                        ? {
-                            position: "fixed",
-                            left: 12,
-                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-                            width: pipDims.w,
-                            height: pipDims.h,
-                            opacity: 1,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
-                        : {
-                            position: "absolute",
-                            left: pipPos?.x ?? 16,
-                            top: pipPos?.y ?? 16,
-                            width: pipDims.w,
-                            height: pipDims.h,
-                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
-                    }
-                    onPointerDown={pipOnPointerDown}
-                    onPointerMove={pipOnPointerMove}
-                    onPointerUp={pipOnPointerUpOrCancel}
-                    onPointerCancel={pipOnPointerUpOrCancel}
-                    title="Your camera"
-                    aria-label="Your camera"
-                  >
+                  <>
+                    {/* PiP ghost outline when faded (matches PiP shape) */}
+                    {!pipPinned && !hudVisible && (
+                      <div
+                        className="pointer-events-auto z-20 rounded-2xl"
+                        style={
+                          isMobile
+                            ? {
+                                position: "fixed",
+                                left: 12,
+                                bottom: `calc(env(safe-area-inset-bottom) + 12px + ${pttSize + 12}px)`,
+                                width: pipDims.w,
+                                height: pipDims.h,
+                                border: "2px solid rgba(255,255,255,0.18)",
+                                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                                background: "rgba(0,0,0,0.10)",
+                              }
+                            : {
+                                position: "absolute",
+                                left: pipPos?.x ?? 16,
+                                top: pipPos?.y ?? 16,
+                                width: pipDims.w,
+                                height: pipDims.h,
+                                border: "2px solid rgba(255,255,255,0.18)",
+                                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                                background: "rgba(0,0,0,0.10)",
+                              }
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          showHud();
+                          showPipControls();
+                        }}
+                        title="Show PiP"
+                        aria-label="Show PiP"
+                      />
+                    )}
+
+                    <div
+                      ref={pipRef}
+                      className="z-30 rounded-2xl overflow-hidden shadow-xl"
+                      style={
+                        isMobile
+                          ? {
+                              position: "fixed",
+                              left: 12,
+                              bottom: `calc(env(safe-area-inset-bottom) + 12px + ${pttSize + 12}px)`,
+                              width: pipDims.w,
+                              height: pipDims.h,
+                              opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
+                              transition: "opacity 250ms ease",
+                              touchAction: "none",
+                              userSelect: "none",
+                              WebkitUserSelect: "none",
+                              pointerEvents: pipPinned || hudVisible ? ("auto" as any) : ("none" as any),
+                            }
+                          : {
+                              position: "absolute",
+                              left: pipPos?.x ?? 16,
+                              top: pipPos?.y ?? 16,
+                              width: pipDims.w,
+                              height: pipDims.h,
+                              opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
+                              transition: "opacity 250ms ease",
+                              touchAction: "none",
+                              userSelect: "none",
+                              WebkitUserSelect: "none",
+                              pointerEvents: pipPinned || hudVisible ? ("auto" as any) : ("none" as any),
+                            }
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        showHud();
+                        showPipControls();
+                      }}
+                      onPointerDown={pipOnPointerDown}
+                      onPointerMove={pipOnPointerMove}
+                      onPointerUp={pipOnPointerUpOrCancel}
+                      onPointerCancel={pipOnPointerUpOrCancel}
+                      title="Your camera"
+                      aria-label="Your camera"
+                    >
                     {/* Local preview */}
                     {camOn ? (
                       <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
@@ -1361,38 +1412,10 @@ useEffect(() => {
                       </div>
                     )}
 
-                    {/* Watermark bottom-left (tap to show PiP controls) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        showPipControls();
-                      }}
-                      className="absolute bottom-1 left-1 pointer-events-auto select-none text-[10px] px-2 py-1 rounded-lg bg-black/35 backdrop-blur border border-white/10 text-white/80"
-                      title="Controls"
-                      aria-label="PiP controls"
-                    >
-                      Any-Speak
-                    </button>
-
-                    {/* PiP controls overlay (camera/pin/flip) */}
+                    {/* PiP controls overlay (pin + mobile flip only) */}
                     {pipControlsVisible && (
                       <div className="absolute inset-0 flex items-end justify-end p-2 pointer-events-none">
                         <div className="flex items-center gap-2 pointer-events-auto">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleCamera();
-                              showPipControls();
-                            }}
-                            className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-                            title="Camera"
-                            aria-label="Camera"
-                          >
-                            {camOn ? "📷" : "📷✕"}
-                          </button>
-
                           {isMobile && canFlip && (
                             <button
                               type="button"
@@ -1431,7 +1454,8 @@ useEffect(() => {
                         </div>
                       </div>
                     )}
-                  </div>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -1624,7 +1648,7 @@ useEffect(() => {
             <form
               onSubmit={handleTextSubmit}
               className="fixed pointer-events-auto inset-x-0 flex justify-center"
-              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 24}px)` }}
+              style={{ bottom: `calc(env(safe-area-inset-bottom) + ${pttSize + 24}px)` }}
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
@@ -1647,259 +1671,117 @@ useEffect(() => {
 
         {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Desktop mic button (fix: no way to talk on PC) */}
-          {!isMobile && (
-            <div className="absolute left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
-              <button
-                onClick={() => void toggleMic()}
-                className={`${pillBase} ${micClass} bg-black/25 backdrop-blur-md border-white/10 active:scale-[0.98] transition`}
-                title="Live captions mic"
-              >
-                {micUiOn ? "🎙️ On" : "🎙️ Off"}
-              </button>
-            </div>
-          )}
+          {/* Bottom control zone (mobile + desktop parity)
+              - PTT centered (only when mic is armed)
+              - Mic / Camera / Text icons to the right
+              - All fade with HUD, but mic toggle always available */}
 
-          {/* Desktop-only camera toggle (mobile uses top pills) */}
-          {!isMobile && (
-            <div className="absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] pointer-events-auto">
+          <div
+            className={`fixed left-1/2 -translate-x-1/2 pointer-events-auto flex items-center gap-3 transition-opacity duration-200 ${
+              hudVisible ? "opacity-100" : "opacity-0"
+            }`}
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+            onMouseMove={() => {
+              if (!isMobile) showHud();
+            }}
+            onClick={() => {
+              showHud();
+            }}
+          >
+            {/* PTT (only when mic is armed) */}
+            {micArmedUi && (
               <button
-                onClick={toggleCamera}
-                className={`${pillBase} ${camClass} ${
-                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
-                } bg-black/25 backdrop-blur-md border-white/10`}
-                disabled={roomType !== "video"}
-                title="Camera"
-              >
-                {camOn ? "📷" : "📷✕"}
-              </button>
-            </div>
-          )}
-
-          {/* Mobile PTT (dockable, but much harder to accidentally drag) */}
-          {isMobile && (
-            <div
-              className="fixed pointer-events-auto"
-              style={
-                pttPx.dock === "bottom"
-                  ? { left: pttPx.left, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }
-                  : pttPx.dock === "left"
-                  ? { left: 12, top: pttPx.top }
-                  : { right: 12, top: pttPx.top }
-              }
-            >
-              <button
-                style={{
-                  width: PTT_SIZE,
-                  height: PTT_SIZE,
-                  touchAction: "none",
-                  userSelect: "none",
-                  WebkitUserSelect: "none",
-                }}
-                className={`
-                  rounded-full
-                  border-[6px]
-                  shadow-xl
-                  backdrop-blur-md
-                  bg-transparent
-                  active:scale-[0.98]
-                  transition
-                  ${
-                    micUiOn
-                      ? "border-emerald-400/80 active:bg-emerald-500/10"
-                      : "border-red-500/80 active:bg-red-500/10"
-                  }
-                `}
+                type="button"
+                style={{ width: pttSize, height: pttSize }}
+                className={`rounded-full border-[6px] shadow-xl backdrop-blur-md bg-transparent active:scale-[0.98] transition ${
+                  sttListening ? "border-emerald-400/90 active:bg-emerald-500/10" : "border-emerald-300/70"
+                }`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   try {
                     e.currentTarget.setPointerCapture(e.pointerId);
                   } catch {}
-                  const d = pttDragRef.current;
-                  d.pointerId = e.pointerId;
-                  d.startX = e.clientX;
-                  d.startY = e.clientY;
-                  d.moved = false;
-                  d.dragging = false;
-                  d.startedPtt = false;
-                  d.dragStartedAtMs = Date.now();
-
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-
-                  // Start PTT only if user is holding steady
-                  d.holdTimer = setTimeout(() => {
-                    if (!pttDragRef.current.moved) {
-                      pttDown();
-                      pttDragRef.current.startedPtt = true;
-                    }
-                  }, 180);
-                }}
-                onPointerMove={(e) => {
-                  const d = pttDragRef.current;
-                  if (d.pointerId !== e.pointerId) return;
-
-                  const dx = e.clientX - d.startX;
-                  const dy = e.clientY - d.startY;
-                  const dist = Math.hypot(dx, dy);
-
-                  // Much higher threshold to avoid “small movements” breaking PTT
-                  if (!d.moved && dist > 18) {
-                    d.moved = true;
-
-                    // cancel hold-to-talk if it was about to fire
-                    if (d.holdTimer) {
-                      clearTimeout(d.holdTimer);
-                      d.holdTimer = null;
-                    }
-                    if (d.startedPtt) {
-                      pttCancel();
-                      d.startedPtt = false;
-                    }
-                  }
-
-                  // Don’t actually drag unless user clearly intends to
-                  if (!d.dragging && dist > 32) {
-                    d.dragging = true;
-                  }
-                  if (!d.dragging) return;
-
-                  const { w, size, edgeZone, xLeft, xRight, minY, maxY } = getPttLayout();
-
-                  // Only switch docks if REALLY near an edge
-                  const nearLeft = e.clientX <= edgeZone;
-                  const nearRight = e.clientX >= w - size - edgeZone;
-
-                  const nextDock: PttDock = nearLeft ? "left" : nearRight ? "right" : "bottom";
-
-                  if (nextDock !== pttDockRef.current) {
-                    setPttDock(nextDock);
-                    pttDockRef.current = nextDock;
-                  }
-
-                  if (nextDock === "bottom") {
-                    const centerX = e.clientX - size / 2;
-                    const t = (centerX - xLeft) / (xRight - xLeft || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  } else {
-                    const centerY = e.clientY - size / 2;
-                    const t = (centerY - minY) / (maxY - minY || 1);
-                    setPttT(Math.min(1, Math.max(0, t)));
-                  }
+                  showHud();
+                  pttDown();
                 }}
                 onPointerUp={(e) => {
                   e.preventDefault();
                   try {
                     e.currentTarget.releasePointerCapture(e.pointerId);
                   } catch {}
-
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-
-                  if (d.dragging) {
-                    const { xLeft, xCenter, xRight } = getPttLayout();
-
-                    // Snap bottom dock to left/center/right
-                    if (pttDockRef.current === "bottom") {
-                      const x = pttPx.left;
-                      const candidates = [xLeft, xCenter, xRight];
-                      let best = candidates[0];
-                      let bestDist = Math.abs(x - best);
-                      for (const c of candidates.slice(1)) {
-                        const dd = Math.abs(x - c);
-                        if (dd < bestDist) {
-                          bestDist = dd;
-                          best = c;
-                        }
-                      }
-
-                      const newT =
-                        best === xLeft
-                          ? 0
-                          : best === xRight
-                          ? 1
-                          : (xCenter - xLeft) / (xRight - xLeft || 1);
-
-                      setPttT(newT);
-                      try {
-                        localStorage.setItem("anyspeak_ptt_dock_v1", JSON.stringify({ dock: "bottom", t: newT }));
-                      } catch {}
-                    } else {
-                      try {
-                        localStorage.setItem(
-                          "anyspeak_ptt_dock_v1",
-                          JSON.stringify({ dock: pttDockRef.current, t: pttTRef.current })
-                        );
-                      } catch {}
-                    }
-                  } else if (d.startedPtt) {
-                    pttUp();
-                  }
-
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
+                  showHud();
+                  pttUp();
                 }}
                 onPointerCancel={(e) => {
                   e.preventDefault();
-                  const d = pttDragRef.current;
-                  if (d.holdTimer) {
-                    clearTimeout(d.holdTimer);
-                    d.holdTimer = null;
-                  }
-                  if (d.startedPtt) pttCancel();
-                  d.pointerId = null;
-                  d.dragging = false;
-                  d.moved = false;
-                  d.startedPtt = false;
-                }}
-                onClick={() => {
-                  // mobile uses hold-to-talk, ignore click
+                  showHud();
+                  pttCancel();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 aria-label="Push to talk"
                 title="Hold to talk"
               >
                 <div className="flex items-center justify-center text-center leading-tight">
-                  <div className="text-xl">🎙️</div>
+                  <div className={isMobile ? "text-xl" : "text-2xl"}>🎙️</div>
                 </div>
               </button>
-            </div>
-          )}
+            )}
 
-          {/* Mobile: Send text (bottom-right, icon) */}
-          {isMobile && (
-            <div
-              className="fixed pointer-events-auto"
-              style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-            >
+            {/* Right-side icon cluster */}
+            <div className="flex items-center gap-3">
+              {/* Mic toggle (always visible; when OFF, PTT disappears) */}
               <button
                 type="button"
-                onClick={() => setShowTextInput((v) => !v)}
-                className="w-12 h-12 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white text-xl shadow-xl active:scale-[0.98] transition"
-                title="Send text"
-                aria-label="Send text"
+                onClick={() => {
+                  showHud();
+                  void toggleMic();
+                }}
+                style={{ width: iconBtnSize, height: iconBtnSize }}
+                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
+                  micArmedUi ? "" : "opacity-90"
+                }`}
+                title={micArmedUi ? "Mute mic" : "Unmute mic"}
+                aria-label="Mic toggle"
               >
-                💬
+                <span className={isMobile ? "text-xl" : "text-2xl"}>{micArmedUi ? "🎙️" : "🎙️✕"}</span>
+              </button>
+
+              {/* Camera toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (roomType !== "video") return;
+                  showHud();
+                  toggleCamera();
+                }}
+                style={{ width: iconBtnSize, height: iconBtnSize }}
+                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
+                  roomType !== "video" ? "opacity-40 cursor-not-allowed" : ""
+                }`}
+                disabled={roomType !== "video"}
+                title="Camera"
+                aria-label="Camera"
+              >
+                <span className={isMobile ? "text-xl" : "text-2xl"}>{camOn ? "📷" : "📷✕"}</span>
+              </button>
+
+              {/* Text toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  showHud();
+                  setShowTextInput((v) => !v);
+                }}
+                style={{ width: iconBtnSize, height: iconBtnSize }}
+                className={`rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-white shadow-xl active:scale-[0.98] transition flex items-center justify-center ${
+                  showTextInput ? "ring-2 ring-white/20" : ""
+                }`}
+                title={showTextInput ? "Close text" : "Text"}
+                aria-label="Text"
+              >
+                <span className={isMobile ? "text-xl" : "text-2xl"}>💬</span>
               </button>
             </div>
-          )}
-
-          {/* Optional: small text toggle (desktop + mobile) */}
-          <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+12px)] pointer-events-auto hidden">
-            <button
-              type="button"
-              onClick={() => setShowTextInput((v) => !v)}
-              className="px-3 py-1.5 rounded-full bg-black/25 backdrop-blur-md border border-white/10 text-[11px] text-white/90 shadow"
-            >
-              {showTextInput ? "Text ✕" : "Text"}
-            </button>
           </div>
         </div>
       </div>
