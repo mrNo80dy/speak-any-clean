@@ -117,42 +117,28 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// HUD visibility (split):
-// - Top HUD only wakes from the top strip (mobile) / top edge (desktop)
-// - Bottom HUD only wakes from the bottom-right wake zone (mobile) / bottom edge (desktop)
-const [topHudVisible, setTopHudVisible] = useState(true);
-const [bottomHudVisible, setBottomHudVisible] = useState(true);
-const topHudTimerRef = useRef<number | null>(null);
-const bottomHudTimerRef = useRef<number | null>(null);
+// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
+const [hudVisible, setHudVisible] = useState(true);
+const hudTimerRef = useRef<number | null>(null);
 
-const showTopHudFor = useCallback((ms: number) => {
-  setTopHudVisible(true);
-  if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
-  topHudTimerRef.current = window.setTimeout(() => setTopHudVisible(false), ms);
+const showHudFor = useCallback((ms: number) => {
+  setHudVisible(true);
+  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
+  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
 }, []);
 
-const showBottomHudFor = useCallback((ms: number) => {
-  setBottomHudVisible(true);
-  if (bottomHudTimerRef.current) window.clearTimeout(bottomHudTimerRef.current);
-  bottomHudTimerRef.current = window.setTimeout(() => setBottomHudVisible(false), ms);
-}, []);
+const showHudInitial = useCallback(() => showHudFor(8000), [showHudFor]);
+const showHudAfterInteraction = useCallback(() => showHudFor(3000), [showHudFor]);
 
-const showTopHudInitial = useCallback(() => showTopHudFor(8000), [showTopHudFor]);
-const showTopHudAfterInteraction = useCallback(() => showTopHudFor(3000), [showTopHudFor]);
-
-const showBottomHudInitial = useCallback(() => showBottomHudFor(8000), [showBottomHudFor]);
-const showBottomHudAfterInteraction = useCallback(() => showBottomHudFor(3000), [showBottomHudFor]);
 
 useEffect(() => {
-  showTopHudInitial();
-  showBottomHudInitial();
+  showHudInitial();
   return () => {
-    if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
-    if (bottomHudTimerRef.current) window.clearTimeout(bottomHudTimerRef.current);
+    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
   };
-}, [showTopHudInitial, showBottomHudInitial]);
-
-// Stable per-tab clientId
+}, [showHudInitial]);
+  
+  // Stable per-tab clientId
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     const existing = sessionStorage.getItem("clientId");
@@ -910,9 +896,17 @@ useEffect(() => {
       }
 
       others.forEach((id) => {
-        if (!peersRef.current.has(id)) {
-          makeOffer(id, channel).catch(() => {});
+        if (peersRef.current.has(id)) return;
+
+        // Avoid offer glare: deterministically choose ONE side to initiate.
+        // The other side will wait and only respond to the incoming offer.
+        const iInitiate = clientId < id;
+        if (!iInitiate) {
+          log("webrtc: waiting for offer", { peer: id });
+          return;
         }
+
+        makeOffer(id, channel).catch(() => {});
       });
     },
   });
@@ -1033,8 +1027,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
         if (isMobile) return;
         const y = e.clientY;
         const h = window.innerHeight || 0;
-        if (y < 96) showTopHudAfterInteraction();
-        if (y > h - 96) showBottomHudAfterInteraction();
+        if (y < 96 || y > h - 96) showHudAfterInteraction();
       }}
     >
       <div className="relative h-full w-full overflow-hidden">
@@ -1110,14 +1103,14 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
             style={{ height: "30vh" }}
-            onPointerDown={() => showTopHudAfterInteraction()}
+            onPointerDown={() => showHudAfterInteraction()}
           />
         )}
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
           className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            !topHudVisible ? "opacity-0" : "opacity-100"
+            !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
           <div className="relative flex items-center justify-center gap-2">
@@ -1132,7 +1125,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
             <button
               type="button"
-              onClick={() => { showTopHudAfterInteraction(); setCcOn((v) => !v); }}
+              onClick={() => setCcOn((v) => !v)}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
                 ccOn ? "ring-1 ring-white/25" : "opacity-90"
               }`}
@@ -1145,7 +1138,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={() => {
-                showTopHudAfterInteraction();
+                showHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
@@ -1160,7 +1153,6 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={async () => {
-                showTopHudAfterInteraction();
                 try {
                   const url = window.location.href;
                   // @ts-ignore
@@ -1186,7 +1178,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
             <button
               type="button"
-              onClick={() => { showTopHudAfterInteraction(); void handleEndCall(); }}
+              onClick={handleEndCall}
               className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
               title="Exit"
               aria-label="Exit"
@@ -1313,7 +1305,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   }}
                 />
 
-                {roomType === "video" && !pipPinned && !bottomHudVisible && (
+                {roomType === "video" && !pipPinned && !hudVisible && (
                   <div
                     className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
@@ -1346,7 +1338,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     onClick={(e) => {
                       e.stopPropagation();
                       showPipControls();
-                      showBottomHudAfterInteraction();
+                      showHudAfterInteraction();
                     }}
                     aria-label="Show PiP"
                     title="Show PiP"
@@ -1376,7 +1368,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : bottomHudVisible ? 1 : 0,
+                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1669,22 +1661,23 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               title={micUiOn ? "Hold to talk" : "Mic muted"}
               style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
               className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} bg-black/30 backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
-              onPointerDown={(e) => {
-                if (!micUiOn) return; // Option A: indicator only when muted
-                e.preventDefault();
-                try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-                pttDown();
-              }}
-              onPointerUp={(e) => {
-                if (!micUiOn) return;
-                e.preventDefault();
-                try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-                pttUp();
-              }}
-              onPointerCancel={() => {
-                if (!micUiOn) return;
-                pttCancel();
-              }}
+             onPointerDown={(e) => {
+  if (!micUiOn) return; // Option A: indicator only when muted
+  e.preventDefault();
+  try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+  pttDown();
+}}
+onPointerUp={(e) => {
+  if (!micUiOn) return;
+  e.preventDefault();
+  try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+  pttUp();
+}}
+onPointerCancel={() => {
+  if (!micUiOn) return;
+  pttCancel();
+}}
+
               onContextMenu={(e) => e.preventDefault()}
             >
               {/* Mic icon disappears when muted */}
@@ -1692,73 +1685,77 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             </button>
           </div>
 
-         {/* Bottom-right wake zone (independent from top strip). Same footprint as PiP. */}
-          <div
-            className="fixed right-0 bottom-0 z-[55] pointer-events-auto"
-            style={{ width: pipDims.w + 24, height: pipDims.h + 24 }}
-            onPointerDown={() => showBottomHudAfterInteraction()}
-          >
-            {/* Bottom-right vertical stack: Mic / Camera / Text */}
-            <div
-              className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-                bottomHudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-              }`}
-              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-            >
-              {!isMobile && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    void toggleMic();
-                    showBottomHudAfterInteraction();
-                  }}
-                  style={{ width: AUX_BTN, height: AUX_BTN }}
-                  className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
-                    micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
-                  }`}
-                  title={micUiOn ? "Mute mic" : "Unmute mic"}
-                  aria-label="Mic toggle"
-                >
-                  {micUiOn ? "🎙️" : "🎙️✕"}
-                </button>
-              )}
+        {/* Bottom-right wake zone (always tappable) */}
+<div
+  className="fixed right-0 bottom-0 z-40 pointer-events-auto"
+  style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
+  onPointerDown={() => showHudAfterInteraction()}
+>
+  {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
+  <div
+    className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
+      hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+    }`}
+    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+  >
+    {!isMobile && (
+      <button
+        type="button"
+        onClick={() => {
+          void toggleMic();
+          showHudAfterInteraction();
+        }}
+        style={{ width: AUX_BTN, height: AUX_BTN }}
+        className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
+          micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+        }`}
+        title={micUiOn ? "Mute mic" : "Unmute mic"}
+        aria-label="Mic toggle"
+      >
+        {micUiOn ? "🎙️" : "🎙️✕"}
+      </button>
+    )}
 
-              <button
-                type="button"
-                onClick={() => {
-                  toggleCamera();
-                  showBottomHudAfterInteraction();
-                }}
-                disabled={roomType !== "video"}
-                style={{ width: AUX_BTN, height: AUX_BTN }}
-                className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
-                title="Camera"
-                aria-label="Camera toggle"
-              >
-                {camOn ? "📷" : "📷✕"}
-              </button>
+    {/* keep the rest of your buttons exactly as they are */}
+    <button
+      type="button"
+      onClick={() => {
+        toggleCamera();
+        showHudAfterInteraction();
+      }}
+      disabled={roomType !== "video"}
+      style={{ width: AUX_BTN, height: AUX_BTN }}
+      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+      title="Camera"
+      aria-label="Camera toggle"
+    >
+      {camOn ? "📷" : "📷✕"}
+    </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowTextInput((v) => !v);
-                  showBottomHudAfterInteraction();
-                }}
-                style={{ width: AUX_BTN, height: AUX_BTN }}
-                className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
-                title={showTextInput ? "Close text" : "Send text"}
-                aria-label="Text"
-              >
-                💬
-              </button>
-            </div>
-          </div>
+    <button
+      type="button"
+      onClick={() => {
+        setShowTextInput((v) => !v);
+        showHudAfterInteraction();
+      }}
+      style={{ width: AUX_BTN, height: AUX_BTN }}
+      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+      title={showTextInput ? "Close text" : "Send text"}
+      aria-label="Text"
+    >
+      💬
+    </button>
+  </div>
+</div>
+
 
         </div>
       </div>
     </div>
   );
 }
+
+
 
 
 
