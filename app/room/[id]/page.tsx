@@ -1677,67 +1677,76 @@ onPointerCancel={() => {
             </button>
           </div>
 
-         {/* Bottom-right vertical stack: Mic / Camera / Text */}
+        {/* Bottom-right wake zone (always tappable) */}
 <div
-  className={`fixed right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-    hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-  }`}
-  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+  className="fixed right-0 bottom-0 z-40 pointer-events-auto"
+  style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
   onPointerDown={() => showHudAfterInteraction()}
 >
-  {!isMobile && (
+  {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
+  <div
+    className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
+      hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+    }`}
+    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+  >
+    {!isMobile && (
+      <button
+        type="button"
+        onClick={() => {
+          void toggleMic();
+          showHudAfterInteraction();
+        }}
+        style={{ width: AUX_BTN, height: AUX_BTN }}
+        className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
+          micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+        }`}
+        title={micUiOn ? "Mute mic" : "Unmute mic"}
+        aria-label="Mic toggle"
+      >
+        {micUiOn ? "🎙️" : "🎙️✕"}
+      </button>
+    )}
+
+    {/* keep the rest of your buttons exactly as they are */}
     <button
       type="button"
       onClick={() => {
-        void toggleMic();
+        toggleCamera();
+        showHudAfterInteraction();
+      }}
+      disabled={roomType !== "video"}
+      style={{ width: AUX_BTN, height: AUX_BTN }}
+      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+      title="Camera"
+      aria-label="Camera toggle"
+    >
+      {camOn ? "📷" : "📷✕"}
+    </button>
+
+    <button
+      type="button"
+      onClick={() => {
+        setShowTextInput((v) => !v);
         showHudAfterInteraction();
       }}
       style={{ width: AUX_BTN, height: AUX_BTN }}
-      className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
-        micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
-      }`}
-      title={micUiOn ? "Mute mic" : "Unmute mic"}
-      aria-label="Mic toggle"
+      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+      title={showTextInput ? "Close text" : "Send text"}
+      aria-label="Text"
     >
-      {micUiOn ? "🎙️" : "🎙️✕"}
+      💬
     </button>
-  )}
-
-  <button
-    type="button"
-    onClick={() => {
-      toggleCamera();
-      showHudAfterInteraction();
-    }}
-    disabled={roomType !== "video"}
-    style={{ width: AUX_BTN, height: AUX_BTN }}
-    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
-    title="Camera"
-    aria-label="Camera toggle"
-  >
-    {camOn ? "📷" : "📷✕"}
-  </button>
-
-  <button
-    type="button"
-    onClick={() => {
-      setShowTextInput((v) => !v);
-      showHudAfterInteraction();
-    }}
-    style={{ width: AUX_BTN, height: AUX_BTN }}
-    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
-    title={showTextInput ? "Close text" : "Send text"}
-    aria-label="Text"
-  >
-    💬
-  </button>
+  </div>
 </div>
+
 
         </div>
       </div>
     </div>
   );
 }
+
 
 
 
