@@ -709,7 +709,7 @@ useEffect(() => {
     },
   });
 
-  const micUiOn = isMobile ? sttListening : sttListening; // desktop uses STT too (button below)
+  const micUiOn = isMobile ? true : (sttListening || sttArmedNotListening);
 
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
@@ -1102,10 +1102,10 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
         {/* Top floating controls (icons only, no pills/words) */}
         <header
           className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            isMobile && !hudVisible ? "opacity-0" : "opacity-100"
+            !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
-          <div className="relative flex items-center justify-end gap-2">
+          <div className="relative flex items-center justify-center gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
@@ -1644,7 +1644,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           {/* Bottom-center PTT (always visible ring) */}
           <div
             className="fixed left-1/2 -translate-x-1/2 pointer-events-auto transition-opacity duration-300"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: 1 }}
             onPointerDown={() => showHudAfterInteraction()}
           >
             <button
@@ -1682,9 +1682,10 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           {/* Bottom-right vertical stack: Mic / Camera / Text */}
           <div
             className="fixed right-3 pointer-events-auto flex flex-col items-center gap-2 transition-opacity duration-300"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: hudVisible ? 1 : 0 }}
+            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: 1 }}
             onPointerDown={() => showHudAfterInteraction()}
           >
+            {!isMobile && (
             <button
               type="button"
               onClick={() => { void toggleMic(); showHudAfterInteraction(); }}
@@ -1695,6 +1696,8 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             >
               {micUiOn ? "🎙️" : "🎙️✕"}
             </button>
+
+                      )}
 
             <button
               type="button"
