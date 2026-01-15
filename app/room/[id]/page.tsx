@@ -273,10 +273,18 @@ useEffect(() => {
     const h = vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640);
     const ar = pipAspect && pipAspect > 0 ? pipAspect : 16 / 9; // width / height
 
+    const isLandscape = isMobile && w > h;
+
     // Size caps
-    const maxW = isMobile ? Math.min(w * 0.42, 200) : 220;
-    const maxH = isMobile ? Math.min(h * 0.28, 220) : 140;
-    const minW = isMobile ? 110 : 160;
+    // Portrait mobile: keep PiP modest.
+    // Landscape mobile: increase height cap (landscape shortens viewport height and made PiP tiny).
+    const maxW = isMobile
+      ? (isLandscape ? Math.min(w * 0.34, 260) : Math.min(w * 0.42, 200))
+      : 220;
+    const maxH = isMobile
+      ? (isLandscape ? Math.min(h * 0.45, 240) : Math.min(h * 0.28, 220))
+      : 140;
+    const minW = isMobile ? (isLandscape ? 140 : 110) : 160;
 
     let outW = maxW;
     let outH = outW / ar;
