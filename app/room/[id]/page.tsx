@@ -1643,10 +1643,10 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Bottom-center PTT (always visible ring) */}
           <div
-            className="fixed left-1/2 -translate-x-1/2 pointer-events-auto transition-opacity duration-300"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: 1 }}
-            onPointerDown={() => showHudAfterInteraction()}
-          >
+  className="fixed left-1/2 -translate-x-1/2 pointer-events-auto"
+  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+>
+
             <button
               type="button"
               aria-label="Push to talk"
@@ -1740,6 +1740,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
 
 
 
