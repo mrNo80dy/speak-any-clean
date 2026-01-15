@@ -1119,10 +1119,10 @@ useEffect(() => {
         {/* Top floating controls (icons only, no pills/words) */}
         <header
           className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            isMobile && !hudVisible ? "opacity-0" : "opacity-100"
+            !hudVisible ? "opacity-0" : "opacity-100"
           }`}
         >
-          <div className="relative flex items-center justify-end gap-2">
+          <div className="relative flex items-center justify-center gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
@@ -1182,7 +1182,7 @@ useEffect(() => {
               title="Share"
               aria-label="Share"
             >
-              ↗
+              ⤴️
             </button>
 
             <button
@@ -1877,7 +1877,7 @@ useEffect(() => {
           {isMobile && (
             <div
               className="fixed pointer-events-auto"
-              style={{ right: 12, bottom: `calc(env(safe-area-inset-bottom) + ${PTT_SIZE + 18}px)` }}
+              style={{ right: 12, bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
             >
               <button
                 type="button"
