@@ -1679,54 +1679,68 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             </button>
           </div>
 
-          {/* Bottom-right vertical stack: Mic / Camera / Text */}
-          <div
-            className="fixed right-3 pointer-events-auto flex flex-col items-center gap-2 transition-opacity duration-300"
-            style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)", opacity: 1 }}
-            onPointerDown={() => showHudAfterInteraction()}
-          >
-            {!isMobile && (
-            <button
-              type="button"
-              onClick={() => { void toggleMic(); showHudAfterInteraction(); }}
-              style={{ width: AUX_BTN, height: AUX_BTN }}
-              className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"}`}
-              title={micUiOn ? "Mute mic" : "Unmute mic"}
-              aria-label="Mic toggle"
-            >
-              {micUiOn ? "🎙️" : "🎙️✕"}
-            </button>
+         {/* Bottom-right vertical stack: Mic / Camera / Text */}
+<div
+  className={`fixed right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
+    hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+  }`}
+  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+  onPointerDown={() => showHudAfterInteraction()}
+>
+  {!isMobile && (
+    <button
+      type="button"
+      onClick={() => {
+        void toggleMic();
+        showHudAfterInteraction();
+      }}
+      style={{ width: AUX_BTN, height: AUX_BTN }}
+      className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
+        micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+      }`}
+      title={micUiOn ? "Mute mic" : "Unmute mic"}
+      aria-label="Mic toggle"
+    >
+      {micUiOn ? "🎙️" : "🎙️✕"}
+    </button>
+  )}
 
-                      )}
+  <button
+    type="button"
+    onClick={() => {
+      toggleCamera();
+      showHudAfterInteraction();
+    }}
+    disabled={roomType !== "video"}
+    style={{ width: AUX_BTN, height: AUX_BTN }}
+    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+    title="Camera"
+    aria-label="Camera toggle"
+  >
+    {camOn ? "📷" : "📷✕"}
+  </button>
 
-            <button
-              type="button"
-              onClick={() => { toggleCamera(); showHudAfterInteraction(); }}
-              disabled={roomType !== "video"}
-              style={{ width: AUX_BTN, height: AUX_BTN }}
-              className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
-              title="Camera"
-              aria-label="Camera toggle"
-            >
-              {camOn ? "📷" : "📷✕"}
-            </button>
+  <button
+    type="button"
+    onClick={() => {
+      setShowTextInput((v) => !v);
+      showHudAfterInteraction();
+    }}
+    style={{ width: AUX_BTN, height: AUX_BTN }}
+    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+    title={showTextInput ? "Close text" : "Send text"}
+    aria-label="Text"
+  >
+    💬
+  </button>
+</div>
 
-            <button
-              type="button"
-              onClick={() => { setShowTextInput((v) => !v); showHudAfterInteraction(); }}
-              style={{ width: AUX_BTN, height: AUX_BTN }}
-              className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
-              title={showTextInput ? "Close text" : "Send text"}
-              aria-label="Text"
-            >
-              💬
-            </button>
-          </div>
         </div>
       </div>
     </div>
   );
 }
+
 
 
 
