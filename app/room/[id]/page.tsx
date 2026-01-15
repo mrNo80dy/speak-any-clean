@@ -1120,7 +1120,7 @@ useEffect(() => {
               type="button"
               onClick={() => {
                 showHud();
-                setVideoQuality(!hdEnabled);
+                setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
                 hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
@@ -1858,6 +1858,7 @@ useEffect(() => {
     </div>
   );
 }
+
 
 
 
