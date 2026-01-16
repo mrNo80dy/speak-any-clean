@@ -123,49 +123,6 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
-  // HUD visibility (split): Top HUD, Bottom-right HUD, and PiP controls are independent.
-  const [topHudVisible, setTopHudVisible] = useState(true);
-  const [brHudVisible, setBrHudVisible] = useState(true);
-  const [pipHudVisible, setPipHudVisible] = useState(false);
-
-  const topHudTimerRef = useRef<number | null>(null);
-  const brHudTimerRef = useRef<number | null>(null);
-  const pipHudTimerRef = useRef<number | null>(null);
-
-  const showTopHudFor = useCallback((ms: number) => {
-    if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
-    setTopHudVisible(true);
-    topHudTimerRef.current = window.setTimeout(() => setTopHudVisible(false), ms);
-  }, []);
-
-  const showBrHudFor = useCallback((ms: number) => {
-    if (brHudTimerRef.current) window.clearTimeout(brHudTimerRef.current);
-    setBrHudVisible(true);
-    brHudTimerRef.current = window.setTimeout(() => setBrHudVisible(false), ms);
-  }, []);
-
-  const showPipHudFor = useCallback((ms: number) => {
-    if (pipHudTimerRef.current) window.clearTimeout(pipHudTimerRef.current);
-    setPipHudVisible(true);
-    pipHudTimerRef.current = window.setTimeout(() => setPipHudVisible(false), ms);
-  }, []);
-
-  const showTopHudInitial = useCallback(() => showTopHudFor(8000), [showTopHudFor]);
-  const showBrHudInitial = useCallback(() => showBrHudFor(8000), [showBrHudFor]);
-  const showTopHudAfterInteraction = useCallback(() => showTopHudFor(3000), [showTopHudFor]);
-  const showBrHudAfterInteraction = useCallback(() => showBrHudFor(3000), [showBrHudFor]);
-  const showPipHudAfterInteraction = useCallback(() => showPipHudFor(3000), [showPipHudFor]);
-
-  useEffect(() => {
-    showTopHudInitial();
-    showBrHudInitial();
-    return () => {
-      if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
-      if (brHudTimerRef.current) window.clearTimeout(brHudTimerRef.current);
-      if (pipHudTimerRef.current) window.clearTimeout(pipHudTimerRef.current);
-    };
-  }, [showTopHudInitial, showBrHudInitial]);
   
   // Stable per-tab clientId
   const clientId = useMemo(() => {
@@ -299,21 +256,21 @@ export default function RoomPage() {
     const isLandscapeMobile = isMobile && w > h;
 
     // Size caps
-    // Mobile portrait: keep PiP modest so it doesn't crowd PTT.
-    // Mobile landscape: give PiP more height (landscape tends to make PiP look tiny).
+    // Mobile portrait: keep PiP smaller so it never crowds PTT.
+    // Mobile landscape: make PiP noticeably larger (landscape tends to shrink it too much).
     const maxW = isMobile
       ? isLandscapeMobile
-        ? Math.min(w * 0.48, 340)
-        : Math.min(w * 0.46, 220)
+        ? Math.min(w * 0.56, 360)
+        : Math.min(w * 0.34, 180)
       : 260;
 
     const maxH = isMobile
       ? isLandscapeMobile
-        ? Math.min(h * 0.68, 360)
-        : Math.min(h * 0.32, 240)
+        ? Math.min(h * 0.75, 420)
+        : Math.min(h * 0.28, 200)
       : 160;
 
-    const minW = isMobile ? (isLandscapeMobile ? 170 : 130) : 190;
+    const minW = isMobile ? (isLandscapeMobile ? 200 : 110) : 190;
 
     let outW = maxW;
     let outH = outW / ar;
@@ -430,6 +387,16 @@ export default function RoomPage() {
       x: Math.min(Math.max(x, pad), maxX),
       y: Math.min(Math.max(y, pad), maxY),
     });
+  };
+
+  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
+    if (!pipDraggingRef.current) return;
+    pipDraggingRef.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    // keep controls visible briefly after dragging ends
+    wakePipControls(true);
   };
 
   
@@ -1061,6 +1028,25 @@ return (
       onWakeBottomRight={() => wakeBrHud()}
     />
 
+    {/* Mobile wake zones (tap only) */}
+    {isMobile && (
+      <>
+        {/* Top zone: wakes Top HUD only */}
+        <div
+          className="fixed left-0 right-0 top-0 z-40 pointer-events-auto"
+          style={{ height: '30vh' }}
+          onPointerDown={(e) => { e.stopPropagation(); wakeTopHud(true); }}
+        />
+
+        {/* Bottom-right zone: wakes Bottom-right HUD only */}
+        <div
+          className="fixed bottom-0 right-0 z-40 pointer-events-auto"
+          style={{ width: 140, height: 260 }}
+          onPointerDown={(e) => { e.stopPropagation(); wakeBrHud(true); }}
+        />
+      </>
+    )}
+
     <TopHud
   visible={topVisible}
   ccOn={ccOn}
@@ -1071,10 +1057,10 @@ return (
 }}
 
   onToggleSd={() => {
-    setHdEnabled();
+    setVideoQuality(hdEnabled ? "sd" : "hd");
     wakeTopHud(true);
   }}
-  onExit={onExit}
+  onExit={handleEndCall}
 />
 
 <BottomRightHud
@@ -1164,97 +1150,6 @@ return (
             </div>
           </div>
         )}
-
-        {/* Mobile: only the TOP strip brings HUD back (PTT should not pop it) */}
-        {isMobile && (
-          <div
-            className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
-            style={{ height: "30vh" }}
-          />
-        )}
-
-        {/* Top floating controls (icons only, no pills/words) */}
-        <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${!topHudVisible ? "opacity-0" : "opacity-100"}`}
-        >
-          <div className="relative flex items-center justify-center gap-2">
-            {/* Audio join pulse (shows when someone joins an audio room) */}
-            {joinPulse && (
-              <div className="absolute left-0 top-0 pointer-events-none">
-                <div className="inline-flex items-center justify-center w-10 h-10 text-white/90">
-                  👤
-                </div>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setCcOn((v) => !v)}
-              style={{ width: TOP_BTN, height: TOP_BTN }}
-              className={`pointer-events-auto flex items-center justify-center text-lg md:text-xl text-white/90 transition ${
-                ccOn ? "opacity-100 font-semibold" : "opacity-70"
-              }`}
-              title="Closed Captions"
-              aria-label="Closed Captions"
-            >
-              CC
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                showPipHudAfterInteraction();
-                setVideoQuality(hdEnabled ? "sd" : "hd");
-              }}
-              style={{ width: TOP_BTN, height: TOP_BTN }}
-              className={`pointer-events-auto flex items-center justify-center text-lg md:text-xl text-white/90 transition ${
-                hdEnabled ? "opacity-100 font-semibold" : "opacity-70"
-              }`}
-              title={hdEnabled ? "HD" : "SD"}
-              aria-label="Toggle HD"
-            >
-              {hdEnabled ? "HD" : "SD"}
-            </button>
-
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const url = window.location.href;
-                  // @ts-ignore
-                  if (navigator.share) {
-                    // @ts-ignore
-                    await navigator.share({ url });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                  }
-                } catch {
-                  try {
-                    const url = window.location.href;
-                    await navigator.clipboard.writeText(url);
-                  } catch {}
-                }
-              }}
-              style={{ width: TOP_BTN, height: TOP_BTN }}
-              className="pointer-events-auto flex items-center justify-center text-2xl text-white/90 opacity-80 hover:opacity-100"
-              title="Share"
-              aria-label="Share"
-            >
-              ↗
-            </button>
-
-            <button
-              type="button"
-              onClick={handleEndCall}
-              style={{ width: TOP_BTN, height: TOP_BTN }}
-              className="pointer-events-auto flex items-center justify-center text-2xl text-red-200 hover:text-red-100"
-              title="Exit"
-              aria-label="Exit"
-            >
-              📴
-            </button>
-          </div>
-        </header>
 
         <main className="absolute inset-0 pt-0 md:pt-14">
           {/* Debug Panel */}
@@ -1373,7 +1268,7 @@ return (
                   }}
                 />
 
-                {roomType === "video" && !pipPinned && !brHudVisible && (
+                {roomType === "video" && !pipPinned && !pipControlsVisible && (
                   <div
                     className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
@@ -1423,7 +1318,7 @@ return (
                             bottom: "calc(env(safe-area-inset-bottom) + 12px)",
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned || brHudVisible ? 1 : 0,
+                            opacity: pipPinned || pipControlsVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1435,7 +1330,7 @@ return (
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned || brHudVisible ? 1 : 0,
+                            opacity: pipPinned || pipControlsVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1445,6 +1340,8 @@ return (
                     onClick={(e) => { e.stopPropagation(); wakePipControls(); }}
                     onPointerDown={pipOnPointerDown}
                     onPointerMove={pipOnPointerMove}
+                    onPointerUp={pipOnPointerUpOrCancel}
+                    onPointerCancel={pipOnPointerUpOrCancel}
                     title="Your camera"
                     aria-label="Your camera"
                   >
@@ -1746,70 +1643,6 @@ onPointerCancel={() => {
               {micUiOn && <span className="text-2xl">🎙️</span>}
             </button>
           </div>
-
-        {/* Bottom-right wake zone (always tappable) */}
-<div
-  className="fixed right-0 bottom-0 z-40 pointer-events-auto"
-  style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
->
-  {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
-  <div
-    className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-      brHudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-    }`}
-    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-  >
-    {!isMobile && (
-      <button
-        type="button"
-        onClick={() => {
-          void toggleMic();
-          showBrHudAfterInteraction();
-        }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
-      className={`bg-transparent border-0 shadow-none flex items-center justify-center active:scale-[0.98] transition text-3xl ${
-        micUiOn ? "opacity-100" : "opacity-70"
-      }`}
-        title={micUiOn ? "Mute mic" : "Unmute mic"}
-        aria-label="Mic toggle"
-      >
-        {micUiOn ? "🎙️" : "🎙️✕"}
-      </button>
-    )}
-
-    {/* keep the rest of your buttons exactly as they are */}
-    <button
-      type="button"
-      onClick={() => {
-        toggleCamera();
-        showBrHudAfterInteraction();
-      }}
-      disabled={roomType !== "video"}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
-  className="bg-transparent border-0 shadow-none flex items-center justify-center active:scale-[0.98] transition text-3xl disabled:opacity-30"
-      title="Camera"
-      aria-label="Camera toggle"
-    >
-      {camOn ? "📷" : "📷✕"}
-    </button>
-
-    <button
-      type="button"
-      onClick={() => {
-        setShowTextInput((v) => !v);
-        showBrHudAfterInteraction();
-      }}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
-  className="bg-transparent border-0 shadow-none flex items-center justify-center active:scale-[0.98] transition text-3xl"
-      title={showTextInput ? "Close text" : "Send text"}
-      aria-label="Text"
-    >
-      💬
-    </button>
-  </div>
-</div>
-
-
         </div>
       </div>
     </div>
