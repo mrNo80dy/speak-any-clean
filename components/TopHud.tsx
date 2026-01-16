@@ -22,7 +22,11 @@ export function TopHud({ visible, ccOn, hdOn, onToggleCc, onToggleHd, onShare, o
           <span className={ccOn ? "text-emerald-400" : "opacity-40"}>CC</span>
         </IconButton>
 
-        {onShare && <IconButton label="Share" onClick={onShare}>↗</IconButton>}
+        {onShare && (
+  <IconButton label="Share" onClick={onShare}>
+    ↗
+  </IconButton>
+)}
 
         {/* HD Toggle */}
         <IconButton 
