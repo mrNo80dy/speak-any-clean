@@ -394,7 +394,7 @@ export default function RoomPage() {
   }, [pipPos]);
 
   const pipOnPointerDown = (e: React.PointerEvent) => {
-    showPipControls();
+    wakePipControls();
     if (isMobile) return; // mobile PiP is not draggable
     if (!pipPos) return;
 
@@ -1365,7 +1365,7 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                     }
                     onClick={(e) => {
                       e.stopPropagation();
-                      showPipControls();
+                      wakePipControls();
                     }}
                     aria-label="Show PiP"
                     title="Show PiP"
@@ -1402,7 +1402,7 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                             WebkitUserSelect: "none",
                           }
                     }
-                    onClick={(e) => { e.stopPropagation(); showPipControls(); }}
+                    onClick={(e) => { e.stopPropagation(); wakePipControls(); }}
                     onPointerDown={pipOnPointerDown}
                     onPointerMove={pipOnPointerMove}
                     onPointerUp={pipOnPointerUpOrCancel}
@@ -1432,7 +1432,7 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                               try {
                                 window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
                               } catch {}
-                              showPipControls();
+                              wakePipControls();
                             }}
                             className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
                               pipPinned ? "ring-1 ring-white/25" : "opacity-90"
@@ -1449,7 +1449,7 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                               onClick={(e) => {
                                 e.stopPropagation();
                                 flipCamera();
-                                showPipControls();
+                                wakePipControls();
                               }}
                               className="w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
                               title="Switch camera"
@@ -1780,6 +1780,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
