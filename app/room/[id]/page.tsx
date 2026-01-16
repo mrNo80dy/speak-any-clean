@@ -219,194 +219,7 @@ export default function RoomPage() {
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
-  // ---- Local preview (PiP) behavior -------------------------
-  // PiP stays visible by default. On PC it's draggable; on mobile it's fixed bottom-left.
-  // Controls for the PiP (pin/flip/cam) are *not* always visible: they only show when PiP is tapped.
-  const pipRef = useRef<HTMLDivElement | null>(null);
-  const pipDraggingRef = useRef(false);
-  const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
-
-  const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
-  
-  // PiP controls visibility (tap PiP / watermark to show)
-    const pipControlsTimerRef = useRef<number | null>(null);
-
-  const [pipAspect, setPipAspect] = useState<number>(16 / 9);
-  const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-
-  // Track viewport (for PiP sizing/positioning)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const update = () => setVp({ w: window.innerWidth || 0, h: window.innerHeight || 0 });
-    update();
-    window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
-  }, []);
-
-
-  const pipDims = useMemo(() => {
-    const w = vp.w || (typeof window !== "undefined" ? window.innerWidth || 360 : 360);
-    const h = vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640);
-    const ar = pipAspect && pipAspect > 0 ? pipAspect : 16 / 9; // width / height
-
-    const isLandscapeMobile = isMobile && w > h;
-
-    // Size caps
-    // Mobile portrait: keep PiP smaller so it never crowds PTT.
-    // Mobile landscape: make PiP noticeably larger (landscape tends to shrink it too much).
-    const maxW = isMobile
-      ? isLandscapeMobile
-        ? Math.min(w * 0.56, 360)
-        : Math.min(w * 0.34, 180)
-      : 260;
-
-    const maxH = isMobile
-      ? isLandscapeMobile
-        ? Math.min(h * 0.75, 420)
-        : Math.min(h * 0.28, 200)
-      : 160;
-
-    const minW = isMobile ? (isLandscapeMobile ? 200 : 110) : 190;
-
-    let outW = maxW;
-    let outH = outW / ar;
-
-    if (outH > maxH) {
-      outH = maxH;
-      outW = outH * ar;
-    }
-    if (outW < minW) {
-      outW = minW;
-      outH = outW / ar;
-      if (outH > maxH) {
-        outH = maxH;
-        outW = outH * ar;
-      }
-    }
-
-    return { w: Math.round(outW), h: Math.round(outH) };
-  }, [vp.w, vp.h, pipAspect, isMobile]);
-
-  const clearPipControlsTimer = () => {
-    if (pipControlsTimerRef.current) {
-      window.clearTimeout(pipControlsTimerRef.current);
-      pipControlsTimerRef.current = null;
-    }
-  };
-
-    // Set an initial position once we have a peer (1:1 view).
-  // Mobile: start top-left (selfie-like preview area).
-  // Desktop: start bottom-right, above the bottom dock.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    // Mobile PiP is fixed bottom-left (no stored position).
-    if (isMobile) return;
-    if (pipPos) return;
-    // Only relevant in 1:1 view (remote full + local PiP)
-    if (peerIds.length !== 1) return;
-
-    const pad = 12;
-    const dock = 120;
-
-    const w = window.innerWidth || 360;
-    const h = window.innerHeight || 640;
-
-    const x = Math.max(pad, w - pipDims.w - pad);
-    const y = Math.max(pad, h - pipDims.h - dock);
-    setPipPos({ x, y });
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peerIds.length, isMobile, pipDims.w, pipDims.h]);
-
-
-  // Keep PiP inside viewport on resize.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!pipPos) return;
-
-    const onResize = () => {
-      const el = pipRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const pad = 8;
-      const dock = 120;
-      const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
-      const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
-      setPipPos((p) =>
-        p
-          ? {
-              x: Math.min(Math.max(p.x, pad), maxX),
-              y: Math.min(Math.max(p.y, pad), maxY),
-            }
-          : p
-      );
-    };
-
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [pipPos]);
-
-  const pipOnPointerDown = (e: React.PointerEvent) => {
-    wakePipControls();
-    if (isMobile) return; // mobile PiP is not draggable
-    if (!pipPos) return;
-
-    pipDraggingRef.current = true;
-    // keep controls visible while dragging
-    clearPipControlsTimer();
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {}
-
-    pipDragOffsetRef.current = {
-      dx: e.clientX - pipPos.x,
-      dy: e.clientY - pipPos.y,
-    };
-  };
-
-  const pipOnPointerMove = (e: React.PointerEvent) => {
-    if (!pipDraggingRef.current) return;
-    const el = pipRef.current;
-    if (!el) return;
-
-    const rect = el.getBoundingClientRect();
-    const pad = 8;
-    const dock = 120;
-
-    const maxX = Math.max(pad, window.innerWidth - rect.width - pad);
-    const maxY = Math.max(pad, window.innerHeight - rect.height - dock);
-
-    const x = e.clientX - pipDragOffsetRef.current.dx;
-    const y = e.clientY - pipDragOffsetRef.current.dy;
-
-    setPipPos({
-      x: Math.min(Math.max(x, pad), maxX),
-      y: Math.min(Math.max(y, pad), maxY),
-    });
-  };
-
-  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
-    if (!pipDraggingRef.current) return;
-    pipDraggingRef.current = false;
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    // keep controls visible briefly after dragging ends
-    wakePipControls(true);
-  };
-
-  
-  // (PiP initial position handled above)
-
-
-  useEffect(() => {
-    return () => clearPipControlsTimer();
-  }, []);
-
+ 
   // Captions / text stream
   const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
   const [captionLines] = useState<number>(3);
@@ -630,30 +443,7 @@ export default function RoomPage() {
     stop,
   } = localMedia;
 
-  // Track local camera aspect ratio (so PiP can match what the device is actually sending)
-  useEffect(() => {
-    const s = localStreamRef.current;
-    const vt = s?.getVideoTracks?.()?.[0];
-    if (!vt) return;
-
-    const apply = () => {
-      try {
-        const st: any = vt.getSettings ? vt.getSettings() : {};
-        const w = Number(st.width || 0);
-        const h = Number(st.height || 0);
-        if (w > 0 && h > 0) {
-          setPipAspect(w / h);
-        }
-      } catch {}
-    };
-
-    apply();
-    // Some browsers update settings after a short delay.
-    const t = window.setTimeout(apply, 350);
-    return () => window.clearTimeout(t);
-  }, [camOn, joinCamOn]);
-
-
+  
   const { beforeConnect, toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
     roomType,
@@ -1669,6 +1459,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
