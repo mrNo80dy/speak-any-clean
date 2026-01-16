@@ -76,7 +76,7 @@ const size = isMobile
 
         {/* PiP controls */}
         {(controlsVisible || pinned) && (
-          <div className="absolute inset-0 flex items-start justify-end p-2 gap-2">
+          <div className="absolute inset-0 flex flex-col items-end p-2 gap-2">
             <button
               type="button"
               onClick={onTogglePin}
