@@ -79,8 +79,8 @@ function IconButton({
       title={label}
       onClick={onClick}
       className={`w-14 h-14 flex items-center justify-center text-white text-2xl select-none transition-opacity ${
-        active ? "opacity-100" : "opacity-70 hover:opacity-100"
-      } bg-transparent border-0 rounded-none shadow-none appearance-none`}
+  active ? "opacity-100" : "opacity-70 hover:opacity-100"
+} bg-black/0 border-0 rounded-2xl shadow-none appearance-none`}
     >
       {children}
     </button>
