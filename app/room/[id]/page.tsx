@@ -1071,7 +1071,7 @@ return (
 }}
 
   onToggleSd={() => {
-    hdEnabled();
+    toggleHD();
     wakeTopHud(true);
   }}
   onExit={onExit}
@@ -1815,6 +1815,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
