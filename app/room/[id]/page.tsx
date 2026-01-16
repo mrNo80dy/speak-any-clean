@@ -1007,6 +1007,21 @@ const TOP_BTN = isMobile ? 56 : 72;
   togglePipPinned,
 } = useHudController();
 
+  const onExit = async () => {
+  try {
+    // If you already have a cleanup/hangup function, call it here.
+    // Example candidates you might have:
+    // await leaveRoom();
+    // await hangup();
+    // await stopAllMedia();
+  } catch {}
+  // Always navigate away so Exit never "does nothing"
+  try {
+    router.push("/");
+  } catch {
+    window.location.href = "/";
+  }
+};
 
 
   // ---- Render -----------------------------------------------
@@ -1654,6 +1669,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
