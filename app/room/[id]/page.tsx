@@ -273,18 +273,24 @@ useEffect(() => {
     const h = vp.h || (typeof window !== "undefined" ? window.innerHeight || 640 : 640);
     const ar = pipAspect && pipAspect > 0 ? pipAspect : 16 / 9; // width / height
 
-    const isLandscape = isMobile && w > h;
+    // Mobile landscape tends to make the PiP feel tiny because the height is small.
+    // We deliberately scale PiP a bit larger in landscape so it stays usable.
+    const isLandscape = w > h;
 
     // Size caps
-    // Portrait mobile: keep PiP modest.
-    // Landscape mobile: increase height cap (landscape shortens viewport height and made PiP tiny).
     const maxW = isMobile
-      ? (isLandscape ? Math.min(w * 0.34, 260) : Math.min(w * 0.42, 200))
+      ? isLandscape
+        ? Math.min(w * 0.34, 260)
+        : Math.min(w * 0.42, 220)
       : 220;
+
     const maxH = isMobile
-      ? (isLandscape ? Math.min(h * 0.45, 240) : Math.min(h * 0.28, 220))
+      ? isLandscape
+        ? Math.min(h * 0.48, 200)
+        : Math.min(h * 0.28, 220)
       : 140;
-    const minW = isMobile ? (isLandscape ? 140 : 110) : 160;
+
+    const minW = isMobile ? (isLandscape ? 150 : 120) : 160;
 
     let outW = maxW;
     let outH = outW / ar;
@@ -904,17 +910,9 @@ useEffect(() => {
       }
 
       others.forEach((id) => {
-        if (peersRef.current.has(id)) return;
-
-        // Avoid offer glare: deterministically choose ONE side to initiate.
-        // The other side will wait and only respond to the incoming offer.
-        const iInitiate = clientId < id;
-        if (!iInitiate) {
-          log("webrtc: waiting for offer", { peer: id });
-          return;
+        if (!peersRef.current.has(id)) {
+          makeOffer(id, channel).catch(() => {});
         }
-
-        makeOffer(id, channel).catch(() => {});
       });
     },
   });
@@ -954,20 +952,6 @@ useEffect(() => {
 
   const firstRemoteId = peerIds[0] ?? null;
   const firstRemoteStream = firstRemoteId ? peerStreams[firstRemoteId] : null;
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  // Bind srcObject directly so remote video always updates when the stream appears/changes.
-  useEffect(() => {
-    const el = remoteVideoRef.current;
-    if (!el) return;
-    if (!firstRemoteStream) return;
-    if (el.srcObject !== firstRemoteStream) {
-      el.srcObject = firstRemoteStream as any;
-    }
-    // Some mobile browsers need an explicit play() after srcObject is set.
-    el.play().catch(() => {});
-  }, [firstRemoteStream]);
-
   const totalParticipants = peerIds.length + 1;
 
   const pillBase =
@@ -1139,7 +1123,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             {/* Audio join pulse (shows when someone joins an audio room) */}
             {joinPulse && (
               <div className="absolute left-0 top-0 pointer-events-none">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90">
+                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl text-white/90 drop-shadow">
                   👤
                 </div>
               </div>
@@ -1148,7 +1132,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
+              className={`pointer-events-auto w-11 h-11 rounded-xl bg-transparent text-sm md:text-base text-white/95 drop-shadow flex items-center justify-center transition ${
                 ccOn ? "ring-1 ring-white/25" : "opacity-90"
               }`}
               title="Closed Captions"
@@ -1163,7 +1147,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                 showHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
+              className={`pointer-events-auto w-11 h-11 rounded-xl bg-transparent text-sm md:text-base text-white/95 drop-shadow flex items-center justify-center transition ${
                 hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
               }`}
               title={hdEnabled ? "HD" : "SD"}
@@ -1191,7 +1175,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   } catch {}
                 }
               }}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+              className="pointer-events-auto w-11 h-11 rounded-xl bg-transparent text-white/95 drop-shadow flex items-center justify-center"
               title="Share"
               aria-label="Share"
             >
@@ -1201,7 +1185,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={handleEndCall}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
+              className="pointer-events-auto w-11 h-11 rounded-xl bg-transparent text-red-200 drop-shadow flex items-center justify-center"
               title="Exit"
               aria-label="Exit"
             >
@@ -1315,13 +1299,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             {/* 1 peer: remote full + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="absolute inset-0 h-full w-full object-contain"
-                />
+                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
                 <audio
                   data-remote
                   autoPlay
@@ -1509,7 +1487,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
                   ) : (
                     <>
-                      <FullBleedVideo key={`spot-${spotlightId}`} stream={peerStreams[spotlightId] ?? null} fit="contain" />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
                       <audio
                         data-remote
                         autoPlay
@@ -1689,23 +1667,25 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               title={micUiOn ? "Hold to talk" : "Mic muted"}
               style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
               className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} bg-black/30 backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
-             onPointerDown={(e) => {
-  if (!micUiOn) return; // Option A: indicator only when muted
-  e.preventDefault();
-  try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-  pttDown();
-}}
-onPointerUp={(e) => {
-  if (!micUiOn) return;
-  e.preventDefault();
-  try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-  pttUp();
-}}
-onPointerCancel={() => {
-  if (!micUiOn) return;
-  pttCancel();
-}}
-
+              onPointerDown={(e) => {
+                if (!micUiOn) return; // Option A: indicator only when muted
+                e.preventDefault();
+                try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+                pttDown();
+                showHudAfterInteraction();
+              }}
+              onPointerUp={(e) => {
+                if (!micUiOn) return;
+                e.preventDefault();
+                try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+                pttUp();
+                showHudAfterInteraction();
+              }}
+              onPointerCancel={() => {
+                if (!micUiOn) return;
+                pttCancel();
+                showHudAfterInteraction();
+              }}
               onContextMenu={(e) => e.preventDefault()}
             >
               {/* Mic icon disappears when muted */}
@@ -1713,76 +1693,67 @@ onPointerCancel={() => {
             </button>
           </div>
 
-        {/* Bottom-right wake zone (always tappable) */}
+         {/* Bottom-right vertical stack: Mic / Camera / Text */}
 <div
-  className="fixed right-0 bottom-0 z-40 pointer-events-auto"
-  style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
+  className={`fixed right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
+    hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+  }`}
+  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
   onPointerDown={() => showHudAfterInteraction()}
 >
-  {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
-  <div
-    className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-      hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-    }`}
-    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+  {!isMobile && (
+    <button
+      type="button"
+      onClick={() => {
+        void toggleMic();
+        showHudAfterInteraction();
+      }}
+      style={{ width: AUX_BTN, height: AUX_BTN }}
+      className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
+        micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+      }`}
+      title={micUiOn ? "Mute mic" : "Unmute mic"}
+      aria-label="Mic toggle"
+    >
+      {micUiOn ? "🎙️" : "🎙️✕"}
+    </button>
+  )}
+
+  <button
+    type="button"
+    onClick={() => {
+      toggleCamera();
+      showHudAfterInteraction();
+    }}
+    disabled={roomType !== "video"}
+    style={{ width: AUX_BTN, height: AUX_BTN }}
+    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
+    title="Camera"
+    aria-label="Camera toggle"
   >
-    {!isMobile && (
-      <button
-        type="button"
-        onClick={() => {
-          void toggleMic();
-          showHudAfterInteraction();
-        }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
-        className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
-          micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
-        }`}
-        title={micUiOn ? "Mute mic" : "Unmute mic"}
-        aria-label="Mic toggle"
-      >
-        {micUiOn ? "🎙️" : "🎙️✕"}
-      </button>
-    )}
+    {camOn ? "📷" : "📷✕"}
+  </button>
 
-    {/* keep the rest of your buttons exactly as they are */}
-    <button
-      type="button"
-      onClick={() => {
-        toggleCamera();
-        showHudAfterInteraction();
-      }}
-      disabled={roomType !== "video"}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
-      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
-      title="Camera"
-      aria-label="Camera toggle"
-    >
-      {camOn ? "📷" : "📷✕"}
-    </button>
-
-    <button
-      type="button"
-      onClick={() => {
-        setShowTextInput((v) => !v);
-        showHudAfterInteraction();
-      }}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
-      className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
-      title={showTextInput ? "Close text" : "Send text"}
-      aria-label="Text"
-    >
-      💬
-    </button>
-  </div>
+  <button
+    type="button"
+    onClick={() => {
+      setShowTextInput((v) => !v);
+      showHudAfterInteraction();
+    }}
+    style={{ width: AUX_BTN, height: AUX_BTN }}
+    className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
+    title={showTextInput ? "Close text" : "Send text"}
+    aria-label="Text"
+  >
+    💬
+  </button>
 </div>
-
 
         </div>
       </div>
     </div>
   );
 }
-
 
 
 
