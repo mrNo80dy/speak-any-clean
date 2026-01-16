@@ -217,6 +217,9 @@ useEffect(() => {
     setPttDock("bottom");
     setPttT(0);
   }, [isMobile]);
+  // Optional persisted PiP position (dragging not implemented here; fallback values are used)
+  const pipPos: { x: number; y: number } | null = null;
+
 
   const displayNameRef = useRef<string>("You");
 
