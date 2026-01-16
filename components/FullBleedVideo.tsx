@@ -23,11 +23,12 @@ export default function FullBleedVideo({
 
   const [isMobilePortrait, setIsMobilePortrait] = useState(false);
   const [isPortraitStream, setIsPortraitStream] = useState(false);
-  // This state forces a re-render when tracks are enabled/disabled
-  const [, setTick] = useState(0); 
+  
+  // This "tick" forces a re-render when a track is enabled/disabled
+  const [tick, setTick] = useState(0); 
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || typeof navigator === "undefined") return;
     const isMobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const update = () => {
       const portrait = window.innerHeight >= window.innerWidth;
@@ -38,18 +39,7 @@ export default function FullBleedVideo({
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Track orientation
-  useEffect(() => {
-    if (!stream) {
-      setIsPortraitStream(false);
-      return;
-    }
-    const vt = stream.getVideoTracks()[0];
-    const settings = vt?.getSettings();
-    setIsPortraitStream(!!(settings?.height && settings?.width && settings.height > settings.width));
-  }, [stream]);
-
-  // FIX: Force video playback when tracks unmute
+  // FIX: Force Re-binding when tracks enable
   useEffect(() => {
     const s = stream;
     if (!s) return;
@@ -58,6 +48,8 @@ export default function FullBleedVideo({
     const fg = fgRef.current;
 
     const tracks = s.getVideoTracks();
+    
+    // When a track is enabled, we need to "kick" the video element to play
     const handleTrackChange = () => {
       setTick(t => t + 1);
       if (fg) fg.play().catch(() => {});
@@ -66,6 +58,7 @@ export default function FullBleedVideo({
 
     tracks.forEach(t => {
       t.addEventListener('unmute', handleTrackChange);
+      t.addEventListener('mute', handleTrackChange);
     });
 
     if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
@@ -85,8 +78,22 @@ export default function FullBleedVideo({
     }
 
     return () => {
-      tracks.forEach(t => t.removeEventListener('unmute', handleTrackChange));
+      tracks.forEach(t => {
+        t.removeEventListener('unmute', handleTrackChange);
+        t.removeEventListener('mute', handleTrackChange);
+      });
     };
+  }, [stream]);
+
+  // Orientation detection
+  useEffect(() => {
+    if (!stream) {
+      setIsPortraitStream(false);
+      return;
+    }
+    const vt = stream.getVideoTracks()[0];
+    const settings = vt?.getSettings();
+    setIsPortraitStream(!!(settings?.height && settings?.width && settings.height > settings.width));
   }, [stream]);
 
   const resolvedFit = useMemo(() => {
