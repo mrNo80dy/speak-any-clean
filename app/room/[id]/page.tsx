@@ -16,23 +16,17 @@ export default function RoomPage() {
   const router = useRouter();
   const roomId = params?.id;
 
-  const clientId = useMemo(() => {
-    if (typeof window === "undefined") return "server";
-    let id = sessionStorage.getItem("as_client_id");
-    if (!id) {
-      id = crypto.randomUUID();
-      sessionStorage.setItem("as_client_id", id);
-    }
-    return id;
-  }, []);
-
+  // 1. App State
+  const [hasJoined, setHasJoined] = useState(false);
   const [ccOn, setCcOn] = useState(true);
   const [showTextInput, setShowTextInput] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
+  const [isTalking, setIsTalking] = useState(false);
 
   const { messages } = useAnySpeakMessages({ max: 20 });
   const { topVisible, brVisible, wakeTopHud, wakeBrHud } = useHudController();
 
+  // 2. Media Hooks
   const {
     localStreamRef,
     camOn,
@@ -43,44 +37,68 @@ export default function RoomPage() {
     stop,
   } = useLocalMedia({ wantVideo: true });
 
-  const { 
-    toggleCamera, 
-    hdEnabled, 
-    setVideoQuality 
-  } = useCamera({
-    isMobile: false, 
+  const { toggleCamera, hdEnabled, setVideoQuality } = useCamera({
+    isMobile: true, // This should ideally be detected via UserAgent
     roomType: "video",
     acquire,
     localStreamRef,
     setCamEnabled
   });
 
-  // Start Media on Mount
-  useEffect(() => {
-    if (!roomId) return;
-    const init = async () => {
-      try {
-        await acquire();
-        // Reset state to ensure video element binds
-        setCamEnabled(false);
-        setMicEnabled(true);
-        setTimeout(() => {
-          setCamEnabled(true);
-          setStreamVersion(v => v + 1);
-        }, 150);
-      } catch (e) {
-        console.error("Failed to acquire media", e);
-      }
-    };
-    init();
-    return () => stop();
-  }, [roomId, acquire, setCamEnabled, setMicEnabled, stop]);
+  // 3. Actions
+  const handleJoin = async (video: boolean) => {
+    try {
+      await acquire();
+      setCamEnabled(video);
+      setMicEnabled(true);
+      setHasJoined(true);
+      setStreamVersion(v => v + 1);
+    } catch (e) {
+      console.error("Join failed", e);
+    }
+  };
+
+  const handleShare = useCallback(() => {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({
+        title: "Join my AnySpeak Room",
+        url: window.location.href,
+      }).catch(() => {});
+    }
+  }, []);
 
   const handleExit = useCallback(() => {
     stop();
     router.push("/");
   }, [router, stop]);
 
+  // Cleanup
+  useEffect(() => { return () => stop(); }, [stop]);
+
+  // --- LOBBY UI ---
+  if (!hasJoined) {
+    return (
+      <div className="h-[100dvh] w-screen bg-black flex flex-col items-center justify-center p-6 text-center">
+        <h1 className="text-2xl font-bold mb-8">Ready to join?</h1>
+        <div className="flex flex-col gap-4 w-full max-w-xs">
+          <button 
+            onClick={() => handleJoin(true)}
+            className="bg-emerald-600 hover:bg-emerald-500 py-4 rounded-2xl font-bold transition-all"
+          >
+            Join with Camera
+          </button>
+          <button 
+            onClick={() => handleJoin(false)}
+            className="bg-white/10 hover:bg-white/20 py-4 rounded-2xl font-bold transition-all"
+          >
+            Join Audio Only
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- ROOM UI ---
   return (
     <div 
       className="h-[100dvh] w-screen bg-black text-white overflow-hidden relative select-none"
@@ -96,19 +114,28 @@ export default function RoomPage() {
 
         {/* CC Overlay */}
         {ccOn && messages.length > 0 && (
-          <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
+          <div className="absolute inset-x-0 bottom-40 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
             {messages.slice(-2).map((m) => (
-              <div 
-                key={m.id} 
-                className="bg-black/70 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/10 max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-300"
-              >
-                <p className="text-[17px] font-medium leading-snug text-center text-white drop-shadow-md">
-                  {m.translatedText || ""}
-                </p>
+              <div key={m.id} className="bg-black/70 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/10 max-w-[85%]">
+                <p className="text-[17px] font-medium text-center">{m.translatedText || ""}</p>
               </div>
             ))}
           </div>
         )}
+
+        {/* THE PTT HOLLOW RING (For Mobile/Phone) */}
+        <div className="absolute inset-x-0 bottom-12 flex justify-center z-30 pointer-events-none">
+          <button
+            onPointerDown={() => setIsTalking(true)}
+            onPointerUp={() => setIsTalking(false)}
+            onPointerLeave={() => setIsTalking(false)}
+            className={`w-24 h-24 rounded-full border-4 transition-all pointer-events-auto flex items-center justify-center ${
+              isTalking ? "bg-emerald-500 border-emerald-400 scale-110 shadow-[0_0_30px_rgba(16,185,129,0.5)]" : "bg-transparent border-white/20"
+            }`}
+          >
+             <span className="text-3xl">{isTalking ? "🎙️" : "⭕"}</span>
+          </button>
+        </div>
       </main>
 
       <TopHud 
@@ -117,6 +144,7 @@ export default function RoomPage() {
         hdOn={hdEnabled} 
         onToggleCc={() => setCcOn(!ccOn)} 
         onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} 
+        onShare={handleShare}
         onExit={handleExit} 
       />
 
@@ -130,19 +158,6 @@ export default function RoomPage() {
         onToggleMic={() => setMicEnabled(!micOn)} 
         onToggleText={() => setShowTextInput(!showTextInput)} 
       />
-
-      {showTextInput && (
-        <div className="absolute inset-x-0 bottom-24 px-4 z-40 flex justify-center">
-           <div className="bg-white/10 backdrop-blur-lg p-2 rounded-full border border-white/20 w-full max-w-md">
-              <input 
-                autoFocus
-                className="bg-transparent w-full px-4 py-2 outline-none text-white placeholder:text-white/40"
-                placeholder="Type a message..."
-                onKeyDown={(e) => { if (e.key === 'Enter') setShowTextInput(false); }}
-              />
-           </div>
-        </div>
-      )}
     </div>
   );
 }
