@@ -495,7 +495,7 @@ useEffect(() => {
   } = localMedia;
 
 
-  const { beforeConnect, toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
+  const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
     roomType,
     joinCamOn,
@@ -649,7 +649,6 @@ useEffect(() => {
     displayNameRef,
     log,
     teardownPeers,
-    beforeConnect,
     onWebrtc: async (message, channel) => {
       const payload = message?.payload as WebRTCPayload | undefined;
       if (!payload) return;
