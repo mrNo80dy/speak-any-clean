@@ -498,7 +498,6 @@ useEffect(() => {
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
     roomType,
-    joinCamOn,
     acquire: async () => {
       return await acquire();
     },
