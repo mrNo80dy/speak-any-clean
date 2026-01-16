@@ -21,7 +21,8 @@ import { PipView } from "@/components/PipView";
 import { PttButton } from "@/components/PttButton";
 import { HudWakeZones } from "@/components/HudWakeZones";
 
-// --- Types ---
+// --- Types & Interfaces ---
+
 type WebRTCPayload = {
   type: "offer" | "answer" | "ice";
   from: string;
@@ -41,6 +42,14 @@ type Peer = AnySpeakPeer;
 type PeerStreams = Record<string, MediaStream>;
 type RoomType = "audio" | "video";
 type RoomInfo = { code: string | null; room_type: RoomType; };
+
+/**
+ * Data shape from the Supabase 'rooms' table
+ */
+interface RoomRow {
+  code: string | null;
+  room_type: string;
+}
 
 // --- Helpers ---
 
@@ -77,7 +86,7 @@ async function translateText(fromLang: string, toLang: string, text: string) {
   }
 }
 
-// --- Main Page Component ---
+// --- Main Component ---
 
 export default function RoomPage() {
   const router = useRouter();
@@ -87,7 +96,7 @@ export default function RoomPage() {
   const debugEnabled = searchParams?.get("debug") === "1";
   const debugKey = debugEnabled ? "debug" : "normal";
 
-  // Device context
+  // Identity & Environment
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -102,7 +111,7 @@ export default function RoomPage() {
     return id;
   }, []);
 
-  // --- REFS ---
+  // --- Refs (Stability) ---
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const userTouchedMicRef = useRef(false);
@@ -115,7 +124,7 @@ export default function RoomPage() {
   const speakLangRef = useRef<string>("en-US");
   const targetLangRef = useRef<string>("en-US");
 
-  // --- STATE ---
+  // --- State ---
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
@@ -128,7 +137,7 @@ export default function RoomPage() {
   const [textInput, setTextInput] = useState("");
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
 
-  // HUD Controller logic
+  // HUD Visibility Controller
   const {
     topVisible,
     brVisible,
@@ -143,10 +152,10 @@ export default function RoomPage() {
   const roomType: RoomType = roomInfo?.room_type ?? "audio";
   const prejoinDone = roomType === "audio" ? true : joinCamOn !== null;
 
-  const log = (msg: string, rest: any = {}) => {
+  const log = useCallback((msg: string, rest: any = {}) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
     setLogs((l) => [line, ...l].slice(0, 50));
-  };
+  }, []);
 
   // --- Language Setup ---
   const initialLang = useMemo(() => {
@@ -163,7 +172,7 @@ export default function RoomPage() {
     displayNameRef.current = displayName;
   }, [speakLang, targetLang, displayName]);
 
-  // --- Message & TTS Logic ---
+  // --- Core Hooks ---
   const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
   const { speakText, unlockTts } = useAnySpeakTts({
     getLang: () => targetLangRef.current,
@@ -198,11 +207,10 @@ export default function RoomPage() {
         text,
         lang: recLang,
         name: displayNameRef.current,
-      },
+      } as TranscriptPayload,
     });
   };
 
-  // --- Local Media Hook ---
   const { mode } = useCallMode({
     modeParam: roomType === "video" ? "video" : "audio",
     participantCount: peerIds.length + 1,
@@ -220,10 +228,8 @@ export default function RoomPage() {
     acquire,
     setMicEnabled,
     setCamEnabled,
-    attachLocalVideo,
   } = localMedia;
 
-  // --- Camera Management Hook ---
   const {
     toggleCamera,
     flipCamera,
@@ -241,7 +247,6 @@ export default function RoomPage() {
     log,
   });
 
-  // --- Speech-to-Text Hook ---
   const {
     sttListening,
     toggleMic,
@@ -263,7 +268,6 @@ export default function RoomPage() {
     onFinalTranscript: sendFinalTranscript,
   });
 
-  // --- WebRTC signaling Hook ---
   const {
     makeOffer,
     handleOffer,
@@ -283,7 +287,6 @@ export default function RoomPage() {
     },
   });
 
-  // --- Realtime / Supabase Hook ---
   const { channelRef } = useAnySpeakRealtime({
     roomId: roomId || "",
     clientId,
@@ -293,7 +296,6 @@ export default function RoomPage() {
     debugKey,
     displayNameRef,
     log,
-    // Fix for the build error: implementing teardownPeers
     teardownPeers: (id: string) => {
       const peer = peersRef.current.get(id);
       if (peer) {
@@ -305,7 +307,7 @@ export default function RoomPage() {
           delete next[id];
           return next;
         });
-        log(`Peer cleaned up: ${id}`);
+        log(`Cleanup peer: ${id}`);
       }
     },
     onPresenceSync: (channel) => {
@@ -370,19 +372,22 @@ export default function RoomPage() {
     },
   });
 
-  // --- Lifecyle Effects ---
+  // --- Data Fetching & Lifecyle ---
 
   useEffect(() => {
     if (!roomId) return;
+    
+    // Fixed: Explicit type for Supabase data to resolve build error
     supabase
       .from("rooms")
       .select("code, room_type")
       .eq("id", roomId)
       .maybeSingle()
-      .then(({ data }) => {
+      .then(({ data, error }: { data: RoomRow | null; error: any }) => {
         if (data) {
           setRoomInfo({ code: data.code, room_type: data.room_type as RoomType });
         }
+        if (error) console.error("Room fetch error:", error);
       });
   }, [roomId]);
 
@@ -394,28 +399,26 @@ export default function RoomPage() {
     };
   }, [stopAllStt]);
 
-  // UI status for Mic
   const micUiOn = isMobile ? true : sttListening;
 
-  // --- RENDERING ---
+  // --- Rendering ---
 
-  // Handle Pre-join screen for Video rooms
   if (roomType === "video" && joinCamOn === null) {
     return (
       <div className="flex flex-col items-center justify-center h-[100dvh] bg-black text-white p-6">
-        <h1 className="text-2xl font-bold mb-8">Ready to join?</h1>
+        <h1 className="text-2xl font-bold mb-8">Join the conversation</h1>
         <div className="flex gap-4">
           <button
             onClick={() => setJoinCamOn(true)}
-            className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold text-lg active:scale-95 transition"
+            className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg"
           >
-            Start with Camera
+            Camera On
           </button>
           <button
             onClick={() => setJoinCamOn(false)}
-            className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold text-lg active:scale-95 transition"
+            className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg"
           >
-            Start Muted
+            Camera Off
           </button>
         </div>
       </div>
@@ -424,20 +427,19 @@ export default function RoomPage() {
 
   return (
     <div 
-      className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden relative touch-none"
+      className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden relative touch-none select-none"
       onPointerDown={() => {
-        // Broad wake call for non-interactive areas
         wakeTopHud();
         wakeBrHud();
       }}
     >
-      {/* HUD Wake Zones (z-10) - Corrected Z-Index to stay below buttons */}
+      {/* 1. Wake Zones (z-10) - Ensures tapping near edges wakes HUD */}
       <HudWakeZones 
         onWakeTop={() => wakeTopHud(true)} 
         onWakeBottomRight={() => wakeBrHud(true)} 
       />
 
-      {/* Interactive Top HUD (z-30) */}
+      {/* 2. Primary UI Overlays (z-30) */}
       <TopHud
         visible={topVisible}
         ccOn={ccOn}
@@ -451,7 +453,6 @@ export default function RoomPage() {
         onExit={() => router.push("/")}
       />
 
-      {/* Interactive Bottom Right HUD (z-30) */}
       <BottomRightHud
         visible={brVisible}
         isMobile={isMobile}
@@ -463,7 +464,7 @@ export default function RoomPage() {
         onToggleText={() => { setShowTextInput(!showTextInput); wakeBrHud(); }}
       />
 
-      {/* Main Content Area (z-0) */}
+      {/* 3. Main Stream Area (z-0) */}
       <main className="absolute inset-0 z-0">
         {peerIds.length === 0 ? (
           <div className="relative h-full w-full">
@@ -487,19 +488,19 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* CC / Caption Overlay (z-20) */}
+        {/* CC Display (z-20) */}
         {ccOn && messages.length > 0 && (
-          <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col gap-3 items-center">
+          <div className="absolute inset-x-0 bottom-36 px-6 z-20 pointer-events-none flex flex-col gap-3 items-center">
             {messages.slice(-2).map((m) => (
               <div 
                 key={m.id} 
                 className="max-w-[90%] md:max-w-xl animate-in fade-in slide-in-from-bottom-2 duration-300"
               >
-                <div className="bg-black/50 backdrop-blur-xl border border-white/10 px-4 py-2.5 rounded-2xl shadow-2xl">
-                  <p className="text-[10px] font-bold tracking-widest uppercase opacity-40 mb-0.5">
+                <div className="bg-black/50 backdrop-blur-2xl border border-white/10 px-5 py-3 rounded-2xl shadow-2xl">
+                  <p className="text-[10px] font-bold tracking-[0.15em] uppercase opacity-40 mb-1">
                     {m.fromName}
                   </p>
-                  <p className="text-[15px] leading-snug font-medium">
+                  <p className="text-[16px] leading-tight font-medium">
                     {m.translatedText}
                   </p>
                 </div>
@@ -509,7 +510,7 @@ export default function RoomPage() {
         )}
       </main>
 
-      {/* Push-to-Talk Button (z-40) */}
+      {/* 4. Interaction Buttons (z-40 & z-50) */}
       {isMobile && (
         <PttButton
           isPressed={sttListening}
@@ -519,11 +520,10 @@ export default function RoomPage() {
         />
       )}
 
-      {/* Text Chat Input Overlay (z-50) */}
       {showTextInput && (
         <div className="absolute inset-x-0 bottom-24 z-50 flex justify-center px-4 animate-in fade-in zoom-in-95 duration-200">
           <form 
-            className="flex gap-2 w-full max-lg bg-black/80 backdrop-blur-2xl p-2 rounded-full border border-white/10 shadow-2xl" 
+            className="flex gap-2 w-full max-w-lg bg-black/90 backdrop-blur-3xl p-2 rounded-full border border-white/10 shadow-2xl" 
             onSubmit={(e) => {
               e.preventDefault();
               if (textInput.trim()) {
@@ -538,11 +538,11 @@ export default function RoomPage() {
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
               placeholder="Type a message..."
-              className="flex-1 bg-transparent border-0 outline-none px-4 text-sm text-white"
+              className="flex-1 bg-transparent border-0 outline-none px-5 text-sm text-white"
             />
             <button 
               type="submit"
-              className="bg-emerald-600 h-10 w-10 rounded-full flex items-center justify-center active:scale-90 transition text-white"
+              className="bg-emerald-600 h-11 w-11 rounded-full flex items-center justify-center active:scale-90 transition text-white text-lg"
             >
               ↑
             </button>
@@ -550,11 +550,11 @@ export default function RoomPage() {
         </div>
       )}
 
-      {/* System Debug Logs */}
+      {/* 5. Debug Console */}
       {debugEnabled && (
-        <div className="absolute top-20 left-4 z-[100] bg-black/80 p-2 text-[10px] font-mono max-h-40 overflow-y-auto w-64 pointer-events-none opacity-50 rounded-lg">
+        <div className="absolute top-24 left-4 z-[100] bg-black/80 p-3 text-[10px] font-mono max-h-48 overflow-y-auto w-72 pointer-events-none opacity-40 rounded-xl border border-white/5">
           {logs.map((l, i) => (
-            <div key={i}>{l}</div>
+            <div key={i} className="mb-0.5">{l}</div>
           ))}
         </div>
       )}
