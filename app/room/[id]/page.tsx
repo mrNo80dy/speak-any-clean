@@ -5,7 +5,6 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useCamera } from "@/hooks/useCamera";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
-import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useHudController } from "@/hooks/useHudController";
 import FullBleedVideo from "@/components/FullBleedVideo";
 import { TopHud } from "@/components/TopHud";
@@ -17,7 +16,7 @@ export default function RoomPage() {
   const router = useRouter();
   const roomId = params?.id;
 
-  // 1. Session & State
+  // 1. Session ID for the user
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     let id = sessionStorage.getItem("as_client_id");
@@ -32,8 +31,8 @@ export default function RoomPage() {
   const [showTextInput, setShowTextInput] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
 
-  // 2. Hooks
-  const { messages, pushMessage } = useAnySpeakMessages({ max: 20 });
+  // 2. Data & UI Hooks
+  const { messages } = useAnySpeakMessages({ max: 20 });
   const { topVisible, brVisible, wakeTopHud, wakeBrHud } = useHudController();
 
   // Local Media Handling
@@ -45,10 +44,7 @@ export default function RoomPage() {
     setCamEnabled,
     setMicEnabled,
     stop,
-  } = useLocalMedia({ 
-    wantVideo: true,
-    onStreamReady: () => setStreamVersion(v => v + 1)
-  });
+  } = useLocalMedia({ wantVideo: true });
 
   // Camera Engine (HD/SD switching & Toggling)
   const { 
@@ -56,34 +52,35 @@ export default function RoomPage() {
     hdEnabled, 
     setVideoQuality 
   } = useCamera({
-    isMobile: false, // Set based on your UA detection if needed
+    isMobile: false, 
     roomType: "video",
     acquire,
     localStreamRef,
     setCamEnabled,
+    joinCamOn: true
   });
 
-  // 3. Life Cycle
+  // 3. Lifecycle Logic
+  
+  // Start Camera on Mount
   useEffect(() => {
     if (!roomId) return;
-
-    // Start media immediately on mount
     const init = async () => {
       try {
         await acquire();
-        // Force cam on initially
         setCamEnabled(true);
         setMicEnabled(true);
+        // Update version to trigger video element mount
+        setStreamVersion(v => v + 1);
       } catch (e) {
         console.error("Failed to acquire media", e);
       }
     };
-
     init();
     return () => stop();
   }, [roomId, acquire, setCamEnabled, setMicEnabled, stop]);
 
-  // Handle Auto-Share (if link contains ?autoshare=1)
+  // Handle Share API
   useEffect(() => {
     if (searchParams?.get("autoshare") === "1" && typeof navigator !== "undefined" && navigator.share) {
       navigator.share({ url: window.location.href }).catch(() => {});
@@ -100,7 +97,7 @@ export default function RoomPage() {
       className="h-[100dvh] w-screen bg-black text-white overflow-hidden relative select-none"
       onPointerDown={() => { wakeTopHud(); wakeBrHud(); }}
     >
-      {/* 1. Main Video Layer */}
+      {/* Main Video Layer */}
       <main className="absolute inset-0 z-0">
         <FullBleedVideo 
           key={`v-${streamVersion}`}
@@ -109,7 +106,7 @@ export default function RoomPage() {
           fit="cover" 
         />
 
-        {/* 2. Closed Captions (CC) Overlay */}
+        {/* Closed Captions (CC) Overlay */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
             {messages.slice(-2).map((m) => (
@@ -126,7 +123,7 @@ export default function RoomPage() {
         )}
       </main>
 
-      {/* 3. User Interface (HUD) */}
+      {/* Interface (HUD) */}
       <TopHud 
         visible={topVisible} 
         ccOn={ccOn} 
@@ -147,10 +144,9 @@ export default function RoomPage() {
         onToggleText={() => setShowTextInput(!showTextInput)} 
       />
 
-      {/* 4. Chat Input Layer */}
+      {/* Chat Input Layer */}
       {showTextInput && (
         <div className="absolute inset-x-0 bottom-24 px-4 z-40 flex justify-center">
-           {/* Your chat input component would go here */}
            <div className="bg-white/10 backdrop-blur-lg p-2 rounded-full border border-white/20 w-full max-w-md">
               <input 
                 autoFocus
