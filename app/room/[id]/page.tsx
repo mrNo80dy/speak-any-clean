@@ -118,25 +118,48 @@ export default function RoomPage() {
 }, []);
 
 // Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
-const [hudVisible, setHudVisible] = useState(true);
-const hudTimerRef = useRef<number | null>(null);
+  // HUD visibility (split): Top HUD, Bottom-right HUD, and PiP controls are independent.
+  const [topHudVisible, setTopHudVisible] = useState(true);
+  const [brHudVisible, setBrHudVisible] = useState(true);
+  const [pipHudVisible, setPipHudVisible] = useState(false);
 
-const showHudFor = useCallback((ms: number) => {
-  setHudVisible(true);
-  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
-}, []);
+  const topHudTimerRef = useRef<number | null>(null);
+  const brHudTimerRef = useRef<number | null>(null);
+  const pipHudTimerRef = useRef<number | null>(null);
 
-const showHudInitial = useCallback(() => showHudFor(8000), [showHudFor]);
-const showHudAfterInteraction = useCallback(() => showHudFor(3000), [showHudFor]);
+  const showTopHudFor = useCallback((ms: number) => {
+    if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
+    setTopHudVisible(true);
+    topHudTimerRef.current = window.setTimeout(() => setTopHudVisible(false), ms);
+  }, []);
 
+  const showBrHudFor = useCallback((ms: number) => {
+    if (brHudTimerRef.current) window.clearTimeout(brHudTimerRef.current);
+    setBrHudVisible(true);
+    brHudTimerRef.current = window.setTimeout(() => setBrHudVisible(false), ms);
+  }, []);
 
-useEffect(() => {
-  showHudInitial();
-  return () => {
-    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  };
-}, [showHudInitial]);
+  const showPipHudFor = useCallback((ms: number) => {
+    if (pipHudTimerRef.current) window.clearTimeout(pipHudTimerRef.current);
+    setPipHudVisible(true);
+    pipHudTimerRef.current = window.setTimeout(() => setPipHudVisible(false), ms);
+  }, []);
+
+  const showTopHudInitial = useCallback(() => showTopHudFor(8000), [showTopHudFor]);
+  const showBrHudInitial = useCallback(() => showBrHudFor(8000), [showBrHudFor]);
+  const showTopHudAfterInteraction = useCallback(() => showTopHudFor(3000), [showTopHudFor]);
+  const showBrHudAfterInteraction = useCallback(() => showBrHudFor(3000), [showBrHudFor]);
+  const showPipHudAfterInteraction = useCallback(() => showPipHudFor(3000), [showPipHudFor]);
+
+  useEffect(() => {
+    showTopHudInitial();
+    showBrHudInitial();
+    return () => {
+      if (topHudTimerRef.current) window.clearTimeout(topHudTimerRef.current);
+      if (brHudTimerRef.current) window.clearTimeout(brHudTimerRef.current);
+      if (pipHudTimerRef.current) window.clearTimeout(pipHudTimerRef.current);
+    };
+  }, [showTopHudInitial, showBrHudInitial]);
   
   // Stable per-tab clientId
   const clientId = useMemo(() => {
@@ -1035,7 +1058,8 @@ const TOP_BTN = isMobile ? 56 : 72;
         if (isMobile) return;
         const y = e.clientY;
         const h = window.innerHeight || 0;
-        if (y < 96 || y > h - 96) showHudAfterInteraction();
+        if (y < 96) showTopHudAfterInteraction();
+        if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
       }}
     >
       <div className="relative h-full w-full overflow-hidden">
@@ -1045,7 +1069,7 @@ const TOP_BTN = isMobile ? 56 : 72;
             <div className="absolute inset-0">
               {localStreamRef.current ? (
                 <div className="absolute inset-0 opacity-60">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
                 </div>
               ) : (
                 <div className="absolute inset-0 bg-black" />
@@ -1111,15 +1135,12 @@ const TOP_BTN = isMobile ? 56 : 72;
           <div
             className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
             style={{ height: "30vh" }}
-            onPointerDown={() => showHudAfterInteraction()}
           />
         )}
 
         {/* Top floating controls (icons only, no pills/words) */}
         <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            !hudVisible ? "opacity-0" : "opacity-100"
-          }`}
+          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${!topHudVisible ? "opacity-0" : "opacity-100"}`}
         >
           <div className="relative flex items-center justify-center gap-2">
             {/* Audio join pulse (shows when someone joins an audio room) */}
@@ -1147,7 +1168,7 @@ const TOP_BTN = isMobile ? 56 : 72;
             <button
               type="button"
               onClick={() => {
-                showHudAfterInteraction();
+                showPipHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
               style={{ width: TOP_BTN, height: TOP_BTN }}
@@ -1298,14 +1319,14 @@ const TOP_BTN = isMobile ? 56 : 72;
             {/* 0 peers: show local */}
             {peerIds.length === 0 && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
               </div>
             )}
 
             {/* 1 peer: remote full + local PiP */}
             {peerIds.length === 1 && firstRemoteId && (
               <div className="relative h-full w-full bg-neutral-900">
-                <FullBleedVideo stream={firstRemoteStream} fit="contain" />
+                <FullBleedVideo stream={firstRemoteStream} fit="cover" />
                 <audio
                   data-remote
                   autoPlay
@@ -1317,7 +1338,7 @@ const TOP_BTN = isMobile ? 56 : 72;
                   }}
                 />
 
-                {roomType === "video" && !pipPinned && !hudVisible && (
+                {roomType === "video" && !pipPinned && !brHudVisible && (
                   <div
                     className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
@@ -1350,7 +1371,6 @@ const TOP_BTN = isMobile ? 56 : 72;
                     onClick={(e) => {
                       e.stopPropagation();
                       showPipControls();
-                      showHudAfterInteraction();
                     }}
                     aria-label="Show PiP"
                     title="Show PiP"
@@ -1368,7 +1388,7 @@ const TOP_BTN = isMobile ? 56 : 72;
                             bottom: "calc(env(safe-area-inset-bottom) + 12px)",
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: 1,
+                            opacity: pipPinned || brHudVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1380,7 +1400,7 @@ const TOP_BTN = isMobile ? 56 : 72;
                             top: pipPos?.y ?? 16,
                             width: pipDims.w,
                             height: pipDims.h,
-                            opacity: pipPinned ? 1 : hudVisible ? 1 : 0,
+                            opacity: pipPinned || brHudVisible ? 1 : 0,
                             transition: "opacity 250ms ease",
                             touchAction: "none",
                             userSelect: "none",
@@ -1397,7 +1417,7 @@ const TOP_BTN = isMobile ? 56 : 72;
                   >
                     {/* Local preview */}
                     {camOn ? (
-                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                      <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
                     ) : (
                       <div className="h-full w-full flex items-center justify-center text-white/80 bg-black/60">
                         <span className="text-lg">📷✕</span>
@@ -1456,7 +1476,7 @@ const TOP_BTN = isMobile ? 56 : 72;
               <div className="grid h-full w-full grid-cols-1 md:grid-cols-2 gap-2 p-2">
                 {/* local tile */}
                 <div className="relative bg-neutral-900 rounded-2xl overflow-hidden min-h-[240px]">
-                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                  <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
                   <div className="absolute bottom-2 left-2 text-xs bg-neutral-900/70 px-2 py-1 rounded flex items-center gap-1">
                     <span>You</span>
                   </div>
@@ -1490,10 +1510,10 @@ const TOP_BTN = isMobile ? 56 : 72;
               <div className="flex flex-col h-full w-full">
                 <div className="relative flex-1 bg-neutral-900 rounded-none md:rounded-2xl overflow-hidden m-0 md:m-2">
                   {spotlightId === "local" ? (
-                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="contain" />
+                    <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
                   ) : (
                     <>
-                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="contain" />
+                      <FullBleedVideo stream={peerStreams[spotlightId] ?? null} fit="cover" />
                       <audio
                         data-remote
                         autoPlay
@@ -1701,12 +1721,11 @@ onPointerCancel={() => {
 <div
   className="fixed right-0 bottom-0 z-40 pointer-events-auto"
   style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
-  onPointerDown={() => showHudAfterInteraction()}
 >
   {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
   <div
     className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-      hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
+      brHudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
     }`}
     style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
   >
@@ -1715,7 +1734,7 @@ onPointerCancel={() => {
         type="button"
         onClick={() => {
           void toggleMic();
-          showHudAfterInteraction();
+          showBrHudAfterInteraction();
         }}
         style={{ width: AUX_BTN, height: AUX_BTN }}
       className={`bg-transparent border-0 shadow-none flex items-center justify-center active:scale-[0.98] transition text-3xl ${
@@ -1733,7 +1752,7 @@ onPointerCancel={() => {
       type="button"
       onClick={() => {
         toggleCamera();
-        showHudAfterInteraction();
+        showBrHudAfterInteraction();
       }}
       disabled={roomType !== "video"}
       style={{ width: AUX_BTN, height: AUX_BTN }}
@@ -1748,7 +1767,7 @@ onPointerCancel={() => {
       type="button"
       onClick={() => {
         setShowTextInput((v) => !v);
-        showHudAfterInteraction();
+        showBrHudAfterInteraction();
       }}
       style={{ width: AUX_BTN, height: AUX_BTN }}
   className="bg-transparent border-0 shadow-none flex items-center justify-center active:scale-[0.98] transition text-3xl"
@@ -1766,7 +1785,6 @@ onPointerCancel={() => {
     </div>
   );
 }
-
 
 
 
