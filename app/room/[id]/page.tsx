@@ -30,8 +30,8 @@ function pickSupportedLang(preferred?: string) {
   const pref = (preferred || "").trim();
   if (!pref) return fallback;
   if (LANGUAGES.some((l) => l.code === pref)) return pref;
-  const baseMatch = LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()));
-  return baseMatch?.code || fallback;
+  const match = LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()));
+  return match?.code || fallback;
 }
 
 async function translateText(fromLang: string, toLang: string, text: string) {
@@ -95,7 +95,8 @@ export default function RoomPage() {
     channelRef.current?.send({ type: "broadcast", event: "transcript", payload: { from: clientId, text, lang, name: displayNameRef.current } });
   };
 
-  const localMedia = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
+  const { mode } = useCallMode({ modeParam: roomType === "video" ? "video" : "audio", participantCount: peerIds.length + 1 });
+  const localMedia = useLocalMedia({ wantVideo: mode === "video", wantAudio: !isMobile });
   const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled } = localMedia;
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({ isMobile, roomType, joinCamOn, acquire, localStreamRef, setCamEnabled, peersRef, log });
@@ -136,12 +137,18 @@ export default function RoomPage() {
     }
   });
 
+  // FIX: Force Camera Acquisition on Join
   useEffect(() => {
     if (prejoinDone) {
-      acquire().then((stream) => {
-        if (stream && roomType === "video" && joinCamOn === false) setCamEnabled(false);
-        log("Camera stream acquired successfully");
-      });
+      const init = async () => {
+        const stream = await acquire();
+        if (stream && roomType === "video" && joinCamOn === false) {
+          setCamEnabled(false);
+        }
+        // Force a brief state update to re-render the FullBleedVideo component with the new stream
+        setPeerIds(prev => [...prev]); 
+      };
+      init();
     }
   }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
 
@@ -172,20 +179,26 @@ export default function RoomPage() {
 
       <main className="absolute inset-0 z-10">
         {peerIds.length === 0 ? (
-          <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
+          <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" key={localStreamRef.current?.id} />
         ) : (
           <div className="relative h-full w-full">
-            <FullBleedVideo stream={peerStreams[peerIds[0]]} fit="cover" />
+            <FullBleedVideo stream={peerStreams[peerIds[0]]} fit="cover" key={peerIds[0]} />
             <PipView stream={localStreamRef.current} isMobile={isMobile} visible={true} controlsVisible={pipControlsVisible} pinned={pipPinned} onWakeControls={wakePipControls} onTogglePin={togglePipPinned} onFlipCamera={canFlip ? flipCamera : undefined} />
           </div>
         )}
 
+        {/* PHONE CHAT STYLE CAPTIONS (Right = You, Left = Others) */}
         {ccOn && messages.length > 0 && (
-          <div className="absolute inset-x-0 bottom-40 px-6 z-20 pointer-events-none flex flex-col gap-3 items-center">
-            {messages.slice(-2).map((m) => (
-              <div key={m.id} className="bg-black/60 backdrop-blur-xl border border-white/10 px-5 py-3 rounded-2xl animate-in fade-in slide-in-from-bottom-2">
-                <p className="text-[10px] font-bold opacity-50 uppercase mb-1">{m.fromName}</p>
-                <p className="text-[16px] leading-tight font-medium">{m.translatedText}</p>
+          <div className="absolute inset-x-0 bottom-32 px-4 z-20 pointer-events-none flex flex-col gap-2">
+            {messages.slice(-3).map((m, idx) => (
+              <div key={m.id} 
+                className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-500`}
+                style={{ opacity: 1 - (2 - idx) * 0.3, transform: `scale(${1 - (2 - idx) * 0.05}) translateY(${(2 - idx) * -10}px)` }}
+              >
+                <div className={`max-w-[80%] px-4 py-2 rounded-2xl backdrop-blur-xl border ${m.isLocal ? "bg-emerald-600/20 border-emerald-500/30 rounded-br-none" : "bg-black/40 border-white/10 rounded-bl-none"}`}>
+                  {!m.isLocal && <p className="text-[10px] font-bold opacity-50 uppercase mb-0.5">{m.fromName}</p>}
+                  <p className="text-[15px] leading-tight font-medium">{m.translatedText}</p>
+                </div>
               </div>
             ))}
           </div>
@@ -194,25 +207,15 @@ export default function RoomPage() {
 
       <div className="relative z-50 pointer-events-none h-full w-full">
         <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => { navigator.clipboard.writeText(window.location.href); alert("Room link copied!"); }} onExit={() => router.push("/")} />
-        
-        {/* State variables (camOn, micOn) now passed correctly for visual feedback */}
         <BottomRightHud visible={brVisible} isMobile={isMobile} camOn={camOn} micOn={isMobile ? sttListening : micOn} showTextInput={showTextInput} onToggleCamera={toggleCamera} onToggleMic={toggleMic} onToggleText={() => setShowTextInput(!showTextInput)} />
-        
         {isMobile && <PttButton isPressed={sttListening} disabled={false} onPressStart={pttDown} onPressEnd={pttUp} />}
       </div>
-
-      {debugEnabled && (
-        <div className="absolute top-20 left-4 z-[100] bg-black/80 p-4 rounded-lg text-[10px] font-mono pointer-events-none border border-white/20 max-w-xs">
-          <p className="text-emerald-400 mb-2">DEBUG ({peerIds.length} peers)</p>
-          {logs.map((l, i) => <div key={i}>{l}</div>)}
-        </div>
-      )}
 
       {showTextInput && (
         <div className="absolute inset-x-0 bottom-24 z-[60] flex justify-center px-4">
           <form className="flex gap-2 w-full max-w-lg bg-black/90 p-2 rounded-full border border-white/20 pointer-events-auto" onSubmit={(e) => { e.preventDefault(); if(textInput.trim()) { sendFinalTranscript(textInput, targetLangRef.current); setTextInput(""); } }}>
             <input autoFocus value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="Type a message..." className="flex-1 bg-transparent border-0 outline-none px-5 text-white" />
-            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-xs opacity-50">Close</button>
+            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-[10px] font-bold uppercase opacity-50">Hide</button>
           </form>
         </div>
       )}
