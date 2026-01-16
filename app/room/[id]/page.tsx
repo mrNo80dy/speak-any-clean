@@ -20,8 +20,11 @@ import { PipView } from "@/components/PipView";
 import { PttButton } from "@/components/PttButton";
 import { HudWakeZones } from "@/components/HudWakeZones";
 
+// --- Types ---
 type RoomType = "audio" | "video";
 type RoomInfo = { code: string | null; room_type: RoomType };
+interface SupabaseRoomResponse { code: string | null; room_type: string }
+type PeerStreams = Record<string, MediaStream>;
 
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
@@ -65,13 +68,13 @@ export default function RoomPage() {
   const targetLangRef = useRef("en-US");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
-  const [peerStreams, setPeerStreams] = useState<Record<string, MediaStream>>({});
+  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
   const [ccOn, setCcOn] = useState(true);
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [streamVersion, setStreamVersion] = useState(0); // Used to force-refresh video elements
+  const [streamVersion, setStreamVersion] = useState(0);
 
   const { topVisible, brVisible, pipControlsVisible, pipPinned, wakeTopHud, wakeBrHud, wakePipControls, togglePipPinned } = useHudController();
   const roomType: RoomType = roomInfo?.room_type ?? "audio";
@@ -88,8 +91,7 @@ export default function RoomPage() {
     channelRef.current?.send({ type: "broadcast", event: "transcript", payload: { from: clientId, text, lang, name: displayNameRef.current } });
   };
 
-  const localMedia = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
-  const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled, stop } = localMedia;
+  const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled, stop } = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({ isMobile, roomType, joinCamOn, acquire, localStreamRef, setCamEnabled, peersRef, log });
 
@@ -129,34 +131,39 @@ export default function RoomPage() {
     }
   });
 
-  // FIX: Auto-acquire and force re-render
+  // AUTO-START CAMERA & FORCE RE-RENDER
   useEffect(() => {
     if (prejoinDone) {
       acquire().then(() => {
         if (roomType === "video" && joinCamOn === false) setCamEnabled(false);
-        setStreamVersion(v => v + 1); // This kicks the video component to show the image
+        setStreamVersion(v => v + 1); 
       });
     }
   }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
 
-  // FIX: Hardware Cleanup on Exit/Unmount
-  useEffect(() => {
-    return () => {
-      log("Cleaning up hardware...");
-      stop(); // Turns off the camera light
-      stopAllStt("unmount");
-    };
-  }, [stop, stopAllStt, log]);
+  // HARDWARE CLEANUP
+  const handleExit = useCallback(() => {
+    stop(); 
+    stopAllStt("exit");
+    router.push("/");
+  }, [stop, stopAllStt, router]);
 
+  useEffect(() => {
+    return () => { stop(); stopAllStt("unmount"); };
+  }, [stop, stopAllStt]);
+
+  // TYPED SUPABASE FETCH
   useEffect(() => {
     if (!roomId) return;
     supabase.from("rooms").select("code, room_type").eq("id", roomId).maybeSingle()
-      .then(({ data }) => { if (data) setRoomInfo({ code: data.code, room_type: data.room_type as RoomType }); });
+      .then(({ data }: { data: SupabaseRoomResponse | null }) => { 
+        if (data) setRoomInfo({ code: data.code, room_type: data.room_type as RoomType }); 
+      });
   }, [roomId]);
   if (roomType === "video" && joinCamOn === null) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-black text-white gap-6">
-        <h1 className="text-2xl font-bold font-sans">Join Video Room</h1>
+      <div className="flex flex-col items-center justify-center h-screen bg-black text-white gap-6 font-sans">
+        <h1 className="text-2xl font-bold">Join Video Room</h1>
         <div className="flex gap-4">
           <button onClick={() => setJoinCamOn(true)} className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold active:scale-95 transition">Camera On</button>
           <button onClick={() => setJoinCamOn(false)} className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold active:scale-95 transition">Camera Off</button>
@@ -181,7 +188,6 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* Caption Feed (Chat Style) */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-4 z-20 pointer-events-none flex flex-col gap-2">
             {messages.slice(-3).map((m, idx) => (
@@ -196,7 +202,7 @@ export default function RoomPage() {
       </main>
 
       <div className="relative z-50 pointer-events-none h-full w-full">
-        <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => { navigator.clipboard.writeText(window.location.href); alert("Copied!"); }} onExit={() => { stop(); router.push("/"); }} />
+        <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => { navigator.clipboard.writeText(window.location.href); alert("Copied!"); }} onExit={handleExit} />
         <BottomRightHud visible={brVisible} isMobile={isMobile} camOn={camOn} micOn={isMobile ? sttListening : micOn} showTextInput={showTextInput} onToggleCamera={toggleCamera} onToggleMic={toggleMic} onToggleText={() => setShowTextInput(!showTextInput)} />
         {isMobile && <PttButton isPressed={sttListening} disabled={false} onPressStart={pttDown} onPressEnd={pttUp} />}
       </div>
@@ -205,7 +211,7 @@ export default function RoomPage() {
         <div className="absolute inset-x-0 bottom-24 z-[60] flex justify-center px-4">
           <form className="flex gap-2 w-full max-w-lg bg-black/95 p-2 rounded-full border border-white/10 pointer-events-auto" onSubmit={(e) => { e.preventDefault(); if(textInput.trim()) { sendFinalTranscript(textInput, targetLangRef.current); setTextInput(""); } }}>
             <input autoFocus value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="Type a message..." className="flex-1 bg-transparent border-0 outline-none px-5 text-white" />
-            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-[10px] font-bold opacity-40 hover:opacity-100">Hide</button>
+            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-[10px] font-bold opacity-40">Hide</button>
           </form>
         </div>
       )}
