@@ -1405,8 +1405,6 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                     onClick={(e) => { e.stopPropagation(); wakePipControls(); }}
                     onPointerDown={pipOnPointerDown}
                     onPointerMove={pipOnPointerMove}
-                    onPointerUp={pipOnPointerUpOrCancel}
-                    onPointerCancel={pipOnPointerUpOrCancel}
                     title="Your camera"
                     aria-label="Your camera"
                   >
@@ -1780,6 +1778,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
