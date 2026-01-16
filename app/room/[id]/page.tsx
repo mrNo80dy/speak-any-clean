@@ -1046,6 +1046,11 @@ const TOP_BTN = isMobile ? 56 : 72;
   return (
 <div
       className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden"
+        <HudWakeZones
+  onWakeTop={() => wakeTopHud()}
+  onWakeBottomRight={() => wakeBrHud()}
+/>
+
       onMouseMove={(e) => {
         if (isMobile) return;
         const x = e.clientX;
@@ -1775,6 +1780,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
