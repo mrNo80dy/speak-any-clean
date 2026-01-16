@@ -17,32 +17,16 @@ export function BottomRightHud({ visible, isMobile, camOn, micOn, showTextInput,
   return (
     <div className={`fixed right-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-30 flex flex-col items-center gap-3 transition-opacity duration-300 ${visible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"}`}>
       
-      {/* Mic toggle: Uses a filled mic for ON and an empty/muted symbol for OFF */}
+      {/* Mic toggle: Distinct icons for Active vs Muted */}
       {!isMobile && (
-        <IconButton 
-          label={micOn ? "Mute" : "Unmute"} 
-          onClick={onToggleMic} 
-          active={micOn}
-        >
-          {micOn ? (
-            <span className="text-emerald-400">🎙️</span> // Active State
-          ) : (
-            <span className="opacity-50">🔇</span> // Muted State (Distinct Icon)
-          )}
+        <IconButton label={micOn ? "Mute" : "Unmute"} onClick={onToggleMic} active={micOn}>
+          {micOn ? "🎙️" : "🔕"}
         </IconButton>
       )}
 
-      {/* Camera toggle: Video Camera vs Still Camera icons */}
-      <IconButton 
-        label={camOn ? "Camera Off" : "Camera On"} 
-        onClick={onToggleCamera} 
-        active={camOn}
-      >
-        {camOn ? (
-          <span className="text-emerald-400">📹</span> // Active Video
-        ) : (
-          <span className="opacity-50">📷</span> // Inactive Still
-        )}
+      {/* Camera toggle: Distinct icons for Video vs Still */}
+      <IconButton label={camOn ? "Camera Off" : "Camera On"} onClick={onToggleCamera} active={camOn}>
+        {camOn ? "📹" : "📷"}
       </IconButton>
 
       <IconButton label={showTextInput ? "Hide Chat" : "Open Chat"} onClick={onToggleText} active={showTextInput}>
@@ -61,8 +45,8 @@ function IconButton({ children, onClick, label, active }: { children: React.Reac
       onClick={onClick}
       className={`w-14 h-14 flex items-center justify-center text-2xl transition-all rounded-2xl border ${
         active 
-          ? "bg-emerald-500/10 border-emerald-500/30 shadow-lg scale-105" 
-          : "bg-black/40 border-white/10 opacity-70"
+          ? "bg-emerald-500/20 border-emerald-500/30 shadow-lg scale-105" 
+          : "bg-black/40 border-white/10 opacity-70 hover:opacity-100"
       }`}
     >
       {children}
