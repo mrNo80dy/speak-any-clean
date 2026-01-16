@@ -8,7 +8,6 @@ export default function FullBleedVideo({
   stream,
   isLocal = false,
   fit = "auto",
-  // When fit="auto": if viewer is mobile portrait AND the stream is portrait, we use cover; otherwise contain.
   preferCoverOnMobilePortrait = true,
   className = "",
 }: {
@@ -24,91 +23,72 @@ export default function FullBleedVideo({
 
   const [isMobilePortrait, setIsMobilePortrait] = useState(false);
   const [isPortraitStream, setIsPortraitStream] = useState(false);
+  // This state is used specifically to "kick" the component when tracks enable
+  const [, setTick] = useState(0); 
 
-  // Detect mobile + portrait viewport
   useEffect(() => {
-    if (typeof window === "undefined" || typeof navigator === "undefined") return;
+    if (typeof window === "undefined") return;
     const isMobileUa = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
     const update = () => {
-      const portrait = window.matchMedia?.("(orientation: portrait)")?.matches ?? (window.innerHeight >= window.innerWidth);
+      const portrait = window.innerHeight >= window.innerWidth;
       setIsMobilePortrait(isMobileUa && portrait);
     };
-
     update();
     window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
-    };
+    return () => window.removeEventListener("resize", update);
   }, []);
 
-  // Detect stream orientation from track settings
   useEffect(() => {
-    const s = stream || null;
-    if (!s) {
-      setIsPortraitStream(false);
-      return;
-    }
-    const vt = s.getVideoTracks?.()[0];
-    const st = (vt?.getSettings?.() ?? {}) as any;
-    const w = Number(st.width || 0);
-    const h = Number(st.height || 0);
-    const ar = Number(st.aspectRatio || 0);
+    const s = stream;
+    if (!s) return;
 
-    // Prefer explicit width/height; fallback to aspectRatio
-    const portrait =
-      (w > 0 && h > 0 ? h >= w : ar > 0 ? ar < 1 : false);
-
-    setIsPortraitStream(!!portrait);
-  }, [stream]);
-
-  // Attach streams
-  useEffect(() => {
-    const s = stream || null;
-    const fg = fgRef.current;
     const bg = bgRef.current;
+    const fg = fgRef.current;
 
-    if (!s) {
-      if (fg) fg.srcObject = null;
-      if (bg) bg.srcObject = null;
-      return;
-    }
+    // FIX: Listen for tracks being enabled/disabled
+    // This solves the "light on but black screen" issue
+    const tracks = s.getVideoTracks();
+    const handleTrackChange = () => setTick(t => t + 1);
 
-    // Lightweight clone for blurred background layer
-    const tracks = s.getTracks();
+    tracks.forEach(t => {
+      t.addEventListener('mute', handleTrackChange);
+      t.addEventListener('unmute', handleTrackChange);
+    });
+
     if (!cloneRef.current || cloneRef.current.getTracks().length !== tracks.length) {
       cloneRef.current = new MediaStream(tracks);
     }
 
     if (bg && bg.srcObject !== cloneRef.current) {
       bg.srcObject = cloneRef.current;
-      bg.playsInline = true as any;
       bg.muted = true;
       bg.play().catch(() => {});
     }
 
     if (fg && fg.srcObject !== s) {
       fg.srcObject = s;
-      fg.playsInline = true as any;
       fg.muted = true;
       fg.play().catch(() => {});
     }
+
+    return () => {
+      tracks.forEach(t => {
+        t.removeEventListener('mute', handleTrackChange);
+        t.removeEventListener('unmute', handleTrackChange);
+      });
+    };
   }, [stream]);
 
-  const resolvedFit: "cover" | "contain" = useMemo(() => {
+  const resolvedFit = useMemo(() => {
     if (fit === "cover" || fit === "contain") return fit;
-    // auto:
-    if (preferCoverOnMobilePortrait && isMobilePortrait && isPortraitStream) return "cover";
+    if (preferCoverOnMobilePortrait && isMobilePortrait) return "cover";
     return "contain";
-  }, [fit, preferCoverOnMobilePortrait, isMobilePortrait, isPortraitStream]);
+  }, [fit, preferCoverOnMobilePortrait, isMobilePortrait]);
 
   const mirrorStyle = isLocal ? ({ transform: "scaleX(-1)" } as const) : undefined;
 
   return (
     <div className={"absolute inset-0 bg-black overflow-hidden " + className}>
-      {/* Background fill */}
       <video
         ref={bgRef}
         autoPlay
@@ -116,16 +96,15 @@ export default function FullBleedVideo({
         muted
         className="absolute inset-0 h-full w-full object-cover blur-xl scale-110 opacity-40"
       />
-
-      {/* Foreground */}
       <video
         ref={fgRef}
         autoPlay
         playsInline
         muted
-        data-local={isLocal ? "1" : undefined}
-        className={"absolute inset-0 h-full w-full " + (resolvedFit === "cover" ? "object-cover" : "object-contain")}
         style={mirrorStyle}
+        className={`absolute inset-0 h-full w-full transition-opacity duration-500 ${stream ? 'opacity-100' : 'opacity-0'} ${
+          resolvedFit === "cover" ? "object-cover" : "object-contain"
+        }`}
       />
     </div>
   );
