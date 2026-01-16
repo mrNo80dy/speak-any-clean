@@ -1150,8 +1150,8 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                           }
                         : {
                             position: "absolute",
-                            left: pipPos?.x ?? 16,
-                            top: pipPos?.y ?? 16,
+                            left: 16,
+                            top: 16,
                             width: pipDims.w,
                             height: pipDims.h,
                             opacity: 1,
