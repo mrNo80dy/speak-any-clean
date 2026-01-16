@@ -39,12 +39,13 @@ export function PipView({
     const h = window.innerHeight;
     const isLandscape = w > h;
     const base = Math.min(w, h);
+    
+const size = isMobile
+  ? isLandscape
+    ? Math.min(base * 0.52, 260) // landscape bigger
+    : Math.min(base * 0.28, 165) // portrait smaller
+  : 220;
 
-    const size = isMobile
-      ? isLandscape
-        ? Math.min(base * 0.5, 240)
-        : Math.min(base * 0.35, 200)
-      : 220;
 
     return {
       width: size,
@@ -56,10 +57,14 @@ export function PipView({
 
   return (
     <div
-      className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-30"
-      style={pipStyle}
-      onPointerDown={onWakeControls}
-    >
+  className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50 pointer-events-auto"
+  style={pipStyle}
+  onPointerDown={(e) => {
+    e.stopPropagation();
+    onWakeControls();
+  }}
+>
+
       <div className="relative w-full h-full">
         <video
           ref={videoRef}
