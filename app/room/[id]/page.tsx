@@ -1061,6 +1061,41 @@ return (
       onWakeBottomRight={() => wakeBrHud()}
     />
 
+    <TopHud
+  visible={topVisible}
+  ccOn={ccOn}
+  sdOn={sdOn}
+  onToggleCc={() => {
+    toggleCc();
+    wakeTopHud(true);
+  }}
+  onToggleSd={() => {
+    toggleSd();
+    wakeTopHud(true);
+  }}
+  onExit={onExit}
+/>
+
+<BottomRightHud
+  visible={brVisible}
+  isMobile={isMobile}
+  camOn={camOn}
+  micOn={micUiOn}
+  showTextInput={showTextInput}
+  onToggleCamera={() => {
+    toggleCamera();
+    wakeBrHud(true);
+  }}
+  onToggleMic={() => {
+    toggleMic();
+    wakeBrHud(true);
+  }}
+  onToggleText={() => {
+    setShowTextInput((v) => !v);
+    wakeBrHud(true);
+  }}
+/>
+
       <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
         {roomType === "video" && joinCamOn === null && (
@@ -1779,6 +1814,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
