@@ -128,17 +128,28 @@ export default function RoomPage() {
     }
   });
 
-  // CRITICAL FIX: Ensure camera starts and tracks are enabled immediately
+  // FIX: Force Camera to show image on Join
   useEffect(() => {
     if (prejoinDone) {
-      acquire().then((stream) => {
+      const initCamera = async () => {
+        const stream = await acquire();
         if (stream && roomType === "video") {
-          setCamEnabled(!!joinCamOn);
+          // 1. Alert the UI that a stream exists
           setStreamVersion(v => v + 1);
+          // 2. Small delay to ensure the Video HTML element has rendered, then enable pixels
+          setTimeout(() => {
+            if (joinCamOn) setCamEnabled(true);
+          }, 150);
         }
-      });
+      };
+      initCamera();
     }
   }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
+
+  // FIX: Unfreeze HD toggle UI
+  useEffect(() => {
+    setStreamVersion(v => v + 1);
+  }, [hdEnabled]);
 
   const handleExit = useCallback(() => {
     stop(); 
@@ -184,15 +195,15 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* CHAT STYLE CAPTIONS (Max 3, Fade/Shrink) */}
+        {/* Captions Style: Fade/Shrink/Stack */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-4 z-20 pointer-events-none flex flex-col gap-2">
             {messages.slice(-3).map((m, idx, arr) => {
-              const age = arr.length - 1 - idx; // 0 is newest, 2 is oldest
+              const age = arr.length - 1 - idx;
               const opacity = 1 - age * 0.35;
               const scale = 1 - age * 0.08;
               return (
-                <div key={m.id} className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-500`} style={{ opacity, transform: `scale(${scale}) translateY(${age * -12}px)` }}>
+                <div key={m.id} className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-500`} style={{ opacity, transform: `scale(${scale}) translateY(${age * -15}px)` }}>
                   <div className={`max-w-[80%] px-4 py-2 rounded-2xl backdrop-blur-xl border ${m.isLocal ? "bg-emerald-500/10 border-emerald-500/20 rounded-br-none" : "bg-black/40 border-white/10 rounded-bl-none"}`}>
                     <p className="text-[15px] leading-tight">{m.translatedText}</p>
                   </div>
