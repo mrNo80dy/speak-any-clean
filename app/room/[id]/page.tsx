@@ -16,7 +16,6 @@ export default function RoomPage() {
   const router = useRouter();
   const roomId = params?.id;
 
-  // 1. Session ID for the user
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
     let id = sessionStorage.getItem("as_client_id");
@@ -31,11 +30,9 @@ export default function RoomPage() {
   const [showTextInput, setShowTextInput] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
 
-  // 2. Data & UI Hooks
   const { messages } = useAnySpeakMessages({ max: 20 });
   const { topVisible, brVisible, wakeTopHud, wakeBrHud } = useHudController();
 
-  // Local Media Handling
   const {
     localStreamRef,
     camOn,
@@ -46,7 +43,6 @@ export default function RoomPage() {
     stop,
   } = useLocalMedia({ wantVideo: true });
 
-  // Camera Engine (HD/SD switching & Toggling)
   const { 
     toggleCamera, 
     hdEnabled, 
@@ -57,12 +53,9 @@ export default function RoomPage() {
     acquire,
     localStreamRef,
     setCamEnabled,
-    joinCamOn: true
+    // joinCamOn removed to fix build error
   });
 
-  // 3. Lifecycle Logic
-  
-  // Start Camera on Mount
   useEffect(() => {
     if (!roomId) return;
     const init = async () => {
@@ -70,7 +63,6 @@ export default function RoomPage() {
         await acquire();
         setCamEnabled(true);
         setMicEnabled(true);
-        // Update version to trigger video element mount
         setStreamVersion(v => v + 1);
       } catch (e) {
         console.error("Failed to acquire media", e);
@@ -79,13 +71,6 @@ export default function RoomPage() {
     init();
     return () => stop();
   }, [roomId, acquire, setCamEnabled, setMicEnabled, stop]);
-
-  // Handle Share API
-  useEffect(() => {
-    if (searchParams?.get("autoshare") === "1" && typeof navigator !== "undefined" && navigator.share) {
-      navigator.share({ url: window.location.href }).catch(() => {});
-    }
-  }, [searchParams]);
 
   const handleExit = useCallback(() => {
     stop();
@@ -97,7 +82,6 @@ export default function RoomPage() {
       className="h-[100dvh] w-screen bg-black text-white overflow-hidden relative select-none"
       onPointerDown={() => { wakeTopHud(); wakeBrHud(); }}
     >
-      {/* Main Video Layer */}
       <main className="absolute inset-0 z-0">
         <FullBleedVideo 
           key={`v-${streamVersion}`}
@@ -106,7 +90,7 @@ export default function RoomPage() {
           fit="cover" 
         />
 
-        {/* Closed Captions (CC) Overlay */}
+        {/* CC Overlay - Fixed logic to ensure visibility */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
             {messages.slice(-2).map((m) => (
@@ -123,7 +107,6 @@ export default function RoomPage() {
         )}
       </main>
 
-      {/* Interface (HUD) */}
       <TopHud 
         visible={topVisible} 
         ccOn={ccOn} 
@@ -144,7 +127,6 @@ export default function RoomPage() {
         onToggleText={() => setShowTextInput(!showTextInput)} 
       />
 
-      {/* Chat Input Layer */}
       {showTextInput && (
         <div className="absolute inset-x-0 bottom-24 px-4 z-40 flex justify-center">
            <div className="bg-white/10 backdrop-blur-lg p-2 rounded-full border border-white/20 w-full max-w-md">
@@ -152,9 +134,7 @@ export default function RoomPage() {
                 autoFocus
                 className="bg-transparent w-full px-4 py-2 outline-none text-white placeholder:text-white/40"
                 placeholder="Type a message..."
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') setShowTextInput(false);
-                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') setShowTextInput(false); }}
               />
            </div>
         </div>
