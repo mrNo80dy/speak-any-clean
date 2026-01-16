@@ -1424,14 +1424,11 @@ if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
                           <button
                             type="button"
                             onClick={(e) => {
+                              e.preventDefault();
                               e.stopPropagation();
-                              const next = !pipPinned;
-                              setPipPinned(next);
-                              try {
-                                window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
-                              } catch {}
-                              wakePipControls();
+                              togglePipPinned();
                             }}
+
                             className={`w-9 h-9 rounded-lg bg-black/40 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center ${
                               pipPinned ? "ring-1 ring-white/25" : "opacity-90"
                             }`}
@@ -1778,6 +1775,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
