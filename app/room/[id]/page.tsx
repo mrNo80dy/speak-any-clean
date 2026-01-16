@@ -1,231 +1,166 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
-import { LANGUAGES } from "@/lib/languages";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
-import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
-import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useCamera } from "@/hooks/useCamera";
-import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
-import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
-import FullBleedVideo from "@/components/FullBleedVideo";
+import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
 import { useHudController } from "@/hooks/useHudController";
+import FullBleedVideo from "@/components/FullBleedVideo";
 import { TopHud } from "@/components/TopHud";
 import { BottomRightHud } from "@/components/BottomRightHud";
-import { PipView } from "@/components/PipView";
-import { PttButton } from "@/components/PttButton";
-import { HudWakeZones } from "@/components/HudWakeZones";
-
-type RoomType = "audio" | "video";
-interface RoomInfo { code: string | null; room_type: RoomType }
-interface SupabaseRoomResponse { code: string | null; room_type: string }
-
-function pickSupportedLang(preferred?: string) {
-  const fallback = "en-US";
-  const pref = (preferred || "").trim();
-  if (!pref) return fallback;
-  if (LANGUAGES.some((l) => l.code === pref)) return pref;
-  return LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()))?.code || fallback;
-}
-
-async function translateText(fromLang: string, toLang: string, text: string) {
-  const trimmed = text.trim();
-  if (!trimmed || fromLang === toLang) return { translatedText: trimmed, targetLang: toLang };
-  try {
-    const res = await fetch("/api/translate", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: trimmed, fromLang, toLang }),
-    });
-    const data = await res.json();
-    return { translatedText: data.translatedText || trimmed, targetLang: data.targetLang || toLang };
-  } catch { return { translatedText: trimmed, targetLang: toLang }; }
-}
 
 export default function RoomPage() {
-  const router = useRouter();
   const params = useParams<{ id: string }>();
-  const roomId = params?.id;
   const searchParams = useSearchParams();
-  const debugEnabled = searchParams?.get("debug") === "1";
+  const router = useRouter();
+  const roomId = params?.id;
 
-  const isMobile = useMemo(() => typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent), []);
+  // 1. Session & State
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
-    let id = sessionStorage.getItem("clientId") || crypto.randomUUID();
-    sessionStorage.setItem("clientId", id);
+    let id = sessionStorage.getItem("as_client_id");
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("as_client_id", id);
+    }
     return id;
   }, []);
 
-  const peersRef = useRef<Map<string, AnySpeakPeer>>(new Map());
-  const displayNameRef = useRef("You");
-  const targetLangRef = useRef("en-US");
-
-  const [peerIds, setPeerIds] = useState<string[]>([]);
-  const [peerStreams, setPeerStreams] = useState<Record<string, MediaStream>>({});
-  const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
-  const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
   const [ccOn, setCcOn] = useState(true);
   const [showTextInput, setShowTextInput] = useState(false);
-  const [textInput, setTextInput] = useState("");
   const [streamVersion, setStreamVersion] = useState(0);
 
-  const { topVisible, brVisible, pipControlsVisible, pipPinned, wakeTopHud, wakeBrHud, wakePipControls, togglePipPinned } = useHudController();
-  const roomType: RoomType = roomInfo?.room_type ?? "audio";
-  const prejoinDone = roomType === "audio" ? true : joinCamOn !== null;
+  // 2. Hooks
+  const { messages, pushMessage } = useAnySpeakMessages({ max: 20 });
+  const { topVisible, brVisible, wakeTopHud, wakeBrHud } = useHudController();
 
-  const log = useCallback((msg: string) => console.log(`[Room] ${msg}`), []);
-  const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
-  const { speakText, unlockTts } = useAnySpeakTts({ getLang: () => targetLangRef.current, onLog: log });
-
-  const sendFinalTranscript = async (text: string, lang: string) => {
-    const { translatedText, targetLang: outLang } = await translateText(lang, targetLangRef.current, text);
-    pushMessage({ fromId: clientId, fromName: displayNameRef.current, originalLang: lang, translatedLang: outLang, originalText: text, translatedText, isLocal: true });
-    channelRef.current?.send({ type: "broadcast", event: "transcript", payload: { from: clientId, text, lang, name: displayNameRef.current } });
-  };
-
-  const localMedia = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
-  const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled, stop } = localMedia;
-
-  const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({ isMobile, roomType, joinCamOn, acquire, localStreamRef, setCamEnabled, peersRef, log });
-
-  const { sttListening, toggleMic, pttDown, pttUp, stopAllStt } = useAnySpeakStt({ 
-    isMobile, debugKey: debugEnabled ? "debug" : "normal", speakLang: pickSupportedLang(typeof navigator !== "undefined" ? navigator.language : "en-US"), 
-    userTouchedMicRef: useRef(false), micOnRef: useRef(false), micArmedRef: useRef(false), pttHeldRef: useRef(false), 
-    micOn, setMicEnabled, unlockTts, log, onFinalTranscript: sendFinalTranscript 
+  // Local Media Handling
+  const {
+    localStreamRef,
+    camOn,
+    micOn,
+    acquire,
+    setCamEnabled,
+    setMicEnabled,
+    stop,
+  } = useLocalMedia({ 
+    wantVideo: true,
+    onStreamReady: () => setStreamVersion(v => v + 1)
   });
 
-  const { makeOffer, handleOffer, handleAnswer, handleIce } = useAnySpeakWebRtc({
-    clientId, isMobile, iceServers: [{ urls: "stun:stun.l.google.com:19302" }], localStreamRef, peersRef, shouldMuteRawAudioRef: useRef(true), setConnected: () => {}, log,
-    upsertPeerStream: (id, stream) => setPeerStreams(prev => ({ ...prev, [id]: stream }))
+  // Camera Engine (HD/SD switching & Toggling)
+  const { 
+    toggleCamera, 
+    hdEnabled, 
+    setVideoQuality 
+  } = useCamera({
+    isMobile: false, // Set based on your UA detection if needed
+    roomType: "video",
+    acquire,
+    localStreamRef,
+    setCamEnabled,
   });
 
-  const { channelRef } = useAnySpeakRealtime({
-    roomId: roomId || "", clientId, prejoinDone, roomType, joinCamOn, debugKey: debugEnabled ? "debug" : "normal", displayNameRef, log,
-    teardownPeers: (id) => {
-      const p = peersRef.current.get(id);
-      if (p) { p.pc.close(); peersRef.current.delete(id); setPeerIds(prev => prev.filter(pId => pId !== id)); }
-    },
-    onPresenceSync: (channel) => {
-      const state = channel.presenceState();
-      const others = Object.values(state).flatMap((p: any) => p).filter(p => p.clientId !== clientId).map(p => p.clientId);
-      setPeerIds(others);
-      others.forEach(id => { if (!peersRef.current.has(id)) makeOffer(id, channel); });
-    },
-    onWebrtc: async (msg) => {
-      if (msg.payload.from === clientId) return;
-      if (msg.payload.type === "offer") await handleOffer(msg.payload.from, msg.payload.sdp, channelRef.current!);
-      else if (msg.payload.type === "answer") await handleAnswer(msg.payload.from, msg.payload.sdp);
-      else if (msg.payload.type === "ice") await handleIce(msg.payload.from, msg.payload.candidate);
-    },
-    onTranscript: async (msg) => {
-      if (msg.payload.from === clientId) return;
-      const { translatedText, targetLang: outLang } = await translateText(msg.payload.lang, targetLangRef.current, msg.payload.text);
-      pushMessage({ fromId: msg.payload.from, fromName: msg.payload.name || "Guest", originalLang: msg.payload.lang, translatedLang: outLang, originalText: msg.payload.text, translatedText, isLocal: false });
-      if (ccOn) speakText(translatedText, outLang);
-    }
-  });
-
-  // FIX: Force Camera to show image on Join
-  useEffect(() => {
-    if (prejoinDone) {
-      const initCamera = async () => {
-        const stream = await acquire();
-        if (stream && roomType === "video") {
-          // 1. Alert the UI that a stream exists
-          setStreamVersion(v => v + 1);
-          // 2. Small delay to ensure the Video HTML element has rendered, then enable pixels
-          setTimeout(() => {
-            if (joinCamOn) setCamEnabled(true);
-          }, 150);
-        }
-      };
-      initCamera();
-    }
-  }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
-
-  // FIX: Unfreeze HD toggle UI
-  useEffect(() => {
-    setStreamVersion(v => v + 1);
-  }, [hdEnabled]);
-
-  const handleExit = useCallback(() => {
-    stop(); 
-    stopAllStt("exit");
-    router.push("/");
-  }, [stop, stopAllStt, router]);
-
-  useEffect(() => {
-    return () => { stop(); stopAllStt("unmount"); };
-  }, [stop, stopAllStt]);
-
+  // 3. Life Cycle
   useEffect(() => {
     if (!roomId) return;
-    supabase.from("rooms").select("code, room_type").eq("id", roomId).maybeSingle()
-      .then(({ data }: { data: SupabaseRoomResponse | null }) => { 
-        if (data) setRoomInfo({ code: data.code, room_type: data.room_type as RoomType }); 
-      });
-  }, [roomId]);
 
-  if (roomType === "video" && joinCamOn === null) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-black text-white gap-6">
-        <h1 className="text-2xl font-bold">Join Video Room</h1>
-        <div className="flex gap-4">
-          <button onClick={() => setJoinCamOn(true)} className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold active:scale-95 transition">Camera On</button>
-          <button onClick={() => setJoinCamOn(false)} className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold active:scale-95 transition">Camera Off</button>
-        </div>
-      </div>
-    );
-  }
+    // Start media immediately on mount
+    const init = async () => {
+      try {
+        await acquire();
+        // Force cam on initially
+        setCamEnabled(true);
+        setMicEnabled(true);
+      } catch (e) {
+        console.error("Failed to acquire media", e);
+      }
+    };
+
+    init();
+    return () => stop();
+  }, [roomId, acquire, setCamEnabled, setMicEnabled, stop]);
+
+  // Handle Auto-Share (if link contains ?autoshare=1)
+  useEffect(() => {
+    if (searchParams?.get("autoshare") === "1" && typeof navigator !== "undefined" && navigator.share) {
+      navigator.share({ url: window.location.href }).catch(() => {});
+    }
+  }, [searchParams]);
+
+  const handleExit = useCallback(() => {
+    stop();
+    router.push("/");
+  }, [router, stop]);
 
   return (
-    <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden relative" onPointerDown={() => { wakeTopHud(); wakeBrHud(); }}>
-      <div className="absolute inset-0 z-0"><HudWakeZones onWakeTop={() => wakeTopHud(true)} onWakeBottomRight={() => wakeBrHud(true)} /></div>
+    <div 
+      className="h-[100dvh] w-screen bg-black text-white overflow-hidden relative select-none"
+      onPointerDown={() => { wakeTopHud(); wakeBrHud(); }}
+    >
+      {/* 1. Main Video Layer */}
+      <main className="absolute inset-0 z-0">
+        <FullBleedVideo 
+          key={`v-${streamVersion}`}
+          stream={localStreamRef.current} 
+          isLocal 
+          fit="cover" 
+        />
 
-      <main className="absolute inset-0 z-10">
-        {peerIds.length === 0 ? (
-          <FullBleedVideo key={`local-${streamVersion}`} stream={localStreamRef.current} isLocal fit="cover" />
-        ) : (
-          <div className="relative h-full w-full">
-            <FullBleedVideo key={`remote-${peerIds[0]}`} stream={peerStreams[peerIds[0]]} fit="cover" />
-            <PipView key={`pip-${streamVersion}`} stream={localStreamRef.current} isMobile={isMobile} visible={true} controlsVisible={pipControlsVisible} pinned={pipPinned} onWakeControls={wakePipControls} onTogglePin={togglePipPinned} onFlipCamera={canFlip ? flipCamera : undefined} />
-          </div>
-        )}
-
-        {/* Captions Style: Fade/Shrink/Stack */}
+        {/* 2. Closed Captions (CC) Overlay */}
         {ccOn && messages.length > 0 && (
-          <div className="absolute inset-x-0 bottom-32 px-4 z-20 pointer-events-none flex flex-col gap-2">
-            {messages.slice(-3).map((m, idx, arr) => {
-              const age = arr.length - 1 - idx;
-              const opacity = 1 - age * 0.35;
-              const scale = 1 - age * 0.08;
-              return (
-                <div key={m.id} className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-500`} style={{ opacity, transform: `scale(${scale}) translateY(${age * -15}px)` }}>
-                  <div className={`max-w-[80%] px-4 py-2 rounded-2xl backdrop-blur-xl border ${m.isLocal ? "bg-emerald-500/10 border-emerald-500/20 rounded-br-none" : "bg-black/40 border-white/10 rounded-bl-none"}`}>
-                    <p className="text-[15px] leading-tight">{m.translatedText}</p>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
+            {messages.slice(-2).map((m) => (
+              <div 
+                key={m.id} 
+                className="bg-black/70 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/10 max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-300"
+              >
+                <p className="text-[17px] font-medium leading-snug text-center text-white drop-shadow-md">
+                  {m.translatedText || m.text}
+                </p>
+              </div>
+            ))}
           </div>
         )}
       </main>
 
-      <div className="relative z-50 pointer-events-none h-full w-full">
-        <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => { navigator.clipboard.writeText(window.location.href); alert("Copied!"); }} onExit={handleExit} />
-        <BottomRightHud visible={brVisible} isMobile={isMobile} camOn={camOn} micOn={isMobile ? sttListening : micOn} showTextInput={showTextInput} onToggleCamera={toggleCamera} onToggleMic={toggleMic} onToggleText={() => setShowTextInput(!showTextInput)} />
-        {isMobile && <PttButton isPressed={sttListening} disabled={false} onPressStart={pttDown} onPressEnd={pttUp} />}
-      </div>
+      {/* 3. User Interface (HUD) */}
+      <TopHud 
+        visible={topVisible} 
+        ccOn={ccOn} 
+        hdOn={hdEnabled} 
+        onToggleCc={() => setCcOn(!ccOn)} 
+        onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} 
+        onExit={handleExit} 
+      />
 
+      <BottomRightHud 
+        visible={brVisible} 
+        isMobile={false} 
+        camOn={camOn} 
+        micOn={micOn} 
+        showTextInput={showTextInput} 
+        onToggleCamera={toggleCamera} 
+        onToggleMic={() => setMicEnabled(!micOn)} 
+        onToggleText={() => setShowTextInput(!showTextInput)} 
+      />
+
+      {/* 4. Chat Input Layer */}
       {showTextInput && (
-        <div className="absolute inset-x-0 bottom-24 z-[60] flex justify-center px-4">
-          <form className="flex gap-2 w-full max-w-lg bg-black/95 p-2 rounded-full border border-white/10 pointer-events-auto" onSubmit={(e) => { e.preventDefault(); if(textInput.trim()) { sendFinalTranscript(textInput, targetLangRef.current); setTextInput(""); } }}>
-            <input autoFocus value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="Type a message..." className="flex-1 bg-transparent border-0 outline-none px-5 text-white" />
-            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-[10px] font-bold opacity-40">Hide</button>
-          </form>
+        <div className="absolute inset-x-0 bottom-24 px-4 z-40 flex justify-center">
+           {/* Your chat input component would go here */}
+           <div className="bg-white/10 backdrop-blur-lg p-2 rounded-full border border-white/20 w-full max-w-md">
+              <input 
+                autoFocus
+                className="bg-transparent w-full px-4 py-2 outline-none text-white placeholder:text-white/40"
+                placeholder="Type a message..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') setShowTextInput(false);
+                }}
+              />
+           </div>
         </div>
       )}
     </div>
