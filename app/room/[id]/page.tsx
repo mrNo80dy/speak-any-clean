@@ -270,12 +270,7 @@ export default function RoomPage() {
   const pipDragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
 
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
-  const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
-  });
-
+  
   // PiP controls visibility (tap PiP / watermark to show)
   const [pipControlsVisible, setPipControlsVisible] = useState(false);
   const pipControlsTimerRef = useRef<number | null>(null);
@@ -1805,6 +1800,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
