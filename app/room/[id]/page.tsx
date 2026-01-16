@@ -1064,7 +1064,7 @@ return (
     <TopHud
   visible={topVisible}
   ccOn={ccOn}
-  sdOn={sdOn}
+  sdOn={!hdEnabled}
   onToggleCc={() => {
     toggleCc();
     wakeTopHud(true);
@@ -1814,6 +1814,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
