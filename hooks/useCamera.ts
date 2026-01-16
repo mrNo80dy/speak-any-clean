@@ -77,19 +77,26 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
     } catch { return false; }
   }, [isMobile, localStreamRef]);
 
-  const setVideoQuality = useCallback(async (mode: "sd" | "hd") => {
+  // Find the setVideoQuality function in useCamera.ts and update it to this:
+const setVideoQuality = useCallback(async (mode: "sd" | "hd") => {
     const nextHd = mode === "hd";
     if (roomType !== "video" || switchingRef.current) return;
     switchingRef.current = true;
     try {
-      setCamEnabled(false); // Blink off
+      // Logic fix: momentarily blink off to force re-render
+      setCamEnabled(false);
       const ok = await applyQualityToExistingTrack(nextHd, facingMode);
       if (!ok) await restartVideoTrack(facingMode, nextHd);
-      setTimeout(() => setCamEnabled(true), 100); // Blink back on
+      
+      // Small delay ensures the browser processes the track switch
+      setTimeout(() => setCamEnabled(true), 100);
+      log?.("video quality changed", { hd: nextHd });
+    } catch (e) {
+      log?.("video quality change failed", { e: String(e) });
     } finally {
       switchingRef.current = false;
     }
-  }, [applyQualityToExistingTrack, facingMode, restartVideoTrack, roomType, setCamEnabled]);
+  }, [applyQualityToExistingTrack, facingMode, log, restartVideoTrack, roomType, setCamEnabled]);
 
   const toggleCamera = useCallback(async () => {
     if (roomType !== "video") return;
