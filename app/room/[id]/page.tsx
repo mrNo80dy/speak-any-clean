@@ -280,17 +280,17 @@ useEffect(() => {
     // Mobile landscape: give PiP more height (landscape tends to make PiP look tiny).
     const maxW = isMobile
       ? isLandscapeMobile
-        ? Math.min(w * 0.34, 260)
+        ? Math.min(w * 0.46, 360)
         : Math.min(w * 0.42, 200)
       : 220;
 
     const maxH = isMobile
       ? isLandscapeMobile
-        ? Math.min(h * 0.52, 280)
+        ? Math.min(h * 0.66, 360)
         : Math.min(h * 0.28, 220)
       : 140;
 
-    const minW = isMobile ? (isLandscapeMobile ? 140 : 110) : 160;
+    const minW = isMobile ? (isLandscapeMobile ? 170 : 110) : 160;
 
     let outW = maxW;
     let outH = outW / ar;
@@ -1132,7 +1132,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto w-11 h-11 flex items-center justify-center text-sm md:text-base text-white/90 transition ${
+              className={`pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none w-11 h-11 flex items-center justify-center text-sm md:text-base text-white/90 transition ${
                 ccOn ? "opacity-100 font-semibold" : "opacity-70"
               }`}
               title="Closed Captions"
@@ -1147,7 +1147,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                 showHudAfterInteraction();
                 setVideoQuality(hdEnabled ? "sd" : "hd");
               }}
-              className={`pointer-events-auto w-11 h-11 flex items-center justify-center text-sm md:text-base text-white/90 transition ${
+              className={`pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none w-11 h-11 flex items-center justify-center text-sm md:text-base text-white/90 transition ${
                 hdEnabled ? "opacity-100 font-semibold" : "opacity-70"
               }`}
               title={hdEnabled ? "HD" : "SD"}
@@ -1175,7 +1175,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   } catch {}
                 }
               }}
-              className="pointer-events-auto w-11 h-11 flex items-center justify-center text-white/90 opacity-80 hover:opacity-100"
+              className="pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none w-11 h-11 flex items-center justify-center text-white/90 opacity-80 hover:opacity-100"
               title="Share"
               aria-label="Share"
             >
@@ -1185,7 +1185,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <button
               type="button"
               onClick={handleEndCall}
-              className="pointer-events-auto w-11 h-11 flex items-center justify-center text-red-200 hover:text-red-100"
+              className="pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none w-11 h-11 flex items-center justify-center text-red-200 hover:text-red-100"
               title="Exit"
               aria-label="Exit"
             >
@@ -1194,7 +1194,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           </div>
         </header>
 
-        <main className="absolute inset-0 pt-0 md:pt-14">
+        <main className="absolute inset-0 pt-0">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1313,7 +1313,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
                 {roomType === "video" && !pipPinned && !hudVisible && (
                   <div
-                    className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
+                    className="pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
                       isMobile
                         ? {
@@ -1353,7 +1353,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                 {roomType === "video" && (
                   <div
                     ref={pipRef}
-                    className="pointer-events-auto z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
+                    className="pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none z-30 rounded-2xl overflow-hidden border border-white/10 shadow-xl bg-black"
                     style={
                       isMobile
                         ? {
@@ -1632,7 +1632,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           {showTextInput && (
             <form
               onSubmit={handleTextSubmit}
-              className="pointer-events-auto absolute inset-x-0 bottom-24 flex justify-center"
+              className="pointer-events-auto bg-transparent border-0 rounded-none shadow-none appearance-none absolute inset-x-0 bottom-24 flex justify-center"
             >
               <div className="flex gap-2 w-[92%] max-w-xl">
                 <input
