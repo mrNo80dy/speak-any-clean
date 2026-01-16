@@ -14,7 +14,7 @@ import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 import FullBleedVideo from "@/components/FullBleedVideo";
-import PipView from "@/components/PipView";
+import { PipView } from "@/components/PipView";
 
 // Types
 type WebRTCPayload = {
@@ -1523,6 +1523,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
