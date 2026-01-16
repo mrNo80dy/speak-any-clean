@@ -14,6 +14,12 @@ import { useAnySpeakStt } from "@/hooks/useAnySpeakStt";
 import { useAnySpeakMessages } from "@/hooks/useAnySpeakMessages";
 import { useAnySpeakWebRtc, type AnySpeakPeer } from "@/hooks/useAnySpeakWebRtc";
 import FullBleedVideo from "@/components/FullBleedVideo";
+import { useHudController } from "@/hooks/useHudController";
+import { TopHud } from "@/components/TopHud";
+import { BottomRightHud } from "@/components/BottomRightHud";
+import { PipView } from "@/components/PipView";
+import { PttButton } from "@/components/PttButton";
+import { HudWakeZones } from "@/components/HudWakeZones";
 
 // Types
 type WebRTCPayload = {
@@ -1048,6 +1054,17 @@ const TOP_BTN = isMobile ? 56 : 72;
     return { dock: pttDock as "left" | "right", left: 0, top };
   }, [isMobile, pttDock, pttT, showTextInput]);
 
+    const {
+  topVisible,
+  brVisible,
+  pipControlsVisible,
+  pipPinned,
+  wakeTopHud,
+  wakeBrHud,
+  wakePipControls,
+  togglePipPinned,
+} = useHudController();
+
 
 
   // ---- Render -----------------------------------------------
@@ -1788,6 +1805,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
