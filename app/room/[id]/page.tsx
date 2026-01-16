@@ -1071,7 +1071,7 @@ return (
 }}
 
   onToggleSd={() => {
-    toggleHd();
+    toggleSd();
     wakeTopHud(true);
   }}
   onExit={onExit}
@@ -1815,6 +1815,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
