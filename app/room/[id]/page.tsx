@@ -494,29 +494,6 @@ useEffect(() => {
     stop,
   } = localMedia;
 
-  // Track local camera aspect ratio (so PiP can match what the device is actually sending)
-  useEffect(() => {
-    const s = localStreamRef.current;
-    const vt = s?.getVideoTracks?.()?.[0];
-    if (!vt) return;
-
-    const apply = () => {
-      try {
-        const st: any = vt.getSettings ? vt.getSettings() : {};
-        const w = Number(st.width || 0);
-        const h = Number(st.height || 0);
-        if (w > 0 && h > 0) {
-          setPipAspect(w / h);
-        }
-      } catch {}
-    };
-
-    apply();
-    // Some browsers update settings after a short delay.
-    const t = window.setTimeout(apply, 350);
-    return () => window.clearTimeout(t);
-  }, [camOn, joinCamOn]);
-
 
   const { beforeConnect, toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
@@ -1523,7 +1500,6 @@ onPointerCancel={() => {
     </div>
   );
 }
-
 
 
 
