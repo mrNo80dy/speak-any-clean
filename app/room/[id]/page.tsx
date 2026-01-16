@@ -30,8 +30,7 @@ function pickSupportedLang(preferred?: string) {
   const pref = (preferred || "").trim();
   if (!pref) return fallback;
   if (LANGUAGES.some((l) => l.code === pref)) return pref;
-  const base = pref.slice(0, 2).toLowerCase();
-  const baseMatch = LANGUAGES.find((l) => l.code.toLowerCase().startsWith(base));
+  const baseMatch = LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()));
   return baseMatch?.code || fallback;
 }
 
@@ -61,14 +60,13 @@ export default function RoomPage() {
   const isMobile = useMemo(() => typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent), []);
   const clientId = useMemo(() => {
     if (typeof window === "undefined") return "server";
-    let id = sessionStorage.getItem("clientId");
-    if (!id) { id = crypto.randomUUID(); sessionStorage.setItem("clientId", id); }
+    let id = sessionStorage.getItem("clientId") || crypto.randomUUID();
+    sessionStorage.setItem("clientId", id);
     return id;
   }, []);
 
   const peersRef = useRef<Map<string, AnySpeakPeer>>(new Map());
   const displayNameRef = useRef("You");
-  const speakLangRef = useRef("en-US");
   const targetLangRef = useRef("en-US");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
@@ -97,16 +95,16 @@ export default function RoomPage() {
     channelRef.current?.send({ type: "broadcast", event: "transcript", payload: { from: clientId, text, lang, name: displayNameRef.current } });
   };
 
-  const { mode } = useCallMode({ modeParam: roomType === "video" ? "video" : "audio", participantCount: peerIds.length + 1 });
-  const localMedia = useLocalMedia({ wantVideo: mode === "video", wantAudio: !isMobile });
+  const localMedia = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
   const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled } = localMedia;
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({ isMobile, roomType, joinCamOn, acquire, localStreamRef, setCamEnabled, peersRef, log });
-  const { sttListening, toggleMic, pttDown, pttUp, stopAllStt } = useAnySpeakStt({ 
-    isMobile, debugKey, speakLang: speakLangRef.current, userTouchedMicRef: useRef(false), micOnRef: useRef(false), micArmedRef: useRef(false), pttHeldRef: useRef(false), 
+
+  const { sttListening, toggleMic, pttDown, pttUp } = useAnySpeakStt({ 
+    isMobile, debugKey, speakLang: pickSupportedLang(typeof navigator !== "undefined" ? navigator.language : "en-US"), 
+    userTouchedMicRef: useRef(false), micOnRef: useRef(false), micArmedRef: useRef(false), pttHeldRef: useRef(false), 
     micOn, setMicEnabled, unlockTts, log, onFinalTranscript: sendFinalTranscript 
   });
-
   const { makeOffer, handleOffer, handleAnswer, handleIce } = useAnySpeakWebRtc({
     clientId, isMobile, iceServers: [{ urls: "stun:stun.l.google.com:19302" }], localStreamRef, peersRef, shouldMuteRawAudioRef: useRef(true), setConnected: () => {}, log,
     upsertPeerStream: (id, stream) => setPeerStreams(prev => ({ ...prev, [id]: stream }))
@@ -134,7 +132,7 @@ export default function RoomPage() {
       if (msg.payload.from === clientId) return;
       const { translatedText, targetLang: outLang } = await translateText(msg.payload.lang, targetLangRef.current, msg.payload.text);
       pushMessage({ fromId: msg.payload.from, fromName: msg.payload.name || "Guest", originalLang: msg.payload.lang, translatedLang: outLang, originalText: msg.payload.text, translatedText, isLocal: false });
-      speakText(translatedText, outLang);
+      if (ccOn) speakText(translatedText, outLang);
     }
   });
 
@@ -142,6 +140,7 @@ export default function RoomPage() {
     if (prejoinDone) {
       acquire().then((stream) => {
         if (stream && roomType === "video" && joinCamOn === false) setCamEnabled(false);
+        log("Camera stream acquired successfully");
       });
     }
   }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
@@ -180,25 +179,40 @@ export default function RoomPage() {
             <PipView stream={localStreamRef.current} isMobile={isMobile} visible={true} controlsVisible={pipControlsVisible} pinned={pipPinned} onWakeControls={wakePipControls} onTogglePin={togglePipPinned} onFlipCamera={canFlip ? flipCamera : undefined} />
           </div>
         )}
+
+        {ccOn && messages.length > 0 && (
+          <div className="absolute inset-x-0 bottom-40 px-6 z-20 pointer-events-none flex flex-col gap-3 items-center">
+            {messages.slice(-2).map((m) => (
+              <div key={m.id} className="bg-black/60 backdrop-blur-xl border border-white/10 px-5 py-3 rounded-2xl animate-in fade-in slide-in-from-bottom-2">
+                <p className="text-[10px] font-bold opacity-50 uppercase mb-1">{m.fromName}</p>
+                <p className="text-[16px] leading-tight font-medium">{m.translatedText}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
 
       <div className="relative z-50 pointer-events-none h-full w-full">
-        <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => navigator.clipboard.writeText(window.location.href)} onExit={() => router.push("/")} />
-        <BottomRightHud visible={brVisible} isMobile={isMobile} camOn={camOn} micOn={isMobile ? true : sttListening} showTextInput={showTextInput} onToggleCamera={toggleCamera} onToggleMic={toggleMic} onToggleText={() => setShowTextInput(!showTextInput)} />
+        <TopHud visible={topVisible} ccOn={ccOn} hdOn={hdEnabled} onToggleCc={() => setCcOn(!ccOn)} onToggleHd={() => setVideoQuality(hdEnabled ? "sd" : "hd")} onShare={() => { navigator.clipboard.writeText(window.location.href); alert("Room link copied!"); }} onExit={() => router.push("/")} />
+        
+        {/* State variables (camOn, micOn) now passed correctly for visual feedback */}
+        <BottomRightHud visible={brVisible} isMobile={isMobile} camOn={camOn} micOn={isMobile ? sttListening : micOn} showTextInput={showTextInput} onToggleCamera={toggleCamera} onToggleMic={toggleMic} onToggleText={() => setShowTextInput(!showTextInput)} />
+        
         {isMobile && <PttButton isPressed={sttListening} disabled={false} onPressStart={pttDown} onPressEnd={pttUp} />}
       </div>
 
       {debugEnabled && (
-        <div className="absolute top-20 left-4 z-[100] bg-black/80 p-4 rounded-lg text-[10px] font-mono pointer-events-none max-h-[40vh] overflow-y-auto border border-white/20">
-          <p className="text-emerald-400 mb-2">DEBUG MODE ACTIVE</p>
-          {logs.map((log, i) => <div key={i}>{log}</div>)}
+        <div className="absolute top-20 left-4 z-[100] bg-black/80 p-4 rounded-lg text-[10px] font-mono pointer-events-none border border-white/20 max-w-xs">
+          <p className="text-emerald-400 mb-2">DEBUG ({peerIds.length} peers)</p>
+          {logs.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       )}
 
       {showTextInput && (
         <div className="absolute inset-x-0 bottom-24 z-[60] flex justify-center px-4">
-          <form className="flex gap-2 w-full max-w-lg bg-black/90 p-2 rounded-full border border-white/10 pointer-events-auto shadow-2xl" onSubmit={(e) => { e.preventDefault(); if(textInput.trim()) { sendFinalTranscript(textInput, speakLangRef.current); setTextInput(""); setShowTextInput(false); } }}>
-            <input autoFocus value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="Type a message..." className="flex-1 bg-transparent border-0 outline-none px-4 text-white" />
+          <form className="flex gap-2 w-full max-w-lg bg-black/90 p-2 rounded-full border border-white/20 pointer-events-auto" onSubmit={(e) => { e.preventDefault(); if(textInput.trim()) { sendFinalTranscript(textInput, targetLangRef.current); setTextInput(""); } }}>
+            <input autoFocus value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="Type a message..." className="flex-1 bg-transparent border-0 outline-none px-5 text-white" />
+            <button type="button" onClick={() => setShowTextInput(false)} className="px-4 text-xs opacity-50">Close</button>
           </form>
         </div>
       )}
