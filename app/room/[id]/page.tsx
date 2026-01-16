@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { LANGUAGES } from "@/lib/languages";
-import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
@@ -20,19 +19,16 @@ import { PipView } from "@/components/PipView";
 import { PttButton } from "@/components/PttButton";
 import { HudWakeZones } from "@/components/HudWakeZones";
 
-// --- Types ---
 type RoomType = "audio" | "video";
-type RoomInfo = { code: string | null; room_type: RoomType };
+interface RoomInfo { code: string | null; room_type: RoomType }
 interface SupabaseRoomResponse { code: string | null; room_type: string }
-type PeerStreams = Record<string, MediaStream>;
 
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
   const pref = (preferred || "").trim();
   if (!pref) return fallback;
   if (LANGUAGES.some((l) => l.code === pref)) return pref;
-  const match = LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()));
-  return match?.code || fallback;
+  return LANGUAGES.find((l) => l.code.toLowerCase().startsWith(pref.slice(0, 2).toLowerCase()))?.code || fallback;
 }
 
 async function translateText(fromLang: string, toLang: string, text: string) {
@@ -47,13 +43,13 @@ async function translateText(fromLang: string, toLang: string, text: string) {
     return { translatedText: data.translatedText || trimmed, targetLang: data.targetLang || toLang };
   } catch { return { translatedText: trimmed, targetLang: toLang }; }
 }
+
 export default function RoomPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
-  const debugKey = debugEnabled ? "debug" : "normal";
 
   const isMobile = useMemo(() => typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent), []);
   const clientId = useMemo(() => {
@@ -68,7 +64,7 @@ export default function RoomPage() {
   const targetLangRef = useRef("en-US");
 
   const [peerIds, setPeerIds] = useState<string[]>([]);
-  const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
+  const [peerStreams, setPeerStreams] = useState<Record<string, MediaStream>>({});
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
   const [ccOn, setCcOn] = useState(true);
@@ -81,7 +77,6 @@ export default function RoomPage() {
   const prejoinDone = roomType === "audio" ? true : joinCamOn !== null;
 
   const log = useCallback((msg: string) => console.log(`[Room] ${msg}`), []);
-
   const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
   const { speakText, unlockTts } = useAnySpeakTts({ getLang: () => targetLangRef.current, onLog: log });
 
@@ -91,22 +86,24 @@ export default function RoomPage() {
     channelRef.current?.send({ type: "broadcast", event: "transcript", payload: { from: clientId, text, lang, name: displayNameRef.current } });
   };
 
-  const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled, stop } = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
+  const localMedia = useLocalMedia({ wantVideo: roomType === "video", wantAudio: !isMobile });
+  const { localStreamRef, micOn, camOn, acquire, setMicEnabled, setCamEnabled, stop } = localMedia;
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({ isMobile, roomType, joinCamOn, acquire, localStreamRef, setCamEnabled, peersRef, log });
 
   const { sttListening, toggleMic, pttDown, pttUp, stopAllStt } = useAnySpeakStt({ 
-    isMobile, debugKey, speakLang: pickSupportedLang(typeof navigator !== "undefined" ? navigator.language : "en-US"), 
+    isMobile, debugKey: debugEnabled ? "debug" : "normal", speakLang: pickSupportedLang(typeof navigator !== "undefined" ? navigator.language : "en-US"), 
     userTouchedMicRef: useRef(false), micOnRef: useRef(false), micArmedRef: useRef(false), pttHeldRef: useRef(false), 
     micOn, setMicEnabled, unlockTts, log, onFinalTranscript: sendFinalTranscript 
   });
+
   const { makeOffer, handleOffer, handleAnswer, handleIce } = useAnySpeakWebRtc({
     clientId, isMobile, iceServers: [{ urls: "stun:stun.l.google.com:19302" }], localStreamRef, peersRef, shouldMuteRawAudioRef: useRef(true), setConnected: () => {}, log,
     upsertPeerStream: (id, stream) => setPeerStreams(prev => ({ ...prev, [id]: stream }))
   });
 
   const { channelRef } = useAnySpeakRealtime({
-    roomId: roomId || "", clientId, prejoinDone, roomType, joinCamOn, debugKey, displayNameRef, log,
+    roomId: roomId || "", clientId, prejoinDone, roomType, joinCamOn, debugKey: debugEnabled ? "debug" : "normal", displayNameRef, log,
     teardownPeers: (id) => {
       const p = peersRef.current.get(id);
       if (p) { p.pc.close(); peersRef.current.delete(id); setPeerIds(prev => prev.filter(pId => pId !== id)); }
@@ -131,17 +128,18 @@ export default function RoomPage() {
     }
   });
 
-  // AUTO-START CAMERA & FORCE RE-RENDER
+  // CRITICAL FIX: Ensure camera starts and tracks are enabled immediately
   useEffect(() => {
     if (prejoinDone) {
-      acquire().then(() => {
-        if (roomType === "video" && joinCamOn === false) setCamEnabled(false);
-        setStreamVersion(v => v + 1); 
+      acquire().then((stream) => {
+        if (stream && roomType === "video") {
+          setCamEnabled(!!joinCamOn);
+          setStreamVersion(v => v + 1);
+        }
       });
     }
   }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled]);
 
-  // HARDWARE CLEANUP
   const handleExit = useCallback(() => {
     stop(); 
     stopAllStt("exit");
@@ -152,7 +150,6 @@ export default function RoomPage() {
     return () => { stop(); stopAllStt("unmount"); };
   }, [stop, stopAllStt]);
 
-  // TYPED SUPABASE FETCH
   useEffect(() => {
     if (!roomId) return;
     supabase.from("rooms").select("code, room_type").eq("id", roomId).maybeSingle()
@@ -160,9 +157,10 @@ export default function RoomPage() {
         if (data) setRoomInfo({ code: data.code, room_type: data.room_type as RoomType }); 
       });
   }, [roomId]);
+
   if (roomType === "video" && joinCamOn === null) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-black text-white gap-6 font-sans">
+      <div className="flex flex-col items-center justify-center h-screen bg-black text-white gap-6">
         <h1 className="text-2xl font-bold">Join Video Room</h1>
         <div className="flex gap-4">
           <button onClick={() => setJoinCamOn(true)} className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold active:scale-95 transition">Camera On</button>
@@ -174,9 +172,7 @@ export default function RoomPage() {
 
   return (
     <div className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden relative" onPointerDown={() => { wakeTopHud(); wakeBrHud(); }}>
-      <div className="absolute inset-0 z-0">
-        <HudWakeZones onWakeTop={() => wakeTopHud(true)} onWakeBottomRight={() => wakeBrHud(true)} />
-      </div>
+      <div className="absolute inset-0 z-0"><HudWakeZones onWakeTop={() => wakeTopHud(true)} onWakeBottomRight={() => wakeBrHud(true)} /></div>
 
       <main className="absolute inset-0 z-10">
         {peerIds.length === 0 ? (
@@ -188,15 +184,21 @@ export default function RoomPage() {
           </div>
         )}
 
+        {/* CHAT STYLE CAPTIONS (Max 3, Fade/Shrink) */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-4 z-20 pointer-events-none flex flex-col gap-2">
-            {messages.slice(-3).map((m, idx) => (
-              <div key={m.id} className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-300`} style={{ opacity: 1 - (2 - idx) * 0.4 }}>
-                <div className={`max-w-[75%] px-4 py-2 rounded-2xl backdrop-blur-2xl border ${m.isLocal ? "bg-emerald-500/10 border-emerald-500/20 rounded-br-none" : "bg-black/40 border-white/10 rounded-bl-none"}`}>
-                  <p className="text-[15px] leading-tight">{m.translatedText}</p>
+            {messages.slice(-3).map((m, idx, arr) => {
+              const age = arr.length - 1 - idx; // 0 is newest, 2 is oldest
+              const opacity = 1 - age * 0.35;
+              const scale = 1 - age * 0.08;
+              return (
+                <div key={m.id} className={`flex w-full ${m.isLocal ? "justify-end" : "justify-start"} transition-all duration-500`} style={{ opacity, transform: `scale(${scale}) translateY(${age * -12}px)` }}>
+                  <div className={`max-w-[80%] px-4 py-2 rounded-2xl backdrop-blur-xl border ${m.isLocal ? "bg-emerald-500/10 border-emerald-500/20 rounded-br-none" : "bg-black/40 border-white/10 rounded-bl-none"}`}>
+                    <p className="text-[15px] leading-tight">{m.translatedText}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
