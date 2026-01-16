@@ -238,6 +238,13 @@ useEffect(() => {
   // We keep PiP *simple* here: visibility is derived, and controls (pin/flip/cam)
   // only appear briefly when the PiP is tapped. No dragging/position persistence.
 
+  // PiP dimensions (kept local to the page; PipView itself does not manage sizing)
+  const pipDims = useMemo(() => {
+    // Mobile: slightly taller footprint to match typical portrait preview.
+    // Desktop: wider thumbnail to avoid covering too much content.
+    return isMobile ? { w: 132, h: 176 } : { w: 240, h: 160 };
+  }, [isMobile]);
+
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
     if (typeof window === "undefined") return true;
     const v = window.localStorage.getItem("anyspeak.pip.pinned");
