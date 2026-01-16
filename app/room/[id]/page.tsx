@@ -1056,10 +1056,13 @@ const TOP_BTN = isMobile ? 56 : 72;
       className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden"
       onMouseMove={(e) => {
         if (isMobile) return;
-        const y = e.clientY;
-        const h = window.innerHeight || 0;
-        if (y < 96) showTopHudAfterInteraction();
-        if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
+        const x = e.clientX;
+const y = e.clientY;
+const w = window.innerWidth || 0;
+const h = window.innerHeight || 0;
+
+if (y < 96) showTopHudAfterInteraction();
+if (y > h - 96 && x > w - 96) showBrHudAfterInteraction();
       }}
     >
       <div className="relative h-full w-full overflow-hidden">
@@ -1785,6 +1788,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
