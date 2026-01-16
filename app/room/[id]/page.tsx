@@ -21,8 +21,10 @@ import { PipView } from "@/components/PipView";
 import { PttButton } from "@/components/PttButton";
 import { HudWakeZones } from "@/components/HudWakeZones";
 
-// --- Types & Interfaces ---
+// --- Constants ---
+const PTT_SIZE = 84;
 
+// --- Types ---
 type WebRTCPayload = {
   type: "offer" | "answer" | "ice";
   from: string;
@@ -42,17 +44,13 @@ type Peer = AnySpeakPeer;
 type PeerStreams = Record<string, MediaStream>;
 type RoomType = "audio" | "video";
 type RoomInfo = { code: string | null; room_type: RoomType; };
+interface RoomRow { code: string | null; room_type: string; }
+
+// --- Helper Functions ---
 
 /**
- * Data shape from the Supabase 'rooms' table
+ * Normalizes BCP-47 language codes to our supported list.
  */
-interface RoomRow {
-  code: string | null;
-  room_type: string;
-}
-
-// --- Helpers ---
-
 function pickSupportedLang(preferred?: string) {
   const fallback = "en-US";
   const pref = (preferred || "").trim();
@@ -63,6 +61,9 @@ function pickSupportedLang(preferred?: string) {
   return baseMatch?.code || fallback;
 }
 
+/**
+ * Server-side translation proxy wrapper.
+ */
 async function translateText(fromLang: string, toLang: string, text: string) {
   const trimmed = text.trim();
   if (!trimmed || fromLang === toLang) {
@@ -86,7 +87,7 @@ async function translateText(fromLang: string, toLang: string, text: string) {
   }
 }
 
-// --- Main Component ---
+// --- Main Page Component ---
 
 export default function RoomPage() {
   const router = useRouter();
@@ -96,7 +97,7 @@ export default function RoomPage() {
   const debugEnabled = searchParams?.get("debug") === "1";
   const debugKey = debugEnabled ? "debug" : "normal";
 
-  // Identity & Environment
+  // Identity & Viewport Setup
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -111,7 +112,7 @@ export default function RoomPage() {
     return id;
   }, []);
 
-  // --- Refs (Stability) ---
+  // --- REFS (Application State Stability) ---
   const peersRef = useRef<Map<string, Peer>>(new Map());
   const peerLabelsRef = useRef<Record<string, string>>({});
   const userTouchedMicRef = useRef(false);
@@ -124,7 +125,7 @@ export default function RoomPage() {
   const speakLangRef = useRef<string>("en-US");
   const targetLangRef = useRef<string>("en-US");
 
-  // --- State ---
+  // --- STATE ---
   const [peerIds, setPeerIds] = useState<string[]>([]);
   const [peerStreams, setPeerStreams] = useState<PeerStreams>({});
   const [peerLabels, setPeerLabels] = useState<Record<string, string>>({});
@@ -137,7 +138,7 @@ export default function RoomPage() {
   const [textInput, setTextInput] = useState("");
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
 
-  // HUD Visibility Controller
+  // HUD and Overlay Control
   const {
     topVisible,
     brVisible,
@@ -154,7 +155,7 @@ export default function RoomPage() {
 
   const log = useCallback((msg: string, rest: any = {}) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
-    setLogs((l) => [line, ...l].slice(0, 50));
+    setLogs((l) => [line, ...l].slice(0, 100));
   }, []);
 
   // --- Language Setup ---
@@ -172,7 +173,7 @@ export default function RoomPage() {
     displayNameRef.current = displayName;
   }, [speakLang, targetLang, displayName]);
 
-  // --- Core Hooks ---
+  // --- Messaging & Audio Hooks ---
   const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
   const { speakText, unlockTts } = useAnySpeakTts({
     getLang: () => targetLangRef.current,
@@ -211,6 +212,7 @@ export default function RoomPage() {
     });
   };
 
+  // --- Media & Camera Hooks ---
   const { mode } = useCallMode({
     modeParam: roomType === "video" ? "video" : "audio",
     participantCount: peerIds.length + 1,
@@ -228,6 +230,7 @@ export default function RoomPage() {
     acquire,
     setMicEnabled,
     setCamEnabled,
+    attachLocalVideo,
   } = localMedia;
 
   const {
@@ -247,6 +250,7 @@ export default function RoomPage() {
     log,
   });
 
+  // --- STT & Mic Control Hook ---
   const {
     sttListening,
     toggleMic,
@@ -268,6 +272,7 @@ export default function RoomPage() {
     onFinalTranscript: sendFinalTranscript,
   });
 
+  // --- WebRTC signaling Hook ---
   const {
     makeOffer,
     handleOffer,
@@ -282,11 +287,12 @@ export default function RoomPage() {
     shouldMuteRawAudioRef,
     setConnected,
     log,
-    upsertPeerStream: (remoteId, stream) => {
-      setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
+    upsertPeerStream: (id, stream) => {
+      setPeerStreams((prev) => ({ ...prev, [id]: stream }));
     },
   });
 
+  // --- Realtime / Supabase Synchronization Hook ---
   const { channelRef } = useAnySpeakRealtime({
     roomId: roomId || "",
     clientId,
@@ -307,7 +313,7 @@ export default function RoomPage() {
           delete next[id];
           return next;
         });
-        log(`Cleanup peer: ${id}`);
+        log(`Peer cleanup: ${id}`);
       }
     },
     onPresenceSync: (channel) => {
@@ -372,12 +378,27 @@ export default function RoomPage() {
     },
   });
 
-  // --- Data Fetching & Lifecyle ---
+  // --- LIFECYCLE EFFECTS ---
 
+  // 1. Media Acquisition on Join
+  useEffect(() => {
+    if (prejoinDone) {
+      log("Initializing local media...");
+      acquire().then((stream) => {
+        if (stream) {
+          log("Local media acquired successfully.");
+          // If the user chose to join with camera off, disable the video track
+          if (roomType === "video" && joinCamOn === false) {
+            setCamEnabled(false);
+          }
+        }
+      });
+    }
+  }, [prejoinDone, acquire, roomType, joinCamOn, setCamEnabled, log]);
+
+  // 2. Room Information Loading
   useEffect(() => {
     if (!roomId) return;
-    
-    // Fixed: Explicit type for Supabase data to resolve build error
     supabase
       .from("rooms")
       .select("code, room_type")
@@ -387,10 +408,11 @@ export default function RoomPage() {
         if (data) {
           setRoomInfo({ code: data.code, room_type: data.room_type as RoomType });
         }
-        if (error) console.error("Room fetch error:", error);
+        if (error) log("Error fetching room info", error);
       });
-  }, [roomId]);
+  }, [roomId, log]);
 
+  // 3. Cleanup on Unmount
   useEffect(() => {
     return () => {
       stopAllStt("unmount");
@@ -399,24 +421,26 @@ export default function RoomPage() {
     };
   }, [stopAllStt]);
 
+  // Mic UI derived state
   const micUiOn = isMobile ? true : sttListening;
 
-  // --- Rendering ---
+  // --- RENDERING ---
 
+  // Handle Pre-join screen for Video rooms
   if (roomType === "video" && joinCamOn === null) {
     return (
       <div className="flex flex-col items-center justify-center h-[100dvh] bg-black text-white p-6">
-        <h1 className="text-2xl font-bold mb-8">Join the conversation</h1>
+        <h1 className="text-2xl font-bold mb-8">Ready to join?</h1>
         <div className="flex gap-4">
           <button
             onClick={() => setJoinCamOn(true)}
-            className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg"
+            className="px-8 py-4 bg-emerald-600 rounded-2xl font-bold text-lg active:scale-95 transition"
           >
             Camera On
           </button>
           <button
             onClick={() => setJoinCamOn(false)}
-            className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg"
+            className="px-8 py-4 bg-neutral-800 rounded-2xl font-bold text-lg active:scale-95 transition"
           >
             Camera Off
           </button>
@@ -433,43 +457,20 @@ export default function RoomPage() {
         wakeBrHud();
       }}
     >
-      {/* 1. Wake Zones (z-10) - Ensures tapping near edges wakes HUD */}
-      <HudWakeZones 
-        onWakeTop={() => wakeTopHud(true)} 
-        onWakeBottomRight={() => wakeBrHud(true)} 
-      />
+      {/* 1. HUD WAKE ZONES - Positioned at z-0 to avoid blocking icons */}
+      <div className="absolute inset-0 z-0">
+        <HudWakeZones 
+          onWakeTop={() => wakeTopHud(true)} 
+          onWakeBottomRight={() => wakeBrHud(true)} 
+        />
+      </div>
 
-      {/* 2. Primary UI Overlays (z-30) */}
-      <TopHud
-        visible={topVisible}
-        ccOn={ccOn}
-        hdOn={hdEnabled}
-        onToggleCc={() => { setCcOn(!ccOn); wakeTopHud(); }}
-        onToggleHd={() => { setVideoQuality(hdEnabled ? "sd" : "hd"); wakeTopHud(); }}
-        onShare={() => {
-          navigator.clipboard.writeText(window.location.href);
-          log("Room link copied");
-        }}
-        onExit={() => router.push("/")}
-      />
-
-      <BottomRightHud
-        visible={brVisible}
-        isMobile={isMobile}
-        camOn={camOn}
-        micOn={micUiOn}
-        showTextInput={showTextInput}
-        onToggleCamera={() => { toggleCamera(); wakeBrHud(); }}
-        onToggleMic={() => { toggleMic(); wakeBrHud(); }}
-        onToggleText={() => { setShowTextInput(!showTextInput); wakeBrHud(); }}
-      />
-
-      {/* 3. Main Stream Area (z-0) */}
-      <main className="absolute inset-0 z-0">
+      {/* 2. MAIN VIDEO VIEWPORT - z-10 */}
+      <main className="absolute inset-0 z-10">
         {peerIds.length === 0 ? (
           <div className="relative h-full w-full">
             <FullBleedVideo stream={localStreamRef.current} isLocal fit="cover" />
-            <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/20 pointer-events-none" />
+            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/30 pointer-events-none" />
           </div>
         ) : (
           <div className="relative h-full w-full">
@@ -488,7 +489,7 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* CC Display (z-20) */}
+        {/* 3. CAPTION OVERLAY - z-20 */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-36 px-6 z-20 pointer-events-none flex flex-col gap-3 items-center">
             {messages.slice(-2).map((m) => (
@@ -510,20 +511,48 @@ export default function RoomPage() {
         )}
       </main>
 
-      {/* 4. Interaction Buttons (z-40 & z-50) */}
-      {isMobile && (
-        <PttButton
-          isPressed={sttListening}
-          disabled={!micUiOn}
-          onPressStart={pttDown}
-          onPressEnd={pttUp}
+      {/* 4. INTERACTIVE OVERLAYS (HUD) - z-50 to ensure icons are tappable */}
+      <div className="relative z-50 pointer-events-none h-full w-full">
+        <TopHud
+          visible={topVisible}
+          ccOn={ccOn}
+          hdOn={hdEnabled}
+          onToggleCc={() => { setCcOn(!ccOn); wakeTopHud(); }}
+          onToggleHd={() => { setVideoQuality(hdEnabled ? "sd" : "hd"); wakeTopHud(); }}
+          onShare={() => {
+            navigator.clipboard.writeText(window.location.href);
+            log("Room link copied to clipboard");
+          }}
+          onExit={() => router.push("/")}
         />
-      )}
 
+        <BottomRightHud
+          visible={brVisible}
+          isMobile={isMobile}
+          camOn={camOn}
+          micOn={micUiOn}
+          showTextInput={showTextInput}
+          onToggleCamera={() => { toggleCamera(); wakeBrHud(); }}
+          onToggleMic={() => { toggleMic(); wakeBrHud(); }}
+          onToggleText={() => { setShowTextInput(!showTextInput); wakeBrHud(); }}
+        />
+
+        {/* PTT for Mobile */}
+        {isMobile && (
+          <PttButton
+            isPressed={sttListening}
+            disabled={!micUiOn}
+            onPressStart={pttDown}
+            onPressEnd={pttUp}
+          />
+        )}
+      </div>
+
+      {/* 5. TEXT INPUT MODAL - z-[60] */}
       {showTextInput && (
-        <div className="absolute inset-x-0 bottom-24 z-50 flex justify-center px-4 animate-in fade-in zoom-in-95 duration-200">
+        <div className="absolute inset-x-0 bottom-24 z-[60] flex justify-center px-4 animate-in fade-in zoom-in-95 duration-200">
           <form 
-            className="flex gap-2 w-full max-w-lg bg-black/90 backdrop-blur-3xl p-2 rounded-full border border-white/10 shadow-2xl" 
+            className="flex gap-2 w-full max-w-lg bg-black/90 backdrop-blur-3xl p-2 rounded-full border border-white/10 shadow-2xl pointer-events-auto" 
             onSubmit={(e) => {
               e.preventDefault();
               if (textInput.trim()) {
@@ -550,11 +579,11 @@ export default function RoomPage() {
         </div>
       )}
 
-      {/* 5. Debug Console */}
+      {/* 6. DEBUG LOGS - z-[100] */}
       {debugEnabled && (
         <div className="absolute top-24 left-4 z-[100] bg-black/80 p-3 text-[10px] font-mono max-h-48 overflow-y-auto w-72 pointer-events-none opacity-40 rounded-xl border border-white/5">
           {logs.map((l, i) => (
-            <div key={i} className="mb-0.5">{l}</div>
+            <div key={i} className="mb-0.5 whitespace-pre-wrap">{l}</div>
           ))}
         </div>
       )}
