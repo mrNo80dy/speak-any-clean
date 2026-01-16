@@ -52,8 +52,7 @@ export default function RoomPage() {
     roomType: "video",
     acquire,
     localStreamRef,
-    setCamEnabled,
-    joinCamOn: true
+    setCamEnabled
   });
 
   // Start Media on Mount
@@ -62,7 +61,7 @@ export default function RoomPage() {
     const init = async () => {
       try {
         await acquire();
-        // Force a reset "blink" to ensure the video element binds to the stream
+        // Reset state to ensure video element binds
         setCamEnabled(false);
         setMicEnabled(true);
         setTimeout(() => {
@@ -95,7 +94,7 @@ export default function RoomPage() {
           fit="cover" 
         />
 
-        {/* CC Overlay - Fixed property name error */}
+        {/* CC Overlay */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
             {messages.slice(-2).map((m) => (
@@ -104,7 +103,6 @@ export default function RoomPage() {
                 className="bg-black/70 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/10 max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-300"
               >
                 <p className="text-[17px] font-medium leading-snug text-center text-white drop-shadow-md">
-                  {/* Using m.translatedText primarily, falling back to an empty string if undefined to satisfy TS */}
                   {m.translatedText || ""}
                 </p>
               </div>
