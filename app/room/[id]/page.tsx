@@ -1066,11 +1066,12 @@ return (
   ccOn={ccOn}
   sdOn={!hdEnabled}
   onToggleCc={() => {
-    toggleCc();
-    wakeTopHud(true);
-  }}
+  setCcOn((v) => !v);
+  wakeTopHud(true);
+}}
+
   onToggleSd={() => {
-    toggleSd();
+    toggleHd();
     wakeTopHud(true);
   }}
   onExit={onExit}
@@ -1814,6 +1815,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
