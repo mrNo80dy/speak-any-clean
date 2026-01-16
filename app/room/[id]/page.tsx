@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useCamera } from "@/hooks/useCamera";
@@ -53,17 +53,22 @@ export default function RoomPage() {
     acquire,
     localStreamRef,
     setCamEnabled,
-    // joinCamOn removed to fix build error
+    joinCamOn: true
   });
 
+  // Start Media on Mount
   useEffect(() => {
     if (!roomId) return;
     const init = async () => {
       try {
         await acquire();
-        setCamEnabled(true);
+        // Force a reset "blink" to ensure the video element binds to the stream
+        setCamEnabled(false);
         setMicEnabled(true);
-        setStreamVersion(v => v + 1);
+        setTimeout(() => {
+          setCamEnabled(true);
+          setStreamVersion(v => v + 1);
+        }, 150);
       } catch (e) {
         console.error("Failed to acquire media", e);
       }
@@ -90,7 +95,7 @@ export default function RoomPage() {
           fit="cover" 
         />
 
-        {/* CC Overlay - Fixed logic to ensure visibility */}
+        {/* CC Overlay - Fixed property name error */}
         {ccOn && messages.length > 0 && (
           <div className="absolute inset-x-0 bottom-32 px-6 z-20 pointer-events-none flex flex-col items-center gap-3">
             {messages.slice(-2).map((m) => (
@@ -99,7 +104,8 @@ export default function RoomPage() {
                 className="bg-black/70 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/10 max-w-[85%] animate-in fade-in slide-in-from-bottom-2 duration-300"
               >
                 <p className="text-[17px] font-medium leading-snug text-center text-white drop-shadow-md">
-                  {m.translatedText || m.text}
+                  {/* Using m.translatedText primarily, falling back to an empty string if undefined to satisfy TS */}
+                  {m.translatedText || ""}
                 </p>
               </div>
             ))}
