@@ -1043,13 +1043,23 @@ const TOP_BTN = isMobile ? 56 : 72;
 
 
   // ---- Render -----------------------------------------------
-  return (
-<div
-      className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden"
-        <HudWakeZones
-  onWakeTop={() => wakeTopHud()}
-  onWakeBottomRight={() => wakeBrHud()}
-/>
+return (
+  <div
+    className="h-[100dvh] w-screen bg-neutral-950 text-neutral-100 overflow-hidden"
+    onMouseMove={(e) => {
+      if (isMobile) return;
+      const x = e.clientX;
+      const y = e.clientY;
+      const w = window.innerWidth || 0;
+      const h = window.innerHeight || 0;
+      if (y < 96) wakeTopHud(true);
+      if (y > h - 96 && x > w - 96) wakeBrHud(true);
+    }}
+  >
+    <HudWakeZones
+      onWakeTop={() => wakeTopHud()}
+      onWakeBottomRight={() => wakeBrHud()}
+    />
 
       onMouseMove={(e) => {
         if (isMobile) return;
@@ -1780,6 +1790,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
