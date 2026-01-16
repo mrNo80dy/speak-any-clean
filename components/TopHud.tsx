@@ -5,20 +5,23 @@ import React from "react";
 type Props = {
   visible: boolean;
   ccOn: boolean;
-  sdOn: boolean;
+  hdOn: boolean;
   onToggleCc: () => void;
-  onToggleSd: () => void;
+  onToggleHd: () => void;
+  onShare?: () => void;
   onExit?: () => void;
 };
 
 export function TopHud({
   visible,
   ccOn,
-  sdOn,
+  hdOn,
   onToggleCc,
-  onToggleSd,
+  onToggleHd,
+  onShare,
   onExit,
 }: Props) {
+
   return (
     <header
       className={`absolute top-2 left-2 right-2 z-20 flex justify-center pointer-events-none transition-opacity duration-300 ${
@@ -34,13 +37,20 @@ export function TopHud({
           CC
         </IconButton>
 
-        <IconButton
-          label="Standard / HD"
-          active={sdOn}
-          onClick={onToggleSd}
-        >
-          HD
-        </IconButton>
+        {onShare && (
+  <IconButton label="Share" onClick={onShare}>
+    ↗
+  </IconButton>
+)}
+
+<IconButton
+  label={hdOn ? "HD (tap for SD)" : "SD (tap for HD)"}
+  active={hdOn}
+  onClick={onToggleHd}
+>
+  {hdOn ? "HD" : "SD"}
+</IconButton>
+
 
         {onExit && (
           <IconButton label="Exit" onClick={onExit}>
