@@ -23,7 +23,7 @@ export default function FullBleedVideo({
 
   const [isMobilePortrait, setIsMobilePortrait] = useState(false);
   const [isPortraitStream, setIsPortraitStream] = useState(false);
-  // This state is used specifically to "kick" the component when tracks enable
+  // This state forces a re-render when tracks are enabled/disabled
   const [, setTick] = useState(0); 
 
   useEffect(() => {
@@ -38,6 +38,18 @@ export default function FullBleedVideo({
     return () => window.removeEventListener("resize", update);
   }, []);
 
+  // Track orientation
+  useEffect(() => {
+    if (!stream) {
+      setIsPortraitStream(false);
+      return;
+    }
+    const vt = stream.getVideoTracks()[0];
+    const settings = vt?.getSettings();
+    setIsPortraitStream(!!(settings?.height && settings?.width && settings.height > settings.width));
+  }, [stream]);
+
+  // FIX: Force video playback when tracks unmute
   useEffect(() => {
     const s = stream;
     if (!s) return;
@@ -45,13 +57,14 @@ export default function FullBleedVideo({
     const bg = bgRef.current;
     const fg = fgRef.current;
 
-    // FIX: Listen for tracks being enabled/disabled
-    // This solves the "light on but black screen" issue
     const tracks = s.getVideoTracks();
-    const handleTrackChange = () => setTick(t => t + 1);
+    const handleTrackChange = () => {
+      setTick(t => t + 1);
+      if (fg) fg.play().catch(() => {});
+      if (bg) bg.play().catch(() => {});
+    };
 
     tracks.forEach(t => {
-      t.addEventListener('mute', handleTrackChange);
       t.addEventListener('unmute', handleTrackChange);
     });
 
@@ -72,18 +85,15 @@ export default function FullBleedVideo({
     }
 
     return () => {
-      tracks.forEach(t => {
-        t.removeEventListener('mute', handleTrackChange);
-        t.removeEventListener('unmute', handleTrackChange);
-      });
+      tracks.forEach(t => t.removeEventListener('unmute', handleTrackChange));
     };
   }, [stream]);
 
   const resolvedFit = useMemo(() => {
     if (fit === "cover" || fit === "contain") return fit;
-    if (preferCoverOnMobilePortrait && isMobilePortrait) return "cover";
+    if (preferCoverOnMobilePortrait && isMobilePortrait && isPortraitStream) return "cover";
     return "contain";
-  }, [fit, preferCoverOnMobilePortrait, isMobilePortrait]);
+  }, [fit, preferCoverOnMobilePortrait, isMobilePortrait, isPortraitStream]);
 
   const mirrorStyle = isLocal ? ({ transform: "scaleX(-1)" } as const) : undefined;
 
