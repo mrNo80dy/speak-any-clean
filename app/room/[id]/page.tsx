@@ -272,8 +272,7 @@ export default function RoomPage() {
   const [pipPos, setPipPos] = useState<{ x: number; y: number } | null>(null);
   
   // PiP controls visibility (tap PiP / watermark to show)
-  const [pipControlsVisible, setPipControlsVisible] = useState(false);
-  const pipControlsTimerRef = useRef<number | null>(null);
+    const pipControlsTimerRef = useRef<number | null>(null);
 
   const [pipAspect, setPipAspect] = useState<number>(16 / 9);
   const [vp, setVp] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -341,12 +340,6 @@ export default function RoomPage() {
       pipControlsTimerRef.current = null;
     }
   };
-
-  const showPipControls = useCallback(() => {
-    setPipControlsVisible(true);
-    clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
-  }, []);
 
     // Set an initial position once we have a peer (1:1 view).
   // Mobile: start top-left (selfie-like preview area).
@@ -439,20 +432,7 @@ export default function RoomPage() {
     });
   };
 
-  const pipOnPointerUpOrCancel = (e: React.PointerEvent) => {
-    if (!pipDraggingRef.current) {
-      showPipControls();
-      return;
-    }
-    pipDraggingRef.current = false;
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    // fade controls back out
-    clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), 2500);
-  };
-
+  
   // (PiP initial position handled above)
 
 
@@ -1800,6 +1780,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
