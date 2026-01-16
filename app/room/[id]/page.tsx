@@ -1050,18 +1050,23 @@ return (
     <TopHud
   visible={topVisible}
   ccOn={ccOn}
-  sdOn={!hdEnabled}
+  hdOn={hdEnabled}
   onToggleCc={() => {
-  setCcOn((v) => !v);
-  wakeTopHud(true);
-}}
-
-  onToggleSd={() => {
-    setVideoQuality(hdEnabled ? "sd" : "hd");
+    setCcOn(v => !v);
     wakeTopHud(true);
   }}
-  onExit={handleEndCall}
+  onToggleHd={() => {
+    void setVideoQuality(hdEnabled ? "sd" : "hd");
+    wakeTopHud(true);
+  }}
+  onShare={() => {
+    // copy link
+    void navigator.clipboard.writeText(window.location.href);
+    wakeTopHud(true);
+  }}
+  onExit={onExit}
 />
+
 
 <BottomRightHud
   visible={brVisible}
@@ -1074,14 +1079,15 @@ return (
     wakeBrHud(true);
   }}
   onToggleMic={() => {
-    toggleMic();
+    void toggleMic();
     wakeBrHud(true);
   }}
   onToggleText={() => {
-    setShowTextInput((v) => !v);
+    setShowTextInput(v => !v);
     wakeBrHud(true);
   }}
 />
+
 
       <div className="relative h-full w-full overflow-hidden">
         {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
@@ -1648,6 +1654,7 @@ onPointerCancel={() => {
     </div>
   );
 }
+
 
 
 
