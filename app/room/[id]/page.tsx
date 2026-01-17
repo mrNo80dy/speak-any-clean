@@ -1163,7 +1163,8 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     }
                     onClick={(e) => {
                       e.stopPropagation();
-                      showPipControls();
+                     // In this repo, the PiP controls visibility is handled by wakePipControls().
+                      wakePipControls(true);
                       showHudAfterInteraction();
                     }}
                     aria-label="Show PiP"
