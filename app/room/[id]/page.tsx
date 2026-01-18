@@ -118,26 +118,10 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// Mobile HUD: visible on entry, fades after a while, returns when top area/video touched.
-const [hudVisible, setHudVisible] = useState(true);
-const hudTimerRef = useRef<number | null>(null);
+// HUD is always visible (no auto-hide)
+const hudVisible = true;
+const showHudAfterInteraction = () => {};
 
-const showHudFor = useCallback((ms: number) => {
-  setHudVisible(true);
-  if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  hudTimerRef.current = window.setTimeout(() => setHudVisible(false), ms);
-}, []);
-
-const showHudInitial = useCallback(() => showHudFor(8000), [showHudFor]);
-const showHudAfterInteraction = useCallback(() => showHudFor(3000), [showHudFor]);
-
-
-useEffect(() => {
-  showHudInitial();
-  return () => {
-    if (hudTimerRef.current) window.clearTimeout(hudTimerRef.current);
-  };
-}, [showHudInitial]);
   
   // Stable per-tab clientId
   const clientId = useMemo(() => {
@@ -255,7 +239,7 @@ useEffect(() => {
   });
 
   const pipControlsTimerRef = useRef<number | null>(null);
-  const [pipControlsVisible, setPipControlsVisible] = useState(false);
+  const [pipControlsVisible, setPipControlsVisible] = useState(true);
 
   const clearPipControlsTimer = useCallback(() => {
     if (pipControlsTimerRef.current) {
@@ -264,11 +248,10 @@ useEffect(() => {
     }
   }, []);
 
-  const wakePipControls = useCallback((keepAlive: boolean = false) => {
+  const wakePipControls = useCallback((_keepAlive: boolean = false) => {
     setPipControlsVisible(true);
-    clearPipControlsTimer();
-    pipControlsTimerRef.current = window.setTimeout(() => setPipControlsVisible(false), keepAlive ? 6000 : 2500);
-  }, [clearPipControlsTimer]);
+  }, []);
+
 
   // Persist pin choice
   useEffect(() => {
@@ -336,7 +319,6 @@ useEffect(() => {
   // Pre-join
   const prejoinDone =
     roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
-
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
@@ -516,6 +498,20 @@ useEffect(() => {
     peersRef,
     log,
   });
+
+  // Auto-enable camera on entry for video rooms when user chose camera-on prejoin
+  useEffect(() => {
+    if (roomType !== "video") return;
+    if (joinCamOn !== true) return;
+    (async () => {
+      try {
+        await acquire();
+        setCamEnabled(true);
+      } catch (err) {
+        log("auto cam enable failed", { err: String(err) });
+      }
+    })();
+  }, [roomType, joinCamOn, acquire, setCamEnabled]);
 
   const {
     sttListening,
@@ -924,93 +920,83 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           </div>
         )}
 
-        {/* Mobile: only the TOP strip brings HUD back (PTT should not pop it) */}
-        {isMobile && (
-          <div
-            className="absolute top-0 left-0 right-0 z-[15] pointer-events-auto"
-            style={{ height: "30vh" }}
-            onPointerDown={() => showHudAfterInteraction()}
-          />
-        )}
-
-        {/* Top floating controls (icons only, no pills/words) */}
-        <header
-          className={`absolute top-2 left-2 right-2 z-20 pointer-events-none transition-opacity duration-300 ${
-            !hudVisible ? "opacity-0" : "opacity-100"
-          }`}
-        >
-          <div className="relative flex items-center justify-center gap-2">
-            {/* Audio join pulse (shows when someone joins an audio room) */}
-            {joinPulse && (
-              <div className="absolute left-0 top-0 pointer-events-none">
-                <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90">
-                  👤
+                {/* Top corner controls (always visible) */}
+        <header className="absolute top-2 left-2 right-2 z-20 pointer-events-none">
+          <div className="flex items-start justify-between">
+            <div className="flex flex-col gap-2 items-start">
+              {/* Audio join pulse (shows when someone joins an audio room) */}
+              {joinPulse && (
+                <div className="pointer-events-none">
+                  <div className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90">
+                    👤
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <button
-              type="button"
-              onClick={() => setCcOn((v) => !v)}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                ccOn ? "ring-1 ring-white/25" : "opacity-90"
-              }`}
-              title="Closed Captions"
-              aria-label="Closed Captions"
-            >
-              CC
-            </button>
+              <button
+                type="button"
+                onClick={() => setCcOn((v) => !v)}
+                className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
+                  ccOn ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title="Closed Captions"
+                aria-label="Closed Captions"
+              >
+                CC
+              </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                showHudAfterInteraction();
-                setVideoQuality(hdEnabled ? "sd" : "hd");
-              }}
-              className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
-              }`}
-              title={hdEnabled ? "HD" : "SD"}
-              aria-label="Toggle HD"
-            >
-              {hdEnabled ? "HD" : "SD"}
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVideoQuality(hdEnabled ? "sd" : "hd");
+                }}
+                className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
+                  hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
+                }`}
+                title={hdEnabled ? "HD" : "SD"}
+                aria-label="Toggle HD"
+              >
+                {hdEnabled ? "HD" : "SD"}
+              </button>
 
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const url = window.location.href;
-                  // @ts-ignore
-                  if (navigator.share) {
-                    // @ts-ignore
-                    await navigator.share({ url });
-                  } else {
-                    await navigator.clipboard.writeText(url);
-                  }
-                } catch {
+              <button
+                type="button"
+                onClick={async () => {
                   try {
                     const url = window.location.href;
-                    await navigator.clipboard.writeText(url);
-                  } catch {}
-                }
-              }}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
-              title="Share"
-              aria-label="Share"
-            >
-              ↗
-            </button>
+                    // @ts-ignore
+                    if (navigator.share) {
+                      // @ts-ignore
+                      await navigator.share({ url });
+                    } else {
+                      await navigator.clipboard.writeText(url);
+                    }
+                  } catch {
+                    try {
+                      const url = window.location.href;
+                      await navigator.clipboard.writeText(url);
+                    } catch {}
+                  }
+                }}
+                className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
+                title="Share"
+                aria-label="Share"
+              >
+                ↗
+              </button>
+            </div>
 
-            <button
-              type="button"
-              onClick={handleEndCall}
-              className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
-              title="Exit"
-              aria-label="Exit"
-            >
-              📴
-            </button>
+            <div className="flex flex-col gap-2 items-end">
+              <button
+                type="button"
+                onClick={handleEndCall}
+                className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
+                title="Exit"
+                aria-label="Exit"
+              >
+                📴
+              </button>
+            </div>
           </div>
         </header>
 
@@ -1440,25 +1426,14 @@ onPointerCancel={() => {
             </button>
           </div>
 
-        {/* Bottom-right wake zone (always tappable) */}
-<div
-  className="fixed right-0 bottom-0 z-40 pointer-events-auto"
-  style={{ width: 120, height: 240 }} // tweak if you want a bigger/smaller wake area
-  onPointerDown={() => showHudAfterInteraction()}
->
-  {/* Bottom-right vertical stack: Mic / Camera / Text (fades + disables clicks when hidden) */}
-  <div
-    className={`absolute right-3 flex flex-col items-center gap-2 transition-opacity duration-300 ${
-      hudVisible ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
-    }`}
-    style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
-  >
+        {/* Bottom-right vertical stack */}
+<div className="fixed right-3 z-40 pointer-events-auto" style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
+  <div className="flex flex-col items-center gap-2">
     {!isMobile && (
       <button
         type="button"
         onClick={() => {
           void toggleMic();
-          showHudAfterInteraction();
         }}
         style={{ width: AUX_BTN, height: AUX_BTN }}
         className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
@@ -1471,12 +1446,10 @@ onPointerCancel={() => {
       </button>
     )}
 
-    {/* keep the rest of your buttons exactly as they are */}
     <button
       type="button"
       onClick={() => {
         toggleCamera();
-        showHudAfterInteraction();
       }}
       disabled={roomType !== "video"}
       style={{ width: AUX_BTN, height: AUX_BTN }}
@@ -1491,7 +1464,6 @@ onPointerCancel={() => {
       type="button"
       onClick={() => {
         setShowTextInput((v) => !v);
-        showHudAfterInteraction();
       }}
       style={{ width: AUX_BTN, height: AUX_BTN }}
       className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
@@ -1502,18 +1474,4 @@ onPointerCancel={() => {
     </button>
   </div>
 </div>
-
-
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
-
-
-
-
-
 
