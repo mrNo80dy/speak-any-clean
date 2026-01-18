@@ -248,8 +248,31 @@ const showHudAfterInteraction = () => {};
     }
   }, []);
 
-  const wakePipControls = useCallback((_keepAlive: boolean = false) => {
-    setPipControlsVisible(true);
+  // When PiP is *not* pinned, it should auto-hide again after a short delay.
+  // When pinned, it stays visible.
+  const wakePipControls = useCallback(
+    (_keepAlive: boolean = false) => {
+      setPipControlsVisible(true);
+      clearPipControlsTimer();
+
+      // Only auto-hide when not pinned.
+      if (!pipPinned) {
+        pipControlsTimerRef.current = window.setTimeout(() => {
+          setPipControlsVisible(false);
+          pipControlsTimerRef.current = null;
+        }, 2200);
+      }
+    },
+    [clearPipControlsTimer, pipPinned]
+  );
+
+  // PiP visibility: if pinned it stays up; otherwise it only shows while "awake".
+  const pipVisible = pipPinned || pipControlsVisible;
+
+  // On first mount, if PiP isn't pinned, let it show briefly then hide.
+  useEffect(() => {
+    if (!pipPinned) wakePipControls();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
 
@@ -1118,7 +1141,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   }}
                 />
 
-                {roomType === "video" && !pipPinned && !hudVisible && (
+                {roomType === "video" && !pipPinned && !pipVisible && !hudVisible && (
                   <div
                     className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
@@ -1162,7 +1185,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   <PipView
                     stream={localStreamRef.current}
                     isMobile={isMobile}
-                    visible={true}
+                    visible={pipVisible}
                     controlsVisible={pipControlsVisible}
                     pinned={pipPinned}
                     onWakeControls={() => wakePipControls(true)}
