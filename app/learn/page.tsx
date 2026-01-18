@@ -159,6 +159,7 @@ const UI = {
     typeMode: "Type mode",
     listening: "Listening…",
     recordSentence: "Record sentence",
+    stopRecording: "Stop",
     micBlocked:
       "Mic access was blocked by the browser. Check microphone permission if you want to use speech input.",
     sttNotSupported:
@@ -171,6 +172,9 @@ const UI = {
     speed: "Speed",
     practiceTitle: "Practice",
     recordAttempt: "Record my attempt",
+    stopAttempt: "Stop attempt",
+    playAttempt: "Play my attempt",
+    noAudioSupport: "Audio recording is not supported on this browser.",
     recognized: "What you said (recognized)",
     recognizedPlaceholder: "After recording, your attempt will appear here.",
     showFeedback: "Show feedback",
@@ -187,6 +191,7 @@ const UI = {
     typeMode: "Modo digitar",
     listening: "Ouvindo…",
     recordSentence: "Gravar frase",
+    stopRecording: "Parar",
     micBlocked:
       "O microfone foi bloqueado pelo navegador. Verifique a permissão do microfone para usar a fala.",
     sttNotSupported:
@@ -199,6 +204,9 @@ const UI = {
     speed: "Velocidade",
     practiceTitle: "Prática",
     recordAttempt: "Gravar minha tentativa",
+    stopAttempt: "Parar tentativa",
+    playAttempt: "Ouvir minha tentativa",
+    noAudioSupport: "Gravação de áudio não é suportada neste navegador.",
     recognized: "O que você falou (reconhecido)",
     recognizedPlaceholder: "Depois de gravar, sua tentativa aparece aqui.",
     showFeedback: "Mostrar feedback",
@@ -226,18 +234,24 @@ export default function LearnPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [attemptText, setAttemptText] = useState("");
+  const [attemptAudioUrl, setAttemptAudioUrl] = useState<string | null>(null);
   const [attemptScore, setAttemptScore] = useState<number | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
 
   const [isRecordingSource, setIsRecordingSource] = useState(false);
   const [isRecordingAttempt, setIsRecordingAttempt] = useState(false);
   const [sttSupported, setSttSupported] = useState<boolean | null>(null);
+  const [mediaRecorderSupported, setMediaRecorderSupported] = useState<boolean | null>(null);
 
   // Device TTS speed
   const [ttsRate, setTtsRate] = useState<number>(0.85);
 
   const sourceRecRef = useRef<any>(null);
   const attemptRecRef = useRef<any>(null);
+  const attemptMrRef = useRef<MediaRecorder | null>(null);
+  const attemptStreamRef = useRef<MediaStream | null>(null);
+  const attemptChunksRef = useRef<BlobPart[]>([]);
+  const attemptAudioRef = useRef<HTMLAudioElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Debounce + ignore stale translate responses
@@ -248,6 +262,7 @@ export default function LearnPage() {
     if (typeof window === "undefined") return;
 
     const w = window as any;
+    setMediaRecorderSupported(typeof (window as any).MediaRecorder !== "undefined");
     const SpeechRecognitionCtor = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
@@ -296,7 +311,6 @@ export default function LearnPage() {
       setAttemptText(text);
 
       if (translatedText) setAttemptScore(scoreSimilarity(translatedText, text));
-      setIsRecordingAttempt(false);
       setShowFeedback(false); // keep it collapsed by default
     };
 
@@ -306,7 +320,7 @@ export default function LearnPage() {
       setIsRecordingAttempt(false);
     };
 
-    attRec.onend = () => setIsRecordingAttempt(false);
+    attRec.onend = () => {};
 
     sourceRecRef.current = srcRec;
     attemptRecRef.current = attRec;
@@ -369,6 +383,17 @@ export default function LearnPage() {
     };
   }, [sourceText, fromLang, toLang]);
 
+// Cleanup attempt audio URL
+useEffect(() => {
+  return () => {
+    if (attemptAudioUrl) {
+      try {
+        URL.revokeObjectURL(attemptAudioUrl);
+      } catch {}
+    }
+  };
+}, [attemptAudioUrl]);
+
   function handlePlayTarget() {
     const tts = translatedText.trim();
     if (!tts) return;
@@ -401,25 +426,114 @@ export default function LearnPage() {
     setInputMode("type");
   }
 
-  function handleStartAttemptRecord() {
-    setError(null);
-    if (!translatedText.trim()) return;
-    if (!sttSupported || !attemptRecRef.current) {
-      setError(t.sttNotSupported);
-      return;
-    }
-    try {
-      setIsRecordingAttempt(true);
-      setAttemptText("");
-      setAttemptScore(null);
-      setShowFeedback(false);
-      attemptRecRef.current.lang = toLang;
-      attemptRecRef.current.start();
-    } catch (err) {
-      console.error("[Learn] start attempt error", err);
-      setIsRecordingAttempt(false);
-    }
+  async function startAttemptRecord() {
+  setError(null);
+  if (!translatedText.trim()) return;
+
+  if (!sttSupported || !attemptRecRef.current) {
+    setError(t.sttNotSupported);
+    return;
   }
+
+  // Audio capture (for playback)
+  const canRecordAudio = typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
+  if (!canRecordAudio) {
+    setError(t.noAudioSupport);
+    // Still allow STT attempt without audio playback
+  }
+
+  try {
+    // Reset attempt state
+    setIsRecordingAttempt(true);
+    setAttemptText("");
+    setAttemptScore(null);
+    setShowFeedback(false);
+
+    // Clear previous audio
+    if (attemptAudioUrl) {
+      try {
+        URL.revokeObjectURL(attemptAudioUrl);
+      } catch {}
+    }
+    setAttemptAudioUrl(null);
+
+    // Start MediaRecorder if available
+    if (canRecordAudio) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      attemptStreamRef.current = stream;
+      attemptChunksRef.current = [];
+
+      const mr = new MediaRecorder(stream);
+      attemptMrRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) attemptChunksRef.current.push(e.data);
+      };
+
+      mr.onstop = () => {
+        const parts = attemptChunksRef.current;
+        attemptChunksRef.current = [];
+        const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setAttemptAudioUrl(url);
+
+        // Auto-play once recording is ready
+        setTimeout(() => {
+          try {
+            attemptAudioRef.current?.play?.();
+          } catch {}
+        }, 0);
+      };
+
+      mr.start();
+    }
+
+    // Start speech recognition (for transcript + scoring)
+    attemptRecRef.current.lang = toLang;
+    attemptRecRef.current.start();
+  } catch (err) {
+    console.error("[Learn] start attempt error", err);
+    setIsRecordingAttempt(false);
+
+    // Cleanup stream if it was opened
+    try {
+      attemptMrRef.current?.stop?.();
+    } catch {}
+    attemptMrRef.current = null;
+
+    if (attemptStreamRef.current) {
+      try {
+        attemptStreamRef.current.getTracks().forEach((t) => t.stop());
+      } catch {}
+    }
+    attemptStreamRef.current = null;
+  }
+}
+
+function stopAttemptRecord() {
+  // Stop speech recognition
+  try {
+    attemptRecRef.current?.stop?.();
+  } catch {}
+
+  // Stop audio recording
+  try {
+    if (attemptMrRef.current && attemptMrRef.current.state !== "inactive") {
+      attemptMrRef.current.stop();
+    }
+  } catch {}
+
+  // Stop mic tracks
+  if (attemptStreamRef.current) {
+    try {
+      attemptStreamRef.current.getTracks().forEach((t) => t.stop());
+    } catch {}
+  }
+  attemptStreamRef.current = null;
+  attemptMrRef.current = null;
+
+  setIsRecordingAttempt(false);
+}
 
   function swapLangs() {
     setFromLang((prevFrom) => {
@@ -552,36 +666,16 @@ export default function LearnPage() {
               </Button>
 
               <Button
-                size="sm"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  startSourceRecord();
-                }}
-                onMouseUp={(e) => {
-                  e.preventDefault();
-                  stopSourceRecord();
-                }}
-                onMouseLeave={() => {
-                  // If they slide off while holding
-                  if (isRecordingSource) stopSourceRecord();
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  startSourceRecord();
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  stopSourceRecord();
-                }}
-                onTouchCancel={(e) => {
-                  e.preventDefault();
-                  stopSourceRecord();
-                }}
-                disabled={sttSupported === false}
-                className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
-              >
-                {isRecordingSource ? t.listening : t.recordSentence}
-              </Button>
+  size="sm"
+  onClick={() => {
+    if (isRecordingSource) stopSourceRecord();
+    else startSourceRecord();
+  }}
+  disabled={sttSupported === false}
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
+>
+  {isRecordingSource ? t.stopRecording : t.recordSentence}
+</Button>
 
               <Button
                 size="sm"
@@ -642,13 +736,16 @@ export default function LearnPage() {
             <div className="flex items-center justify-between gap-2">
               <Label className="text-sm text-slate-100">{t.practiceTitle}</Label>
               <Button
-                size="sm"
-                onClick={handleStartAttemptRecord}
-                disabled={!translatedText.trim() || isRecordingAttempt}
-                className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
-              >
-                {isRecordingAttempt ? t.listening : t.recordAttempt}
-              </Button>
+  size="sm"
+  onClick={() => {
+    if (isRecordingAttempt) stopAttemptRecord();
+    else startAttemptRecord();
+  }}
+  disabled={!translatedText.trim()}
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
+>
+  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+</Button>
             </div>
 
             <div className="space-y-1">
@@ -656,6 +753,26 @@ export default function LearnPage() {
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
               </div>
+
+{/* Attempt playback */}
+{attemptAudioUrl && (
+  <div className="flex items-center justify-between gap-2">
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => {
+        try {
+          attemptAudioRef.current?.play?.();
+        } catch {}
+      }}
+      className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 text-[11px]"
+    >
+      {t.playAttempt}
+    </Button>
+
+    <audio ref={attemptAudioRef} src={attemptAudioUrl} preload="auto" />
+  </div>
+)}
             </div>
 
             {/* Collapsed feedback */}
