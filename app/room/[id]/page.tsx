@@ -867,6 +867,11 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               <div className="absolute inset-0 bg-black/70" />
             </div>
 
+	      </div>
+	    </div>
+	  );
+}
+
             <div
               className="relative z-10 flex h-full w-full items-center justify-center"
               onClick={() => setJoinCamOn(false)}
@@ -1475,3 +1480,9 @@ onPointerCancel={() => {
   </div>
 </div>
 
+
+        </div>
+      </div>
+    </div>
+  );
+}
