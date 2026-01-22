@@ -898,7 +898,15 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
                 <button
                   type="button"
-                  onClick={() => setJoinCamOn(true)}
+                  onClick={async () => {
+                    try {
+                      await acquire();
+                      setCamEnabled(true);
+                    } catch (e) {
+                      log("prejoin acquire failed", { e: String(e) });
+                    }
+                    setJoinCamOn(true);
+                  }}
                   className="
                     w-[96px] h-[96px]
                     rounded-full
