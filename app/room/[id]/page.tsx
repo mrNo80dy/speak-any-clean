@@ -233,9 +233,11 @@ const showHudAfterInteraction = () => {};
   }, [isMobile]);
 
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
+    if (typeof window === "undefined") return false;
+    // v2 key to reset old pinned defaults (we want fade-by-default now)
+    const v = window.localStorage.getItem("anyspeak.pip.pinned.v2");
+    // Default to NOT pinned so PiP can fade unless user pins it.
+    return v === null ? false : v === "1";
   });
 
   const pipControlsTimerRef = useRef<number | null>(null);
@@ -279,7 +281,7 @@ const showHudAfterInteraction = () => {};
   // Persist pin choice
   useEffect(() => {
     try {
-      window.localStorage.setItem("anyspeak.pip.pinned", pipPinned ? "1" : "0");
+      window.localStorage.setItem("anyspeak.pip.pinned.v2", pipPinned ? "1" : "0");
     } catch {}
   }, [pipPinned]);
 
@@ -1203,7 +1205,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                       const next = !pipPinned;
                       setPipPinned(next);
                       try {
-                        window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
+                        window.localStorage.setItem("anyspeak.pip.pinned.v2", next ? "1" : "0");
                       } catch {}
                       wakePipControls(true);
                       showHudAfterInteraction();
