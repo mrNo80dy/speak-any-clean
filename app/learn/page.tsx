@@ -761,10 +761,15 @@ function stopAttemptRecord() {
       size="sm"
       variant="outline"
       onClick={() => {
-        try {
-          attemptAudioRef.current?.play?.();
-        } catch {}
-      }}
+                      try {
+                        if (attemptAudioUrl) {
+                          attemptAudioRef.current?.play?.();
+                        } else {
+                          const said = (attemptText || "").trim();
+                          if (said) speakText(said, toLang, ttsRate);
+                        }
+                      } catch {}
+                    }}
       className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 text-[11px]"
     >
       {t.playAttempt}
