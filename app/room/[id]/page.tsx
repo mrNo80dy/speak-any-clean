@@ -248,10 +248,10 @@ const showHudAfterInteraction = () => {};
     }
   }, []);
 
-  // When PiP is *not* pinned, it should auto-hide again after a short delay.
+  // When PiP is *not* pinned, it should auto-hide again after a delay.
   // When pinned, it stays visible.
   const wakePipControls = useCallback(
-    (_keepAlive: boolean = false) => {
+    (keepAlive: boolean = false) => {
       setPipControlsVisible(true);
       clearPipControlsTimer();
 
@@ -260,7 +260,7 @@ const showHudAfterInteraction = () => {};
         pipControlsTimerRef.current = window.setTimeout(() => {
           setPipControlsVisible(false);
           pipControlsTimerRef.current = null;
-        }, 2200);
+        }, keepAlive ? 9000 : 5500);
       }
     },
     [clearPipControlsTimer, pipPinned]
@@ -269,9 +269,9 @@ const showHudAfterInteraction = () => {};
   // PiP visibility: if pinned it stays up; otherwise it only shows while "awake".
   const pipVisible = pipPinned || pipControlsVisible;
 
-  // On first mount, if PiP isn't pinned, let it show briefly then hide.
+  // On first mount, if PiP isn't pinned, let it show long enough to pin.
   useEffect(() => {
-    if (!pipPinned) wakePipControls();
+    if (!pipPinned) wakePipControls(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1149,7 +1149,9 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   }}
                 />
 
-                {roomType === "video" && !pipPinned && !pipVisible && !hudVisible && (
+                {/* When PiP is asleep (not pinned), leave a large invisible wake zone where PiP lives.
+                    This avoids the "I can't bring it back" issue on mobile where a tiny handle is easy to miss. */}
+                {roomType === "video" && !pipPinned && !pipVisible && (
                   <div
                     className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
                     style={
