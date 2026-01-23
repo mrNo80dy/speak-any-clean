@@ -1153,39 +1153,6 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                 {/* When PiP is asleep (not pinned), leave a large invisible wake zone where PiP lives.
                     This avoids the "I can't bring it back" issue on mobile where a tiny handle is easy to miss. */}
                 {/* Mobile-only wake zone so you can always revive PiP when it fades. */}
-                {roomType === "video" && isMobile && !pipPinned && !pipVisible && (
-                  <div
-                    className="pointer-events-auto z-20 bg-transparent"
-                    style={
-                      {
-                        position: "fixed",
-                        left: 12,
-                        bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-                        width: pipDims.w,
-                        height: pipDims.h,
-                        opacity: 0.001,
-                        touchAction: "none",
-                        userSelect: "none",
-                        WebkitUserSelect: "none",
-                      }
-                    }
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      wakePipControls(true);
-                      showHudAfterInteraction();
-                    }}
-                    aria-label="Show PiP"
-                    title="Show PiP"
-                  />
-                )}
-                {roomType === "video" && localStreamRef.current && (
-                  <PipView
-                    stream={localStreamRef.current}
-                    isMobile={isMobile}
-                    visible={pipVisible}
-                    controlsVisible={pipControlsVisible}
-                    pinned={pipPinned}
-                    onWakeControls={() => wakePipControls(true)}
                     onTogglePin={() => {
                       const next = !pipPinned;
                       setPipPinned(next);
@@ -1409,9 +1376,60 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
           )}
         </main>
 
+
+{/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
+{roomType === "video" && localStreamRef.current && (
+  <>
+    {/* Mobile-only wake zone when PiP is hidden and not pinned */}
+    {isMobile && !pipPinned && !pipVisible && (
+      <div
+        className="pointer-events-auto z-20 bg-transparent"
+        style={{
+          position: "fixed",
+          left: 12,
+          bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+          width: pipDims.w,
+          height: pipDims.h,
+          opacity: 0.001,
+          touchAction: "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+        }}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          wakePipControls(true);
+          showHudAfterInteraction();
+        }}
+        aria-label="Show PiP"
+        title="Show PiP"
+      />
+    )}
+
+    <PipView
+      stream={localStreamRef.current}
+      isMobile={isMobile}
+      visible={pipVisible}
+      controlsVisible={pipControlsVisible}
+      pinned={pipPinned}
+      onWakeControls={() => wakePipControls(true)}
+      onTogglePin={() => {
+        const next = !pipPinned;
+        setPipPinned(next);
+        try {
+          window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
+        } catch {}
+        wakePipControls(true);
+        showHudAfterInteraction();
+      }}
+      onFlipCamera={isMobile && canFlip ? flipCamera : undefined}
+    />
+  </>
+)}
+
         {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Bottom-center PTT (always visible ring) */}
+          {isMobile && (
           <div
   className="fixed left-1/2 -translate-x-1/2 pointer-events-auto"
   style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
@@ -1446,6 +1464,7 @@ onPointerCancel={() => {
               {micUiOn && <span className="text-2xl">🎙️</span>}
             </button>
           </div>
+          )}
 
         {/* Bottom-right vertical stack */}
 <div className="fixed right-3 z-40 pointer-events-auto" style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}>
