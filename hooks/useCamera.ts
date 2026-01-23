@@ -134,39 +134,54 @@ const setVideoQuality = useCallback(async (mode: "sd" | "hd") => {
 
 
 const flipCamera = useCallback(async () => {
-  if (!isMobile || roomType !== "video" || switchingRef.current) return;
-  switchingRef.current = true;
-  const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
   try {
-    // First try the simple facingMode toggle.
-    await restartVideoTrack(nextFacing, hdEnabled);
+    // First try: toggle facingMode (works on many devices)
+    const nextFacing: FacingMode = facingModeRef.current === "user" ? "environment" : "user";
+    facingModeRef.current = nextFacing;
 
-    // Some Android devices ignore facingMode ideals. If the facingMode toggle
-    // doesn't actually change the active device, fall back to deviceId cycling.
-    const track = localStreamRef.current?.getVideoTracks?.()[0];
-    const currentId = (track?.getSettings?.() as any)?.deviceId as string | undefined;
+    await acquireWithOverrides({
+      video: {
+        facingMode: { ideal: nextFacing },
+      },
+    });
 
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter((d) => d.kind === "videoinput");
-      if (cams.length >= 2) {
-        // If we know current deviceId, pick a different one. Otherwise just toggle between first two.
-        const idx = currentId ? cams.findIndex((c) => c.deviceId === currentId) : 0;
-        const nextIdx = idx >= 0 ? (idx + 1) % cams.length : 0;
-        const nextId = cams[nextIdx]?.deviceId;
-        if (nextId && nextId !== currentId) {
-          await restartVideoTrackByDeviceId(nextId, hdEnabled);
-        }
+    // Some Android devices ignore facingMode. If we didn't actually switch cameras, fall back to deviceId cycling.
+    const stream = localStreamRef.current;
+    const track = stream?.getVideoTracks?.()[0];
+    const settings = track?.getSettings?.() as MediaTrackSettings | undefined;
+    const currentDeviceId = settings?.deviceId;
+
+    // If we don't have a deviceId or only 1 camera, we're done.
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter((d) => d.kind === "videoinput");
+    if (cams.length <= 1) return;
+
+    // If facingMode toggle didn't change the actual device, cycle deviceId.
+    if (currentDeviceId) {
+      const idx = cams.findIndex((c) => c.deviceId === currentDeviceId);
+      const next = cams[(idx + 1 + cams.length) % cams.length];
+      if (next?.deviceId && next.deviceId !== currentDeviceId) {
+        await acquireWithOverrides({
+          video: {
+            deviceId: { exact: next.deviceId },
+          },
+        });
       }
-    } catch {
-      // ignore enumerate fallback errors
+    } else {
+      // No deviceId available: just cycle to the second camera
+      const next = cams[1];
+      if (next?.deviceId) {
+        await acquireWithOverrides({
+          video: {
+            deviceId: { exact: next.deviceId },
+          },
+        });
+      }
     }
-
-    setFacingMode(nextFacing);
-  } finally {
-    switchingRef.current = false;
+  } catch (err) {
+    log?.("flipCamera failed", { err: String(err) });
   }
-}, [facingMode, hdEnabled, isMobile, localStreamRef, restartVideoTrack, restartVideoTrackByDeviceId, roomType]);
+}, [acquireWithOverrides, localStreamRef, log]);
 
   return { toggleCamera, flipCamera, canFlip: isMobile && roomType === "video", facingMode, hdEnabled, setVideoQuality };
 }
