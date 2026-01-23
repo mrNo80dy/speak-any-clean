@@ -118,8 +118,88 @@ export default function RoomPage() {
   return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }, []);
 
-// HUD is always visible (no auto-hide)
-const hudVisible = true;
+// ---- HUD fade behavior (per-icon) --------------------------
+// Controls are always present at 25% opacity. Only the interacted control goes to 100%.
+// Desktop hover: 100% immediately, and return to 25% immediately on hover-out.
+const HUD_IDLE_OPACITY = 0.25;
+const HUD_CLICK_FADE_MS = 1200;
+const HUD_PANEL_CLOSE_FADE_MS = 600;
+const HUD_INTRO_MS = 8000;
+
+const [hudIntro, setHudIntro] = useState(true);
+const [activeHudId, setActiveHudId] = useState<string | null>(null);
+const [heldHudId, setHeldHudId] = useState<string | null>(null);
+const hudFadeTimerRef = useRef<number | null>(null);
+
+const clearHudFadeTimer = useCallback(() => {
+  if (hudFadeTimerRef.current) window.clearTimeout(hudFadeTimerRef.current);
+  hudFadeTimerRef.current = null;
+}, []);
+
+useEffect(() => {
+  const t = window.setTimeout(() => setHudIntro(false), HUD_INTRO_MS);
+  return () => window.clearTimeout(t);
+}, []);
+
+const bumpHud = useCallback(
+  (id: string) => {
+    setActiveHudId(id);
+    if (heldHudId === id) return;
+    clearHudFadeTimer();
+    hudFadeTimerRef.current = window.setTimeout(() => {
+      setActiveHudId((cur) => (cur === id ? null : cur));
+    }, HUD_CLICK_FADE_MS);
+  },
+  [clearHudFadeTimer, heldHudId]
+);
+
+const holdHud = useCallback(
+  (id: string, on: boolean) => {
+    if (on) {
+      setHeldHudId(id);
+      setActiveHudId(id);
+      clearHudFadeTimer();
+      return;
+    }
+    // closing
+    setHeldHudId((cur) => (cur === id ? null : cur));
+    clearHudFadeTimer();
+    hudFadeTimerRef.current = window.setTimeout(() => {
+      setActiveHudId((cur) => (cur === id ? null : cur));
+    }, HUD_PANEL_CLOSE_FADE_MS);
+  },
+  [clearHudFadeTimer]
+);
+
+const hudOpacityFor = useCallback(
+  (id: string) => {
+    if (hudIntro) return 1;
+    if (heldHudId === id) return 1;
+    if (activeHudId === id) return 1;
+    return HUD_IDLE_OPACITY;
+  },
+  [activeHudId, heldHudId, hudIntro]
+);
+
+const onHudEnter = useCallback(
+  (id: string) => {
+    if (isMobile) return;
+    setActiveHudId(id);
+    clearHudFadeTimer();
+  },
+  [clearHudFadeTimer, isMobile]
+);
+
+const onHudLeave = useCallback(
+  (id: string) => {
+    if (isMobile) return;
+    if (heldHudId === id) return;
+    setActiveHudId((cur) => (cur === id ? null : cur));
+  },
+  [heldHudId, isMobile]
+);
+
+// Previously used auto-hide HUD helpers are now no-ops.
 const showHudAfterInteraction = () => {};
 
   
@@ -145,6 +225,7 @@ const showHudAfterInteraction = () => {};
   const micOnRef = useRef(false);
   const micArmedRef = useRef(false); // user intent (armed)
   const pttHeldRef = useRef(false);
+  const [pttHeldUi, setPttHeldUi] = useState(false);
 
   // ---- Mobile PTT positioning (dockable) ----
   const [pttDock, setPttDock] = useState<PttDock>("bottom");
@@ -241,10 +322,10 @@ const showHudAfterInteraction = () => {};
   }, [isMobile]);
 
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    // Desktop default: pinned (always visible). Mobile default: NOT pinned (so it can fade).
-    if (typeof window === "undefined") return !isMobile;
-    const v = window.localStorage.getItem("anyspeak.pip.pinned.v2");
-    return v === null ? !isMobile : v === "1";
+    // Always start pinned. (Local preview is a quick self-check, not a focal point.)
+    if (typeof window === "undefined") return true;
+    const v = window.localStorage.getItem("anyspeak.pip.pinned");
+    return v === null ? true : v === "1";
   });
 
   const pipControlsTimerRef = useRef<number | null>(null);
@@ -257,41 +338,27 @@ const showHudAfterInteraction = () => {};
     }
   }, []);
 
-  // When PiP is *not* pinned, it should auto-hide again after a delay.
-  // When pinned, it stays visible.
+  // PiP is always visible when pinned, but its *controls* should fade whether pinned or not.
+  // Tap/click PiP to bring controls back. When hidden, controls must not be clickable.
   const wakePipControls = useCallback(
     (keepAlive: boolean = false) => {
       setPipControlsVisible(true);
       clearPipControlsTimer();
 
-      // Only auto-hide when not pinned.
-      if (!pipPinned) {
-        pipControlsTimerRef.current = window.setTimeout(() => {
-          setPipControlsVisible(false);
-          pipControlsTimerRef.current = null;
-        }, keepAlive ? 9000 : 6000);
-      }
+      pipControlsTimerRef.current = window.setTimeout(() => {
+        setPipControlsVisible(false);
+        pipControlsTimerRef.current = null;
+      }, keepAlive ? 8000 : 3000);
     },
-    [clearPipControlsTimer, pipPinned]
+    [clearPipControlsTimer]
   );
 
-  // PiP visibility: if pinned it stays up; otherwise it only shows while "awake".
+  // PiP visibility: pinned keeps it visible.
   const pipVisible = pipPinned || pipControlsVisible;
 
-  // If the user *unpinned* while PiP is visible, start the auto-hide timer.
+  // On first mount, show PiP controls long enough to discover, then fade.
   useEffect(() => {
-    if (pipPinned) {
-      setPipControlsVisible(true);
-      clearPipControlsTimer();
-      return;
-    }
-    // Not pinned: keep it visible for a moment, then let it fall asleep.
-    wakePipControls(false);
-  }, [pipPinned, wakePipControls, clearPipControlsTimer]);
-
-  // On first mount, if PiP isn't pinned, let it show long enough to pin.
-  useEffect(() => {
-    if (!pipPinned) wakePipControls(true);
+    wakePipControls(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -299,7 +366,7 @@ const showHudAfterInteraction = () => {};
   // Persist pin choice
   useEffect(() => {
     try {
-      window.localStorage.setItem("anyspeak.pip.pinned.v2", pipPinned ? "1" : "0");
+      window.localStorage.setItem("anyspeak.pip.pinned", pipPinned ? "1" : "0");
     } catch {}
   }, [pipPinned]);
 
@@ -541,6 +608,15 @@ const showHudAfterInteraction = () => {};
     peersRef,
     log,
   });
+
+  // Auto video quality:
+  // - Mobile: start SD (more reliable/less load)
+  // - Desktop: prefer HD
+  useEffect(() => {
+    if (roomType !== "video") return;
+    void setVideoQuality(isMobile ? "sd" : "hd");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, roomType]);
 
   // Auto-enable camera on entry for video rooms when user chose camera-on prejoin
   useEffect(() => {
@@ -987,9 +1063,15 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
               <button
                 type="button"
-                onClick={() => setCcOn((v) => !v)}
+                onClick={() => {
+                  bumpHud("cc");
+                  setCcOn((v) => !v);
+                }}
+                onMouseEnter={() => onHudEnter("cc")}
+                onMouseLeave={() => onHudLeave("cc")}
+                style={{ opacity: hudOpacityFor("cc") }}
                 className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                  ccOn ? "ring-1 ring-white/25" : "opacity-90"
+                  ccOn ? "ring-1 ring-white/25" : ""
                 }`}
                 title="Closed Captions"
                 aria-label="Closed Captions"
@@ -999,21 +1081,9 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
               <button
                 type="button"
-                onClick={() => {
-                  setVideoQuality(hdEnabled ? "sd" : "hd");
-                }}
-                className={`pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-sm md:text-base text-white/90 shadow flex items-center justify-center transition ${
-                  hdEnabled ? "ring-1 ring-white/25" : "opacity-90"
-                }`}
-                title={hdEnabled ? "HD" : "SD"}
-                aria-label="Toggle HD"
-              >
-                {hdEnabled ? "HD" : "SD"}
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  bumpHud("share");
                   try {
                     const url = window.location.href;
                     // @ts-ignore
@@ -1030,6 +1100,9 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     } catch {}
                   }
                 }}
+                onMouseEnter={() => onHudEnter("share")}
+                onMouseLeave={() => onHudLeave("share")}
+                style={{ opacity: hudOpacityFor("share") }}
                 className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/90 shadow flex items-center justify-center"
                 title="Share"
                 aria-label="Share"
@@ -1041,18 +1114,24 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <div className="flex flex-col gap-2 items-end">
               <button
                 type="button"
-                onClick={handleEndCall}
-                className="pointer-events-auto w-11 h-11 rounded-xl bg-red-600/50 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
+                onClick={() => {
+                  bumpHud("exit");
+                  handleEndCall();
+                }}
+                onMouseEnter={() => onHudEnter("exit")}
+                onMouseLeave={() => onHudLeave("exit")}
+                style={{ opacity: hudOpacityFor("exit") }}
+                className="pointer-events-auto w-11 h-11 rounded-xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center"
                 title="Exit"
                 aria-label="Exit"
               >
-                📴
+                ✕
               </button>
             </div>
           </div>
         </header>
 
-        <main className="absolute inset-0 pt-0 md:pt-14">
+        <main className="absolute inset-0 pt-0">
           {/* Debug Panel */}
           {debugEnabled && (
             <div className="absolute top-14 left-1/2 -translate-x-1/2 z-30 w-[95%] max-w-2xl p-3 rounded-xl bg-neutral-900/90 border border-neutral-700 shadow-lg">
@@ -1371,7 +1450,6 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   placeholder="Type a quick caption…"
                   className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
                 />
-                
               </div>
             </form>
           )}
@@ -1409,19 +1487,16 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     <PipView
       stream={localStreamRef.current}
       isMobile={isMobile}
-      bottomOffset={isMobile && showTextInput ? 260 : 0}
       visible={pipVisible}
       controlsVisible={pipControlsVisible}
       pinned={pipPinned}
       onWakeControls={() => wakePipControls(true)}
       onTogglePin={() => {
-        setPipPinned((prev) => {
-          const next = !prev;
-          try {
-            window.localStorage.setItem("anyspeak.pip.pinned.v2", next ? "1" : "0");
-          } catch {}
-          return next;
-        });
+        const next = !pipPinned;
+        setPipPinned(next);
+        try {
+          window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
+        } catch {}
         wakePipControls(true);
         showHudAfterInteraction();
       }}
@@ -1444,21 +1519,24 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
               aria-label="Push to talk"
               title={micUiOn ? "Hold to talk" : "Mic muted"}
               style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-              className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} bg-black/30 backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
+              className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} ${pttHeldUi ? (micUiOn ? "bg-emerald-400/80" : "bg-white/15") : "bg-transparent"} backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
              onPointerDown={(e) => {
   if (!micUiOn) return; // Option A: indicator only when muted
   e.preventDefault();
   try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
+  setPttHeldUi(true);
   pttDown();
 }}
 onPointerUp={(e) => {
   if (!micUiOn) return;
   e.preventDefault();
   try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
+  setPttHeldUi(false);
   pttUp();
 }}
 onPointerCancel={() => {
   if (!micUiOn) return;
+  setPttHeldUi(false);
   pttCancel();
 }}
 
@@ -1477,11 +1555,14 @@ onPointerCancel={() => {
       <button
         type="button"
         onClick={() => {
+          bumpHud("mic");
           void toggleMic();
         }}
-        style={{ width: AUX_BTN, height: AUX_BTN }}
+        onMouseEnter={() => onHudEnter("mic")}
+        onMouseLeave={() => onHudLeave("mic")}
+        style={{ width: AUX_BTN, height: AUX_BTN, opacity: hudOpacityFor("mic") }}
         className={`rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition ${
-          micUiOn ? "ring-1 ring-emerald-400/30" : "opacity-90"
+          micUiOn ? "ring-1 ring-emerald-400/30" : ""
         }`}
         title={micUiOn ? "Mute mic" : "Unmute mic"}
         aria-label="Mic toggle"
@@ -1493,10 +1574,13 @@ onPointerCancel={() => {
     <button
       type="button"
       onClick={() => {
+        bumpHud("cam");
         toggleCamera();
       }}
+      onMouseEnter={() => onHudEnter("cam")}
+      onMouseLeave={() => onHudLeave("cam")}
       disabled={roomType !== "video"}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
+      style={{ width: AUX_BTN, height: AUX_BTN, opacity: hudOpacityFor("cam") }}
       className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
       title="Camera"
       aria-label="Camera toggle"
@@ -1507,9 +1591,16 @@ onPointerCancel={() => {
     <button
       type="button"
       onClick={() => {
-        setShowTextInput((v) => !v);
+        setShowTextInput((v) => {
+          const next = !v;
+          holdHud("text", next);
+          if (!next) bumpHud("text");
+          return next;
+        });
       }}
-      style={{ width: AUX_BTN, height: AUX_BTN }}
+      onMouseEnter={() => onHudEnter("text")}
+      onMouseLeave={() => onHudLeave("text")}
+      style={{ width: AUX_BTN, height: AUX_BTN, opacity: hudOpacityFor("text") }}
       className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition"
       title={showTextInput ? "Close text" : "Send text"}
       aria-label="Text"
