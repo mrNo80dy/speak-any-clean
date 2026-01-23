@@ -6,7 +6,6 @@ type Props = {
   bottomOffset?: number;
   stream: MediaStream | null;
   isMobile: boolean;
-  bottomOffset?: number;
   visible: boolean;
   controlsVisible: boolean;
   pinned: boolean;
