@@ -66,6 +66,31 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
     }
   }, [isMobile, localStreamRef, replaceOutgoingOnPeers]);
 
+
+const restartVideoTrackByDeviceId = useCallback(async (deviceId: string, nextHd: boolean) => {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return;
+  const currentStream = localStreamRef.current;
+  if (!currentStream) return;
+
+  const oldTrack = currentStream.getVideoTracks()[0];
+  const base = getConstraints(isMobile, nextHd, facingMode);
+  const constraints: MediaTrackConstraints = { ...base, deviceId: { exact: deviceId } };
+
+  const newStream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+  const newTrack = newStream.getVideoTracks()[0];
+
+  if (newTrack) {
+    if (oldTrack) {
+      currentStream.removeTrack(oldTrack);
+      oldTrack.stop();
+    }
+    currentStream.addTrack(newTrack);
+    replaceOutgoingOnPeers(newTrack);
+    setHdEnabled(nextHd);
+    try { localStorage.setItem("anyspeak.video.hd", nextHd ? "1" : "0"); } catch {}
+  }
+}, [facingMode, isMobile, localStreamRef, replaceOutgoingOnPeers]);
+
   const applyQualityToExistingTrack = useCallback(async (nextHd: boolean, facing: FacingMode) => {
     const track = localStreamRef.current?.getVideoTracks()[0];
     if (!track || typeof track.applyConstraints !== "function") return false;
@@ -107,17 +132,41 @@ const setVideoQuality = useCallback(async (mode: "sd" | "hd") => {
     setCamEnabled(next);
   }, [acquire, localStreamRef, roomType, setCamEnabled]);
 
-  const flipCamera = useCallback(async () => {
-    if (!isMobile || roomType !== "video" || switchingRef.current) return;
-    switchingRef.current = true;
-    const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
+
+const flipCamera = useCallback(async () => {
+  if (!isMobile || roomType !== "video" || switchingRef.current) return;
+  switchingRef.current = true;
+  const nextFacing: FacingMode = facingMode === "user" ? "environment" : "user";
+  try {
+    // First try the simple facingMode toggle.
+    await restartVideoTrack(nextFacing, hdEnabled);
+
+    // Some Android devices ignore facingMode ideals. If the facingMode toggle
+    // doesn't actually change the active device, fall back to deviceId cycling.
+    const track = localStreamRef.current?.getVideoTracks?.()[0];
+    const currentId = (track?.getSettings?.() as any)?.deviceId as string | undefined;
+
     try {
-      await restartVideoTrack(nextFacing, hdEnabled);
-      setFacingMode(nextFacing);
-    } finally {
-      switchingRef.current = false;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter((d) => d.kind === "videoinput");
+      if (cams.length >= 2) {
+        // If we know current deviceId, pick a different one. Otherwise just toggle between first two.
+        const idx = currentId ? cams.findIndex((c) => c.deviceId === currentId) : 0;
+        const nextIdx = idx >= 0 ? (idx + 1) % cams.length : 0;
+        const nextId = cams[nextIdx]?.deviceId;
+        if (nextId && nextId !== currentId) {
+          await restartVideoTrackByDeviceId(nextId, hdEnabled);
+        }
+      }
+    } catch {
+      // ignore enumerate fallback errors
     }
-  }, [facingMode, hdEnabled, isMobile, restartVideoTrack, roomType]);
+
+    setFacingMode(nextFacing);
+  } finally {
+    switchingRef.current = false;
+  }
+}, [facingMode, hdEnabled, isMobile, localStreamRef, restartVideoTrack, restartVideoTrackByDeviceId, roomType]);
 
   return { toggleCamera, flipCamera, canFlip: isMobile && roomType === "video", facingMode, hdEnabled, setVideoQuality };
 }
