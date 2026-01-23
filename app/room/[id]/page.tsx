@@ -321,11 +321,15 @@ const showHudAfterInteraction = () => {};
     return isMobile ? { w: 132, h: 176 } : { w: 240, h: 160 };
   }, [isMobile]);
 
-  const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    // Always start pinned. (Local preview is a quick self-check, not a focal point.)
-    if (typeof window === "undefined") return true;
-    const v = window.localStorage.getItem("anyspeak.pip.pinned");
-    return v === null ? true : v === "1";
+  
+  // PiP visibility:
+  // - PiP starts visible.
+  // - The "pin" control now acts as HIDE/SHOW (minimize/restore) for self-view.
+  // - Controls always fade out; tapping the PiP area brings them back.
+  const [pipHidden, setPipHidden] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    const v = window.localStorage.getItem("anyspeak.pip.hidden");
+    return v === "1";
   });
 
   const pipControlsTimerRef = useRef<number | null>(null);
@@ -338,10 +342,13 @@ const showHudAfterInteraction = () => {};
     }
   }, []);
 
-  // PiP is always visible when pinned, but its *controls* should fade whether pinned or not.
-  // Tap/click PiP to bring controls back. When hidden, controls must not be clickable.
+  // Controls always fade whether the PiP is visible or not.
+  // Tapping/clicking the PiP area brings controls back (and restores PiP if it was hidden).
   const wakePipControls = useCallback(
     (keepAlive: boolean = false) => {
+      // If PiP was hidden, restore it first.
+      setPipHidden(false);
+
       setPipControlsVisible(true);
       clearPipControlsTimer();
 
@@ -353,8 +360,8 @@ const showHudAfterInteraction = () => {};
     [clearPipControlsTimer]
   );
 
-  // PiP visibility: pinned keeps it visible.
-  const pipVisible = pipPinned || pipControlsVisible;
+  // PiP is visible unless explicitly hidden by the user.
+  const pipVisible = !pipHidden;
 
   // On first mount, show PiP controls long enough to discover, then fade.
   useEffect(() => {
@@ -362,19 +369,17 @@ const showHudAfterInteraction = () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-
-  // Persist pin choice
+  // Persist hidden choice
   useEffect(() => {
     try {
-      window.localStorage.setItem("anyspeak.pip.pinned", pipPinned ? "1" : "0");
+      window.localStorage.setItem("anyspeak.pip.hidden", pipHidden ? "1" : "0");
     } catch {}
-  }, [pipPinned]);
+  }, [pipHidden]);
 
   useEffect(() => {
     return () => clearPipControlsTimer();
   }, [clearPipControlsTimer]);
-
-  // Captions / text stream
+// Captions / text stream
   const { messages, pushMessage } = useAnySpeakMessages({ max: 30 });
   const [captionLines] = useState<number>(3);
 
@@ -1458,54 +1463,21 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
 {/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
 {roomType === "video" && localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
-  <>
-    {/* Mobile-only wake zone when PiP is hidden and not pinned */}
-    {isMobile && !pipPinned && !pipVisible && (
-      <div
-        className="pointer-events-auto z-20 bg-transparent"
-        style={{
-          position: "fixed",
-          left: 12,
-          bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-          width: pipDims.w,
-          height: pipDims.h,
-          opacity: 0.001,
-          touchAction: "none",
-          userSelect: "none",
-          WebkitUserSelect: "none",
-        }}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          wakePipControls(true);
-          showHudAfterInteraction();
-        }}
-        aria-label="Show PiP"
-        title="Show PiP"
-      />
-    )}
-
-    <PipView
-      stream={localStreamRef.current}
-      isMobile={isMobile}
-      visible={pipVisible}
-      controlsVisible={pipControlsVisible}
-      pinned={pipPinned}
-      onWakeControls={() => wakePipControls(true)}
-      onTogglePin={() => {
-        const next = !pipPinned;
-        setPipPinned(next);
-        try {
-          window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
-        } catch {}
-        wakePipControls(true);
-        showHudAfterInteraction();
-      }}
-      onFlipCamera={isMobile && canFlip ? flipCamera : undefined}
-    />
-  </>
+  <PipView
+    stream={localStreamRef.current}
+    isMobile={isMobile}
+    visible={pipVisible}
+    controlsVisible={pipControlsVisible}
+    onWakeControls={() => wakePipControls(true)}
+    onHide={() => {
+      setPipHidden(true);
+      setPipControlsVisible(false);
+      showHudAfterInteraction();
+    }}
+    onFlipCamera={isMobile && canFlip ? flipCamera : undefined}
+  />
 )}
-
-        {/* Controls overlay */}
+{/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
           {/* Bottom-center PTT (always visible ring) */}
           {isMobile && (
