@@ -30,6 +30,18 @@ function getConstraints(isMobile: boolean, hd: boolean, facing: FacingMode): Med
   };
 }
 
+
+function getConstraintsExactFacing(isMobile: boolean, hd: boolean, facing: FacingMode): MediaTrackConstraints {
+  if (isMobile) {
+    return {
+      facingMode: { exact: facing },
+      width: { ideal: hd ? 1280 : 960 },
+      height: { ideal: hd ? 720 : 540 },
+    };
+  }
+  return getConstraints(isMobile, hd, facing);
+}
+
 export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamEnabled, peersRef, log }: Args) {
   const [facingMode, setFacingMode] = useState<FacingMode>("user");
   const facingModeRef = useRef<FacingMode>("user");
@@ -162,33 +174,65 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
 
   const flipCamera = useCallback(
     async () => {
+
       if (!isMobile || roomType !== "video" || switchingRef.current) return;
       switchingRef.current = true;
       try {
         const stream = localStreamRef.current;
         const beforeTrack = stream?.getVideoTracks?.()[0];
-        const beforeDeviceId = (beforeTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
+        const beforeSettings = (beforeTrack?.getSettings?.() as MediaTrackSettings | undefined) || {};
+        const beforeDeviceId = beforeSettings.deviceId;
+        const beforeLabel = beforeTrack?.label || "";
 
         const nextFacing: FacingMode = facingModeRef.current === "user" ? "environment" : "user";
         facingModeRef.current = nextFacing;
         setFacingMode(nextFacing);
 
-        // Try facingMode-based restart first.
+        // 1) Fast path: try applyConstraints with exact facingMode (some Android builds require exact).
+        const currentTrack = localStreamRef.current?.getVideoTracks?.()[0];
+        if (currentTrack && typeof currentTrack.applyConstraints === "function") {
+          try {
+            await currentTrack.applyConstraints(getConstraintsExactFacing(true, hdEnabled, nextFacing));
+          } catch {
+            // ignore and continue to restart strategies
+          }
+        }
+
+        // 2) Restart by facingMode (ideal) next.
         await restartVideoTrack(nextFacing, hdEnabled);
 
-        // If Android ignored facingMode and we still have the same camera, cycle by deviceId.
+        // 3) Verify if we actually switched. If not, cycle devices by label/deviceId.
         const afterTrack = localStreamRef.current?.getVideoTracks?.()[0];
-        const afterDeviceId = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
+        const afterSettings = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined) || {};
+        const afterDeviceId = afterSettings.deviceId;
+        const afterLabel = afterTrack?.label || "";
 
-        if (beforeDeviceId && afterDeviceId && beforeDeviceId === afterDeviceId) {
+        const stillSame =
+          (beforeDeviceId && afterDeviceId && beforeDeviceId === afterDeviceId) ||
+          (!beforeDeviceId && !afterDeviceId && beforeLabel && afterLabel && beforeLabel === afterLabel);
+
+        if (stillSame) {
           const devices = await navigator.mediaDevices.enumerateDevices();
           const cams = devices.filter((d) => d.kind === "videoinput");
-          if (cams.length > 1) {
-            const idx = cams.findIndex((c) => c.deviceId === afterDeviceId);
-            const next = cams[(idx + 1 + cams.length) % cams.length];
-            if (next?.deviceId && next.deviceId !== afterDeviceId) {
-              await restartVideoTrackByDeviceId(next.deviceId, hdEnabled);
-            }
+
+          // Prefer the "other" camera based on label hints when available.
+          const norm = (s: string) => s.toLowerCase();
+          const wantFront = nextFacing === "user";
+          const labelIsFront = (s: string) => /(front|user)/i.test(s);
+          const labelIsBack = (s: string) => /(back|rear|environment)/i.test(s);
+
+          let pick =
+            cams.find((c) => {
+              if (c.deviceId === afterDeviceId) return false;
+              const L = norm(c.label || "");
+              if (!L) return false;
+              return wantFront ? labelIsFront(L) : labelIsBack(L);
+            }) ||
+            cams.find((c) => c.deviceId && c.deviceId !== afterDeviceId) ||
+            null;
+
+          if (pick?.deviceId) {
+            await restartVideoTrackByDeviceId(pick.deviceId, hdEnabled);
           }
         }
 
@@ -198,6 +242,7 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
       } finally {
         switchingRef.current = false;
       }
+
     },
     [hdEnabled, isMobile, localStreamRef, log, restartVideoTrack, restartVideoTrackByDeviceId, roomType]
   );
