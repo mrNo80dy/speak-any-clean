@@ -233,11 +233,10 @@ const showHudAfterInteraction = () => {};
   }, [isMobile]);
 
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    // v2 key to reset old pinned defaults (we want fade-by-default now)
-    const v = window.localStorage.getItem("anyspeak.pip.pinned.v2");
-    // Default to NOT pinned so PiP can fade unless user pins it.
-    return v === null ? false : v === "1";
+    // Desktop default: pinned (always visible). Mobile default: NOT pinned (so it can fade).
+    if (typeof window === "undefined") return !isMobile;
+    const v = window.localStorage.getItem("anyspeak.pip.pinned");
+    return v === null ? !isMobile : v === "1";
   });
 
   const pipControlsTimerRef = useRef<number | null>(null);
@@ -262,7 +261,7 @@ const showHudAfterInteraction = () => {};
         pipControlsTimerRef.current = window.setTimeout(() => {
           setPipControlsVisible(false);
           pipControlsTimerRef.current = null;
-        }, keepAlive ? 9000 : 5500);
+        }, keepAlive ? 9000 : 6000);
       }
     },
     [clearPipControlsTimer, pipPinned]
@@ -281,7 +280,7 @@ const showHudAfterInteraction = () => {};
   // Persist pin choice
   useEffect(() => {
     try {
-      window.localStorage.setItem("anyspeak.pip.pinned.v2", pipPinned ? "1" : "0");
+      window.localStorage.setItem("anyspeak.pip.pinned", pipPinned ? "1" : "0");
     } catch {}
   }, [pipPinned]);
 
@@ -1153,39 +1152,25 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
                 {/* When PiP is asleep (not pinned), leave a large invisible wake zone where PiP lives.
                     This avoids the "I can't bring it back" issue on mobile where a tiny handle is easy to miss. */}
-                {roomType === "video" && !pipPinned && !pipVisible && (
+                {/* Mobile-only wake zone so you can always revive PiP when it fades. */}
+                {roomType === "video" && isMobile && !pipPinned && !pipVisible && (
                   <div
-                    className="pointer-events-auto z-20 rounded-2xl border border-white/25 bg-transparent"
+                    className="pointer-events-auto z-20 bg-transparent"
                     style={
-                      isMobile
-                        ? {
-                            position: "fixed",
-                            left: 12,
-                            bottom: "calc(env(safe-area-inset-bottom) + 12px)",
-                            width: pipDims.w,
-                            height: pipDims.h,
-                            opacity: 1,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
-                        : {
-                            position: "absolute",
-                            left: 16,
-                            top: 16,
-                            width: pipDims.w,
-                            height: pipDims.h,
-                            opacity: 1,
-                            transition: "opacity 250ms ease",
-                            touchAction: "none",
-                            userSelect: "none",
-                            WebkitUserSelect: "none",
-                          }
+                      {
+                        position: "fixed",
+                        left: 12,
+                        bottom: "calc(env(safe-area-inset-bottom) + 12px)",
+                        width: pipDims.w,
+                        height: pipDims.h,
+                        opacity: 0.001,
+                        touchAction: "none",
+                        userSelect: "none",
+                        WebkitUserSelect: "none",
+                      }
                     }
-                    onClick={(e) => {
+                    onPointerDown={(e) => {
                       e.stopPropagation();
-                     // In this repo, the PiP controls visibility is handled by wakePipControls().
                       wakePipControls(true);
                       showHudAfterInteraction();
                     }}
@@ -1205,7 +1190,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                       const next = !pipPinned;
                       setPipPinned(next);
                       try {
-                        window.localStorage.setItem("anyspeak.pip.pinned.v2", next ? "1" : "0");
+                        window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
                       } catch {}
                       wakePipControls(true);
                       showHudAfterInteraction();
