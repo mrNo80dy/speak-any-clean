@@ -221,6 +221,14 @@ const showHudAfterInteraction = () => {};
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
+  // If a peer joins and the user hasn't explicitly spotlighted someone,
+  // prefer showing the first remote as the main video.
+  useEffect(() => {
+    if (spotlightId !== "local") return;
+    if (peerIds.length > 0) setSpotlightId(peerIds[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [peerIds.join(",")]);
+
   // ---- Local preview (PiP) behavior -------------------------
   // We keep PiP *simple* here: visibility is derived, and controls (pin/flip/cam)
   // only appear briefly when the PiP is tapped. No dragging/position persistence.
@@ -1365,7 +1373,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
 
 {/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
-{roomType === "video" && camOn && localStreamRef.current && (
+{roomType === "video" && localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
   <>
     {/* Mobile-only wake zone when PiP is hidden and not pinned */}
     {isMobile && !pipPinned && !pipVisible && (
