@@ -28,7 +28,6 @@ export function PipView({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // On many browsers a tap triggers both pointer events and a click.
   // Without a guard, pin/flip can toggle twice (looks like "doesn't work").
-  const skipNextClickRef = useRef(false);
 
   // Track viewport so PiP can size correctly on orientation changes.
   const [viewport, setViewport] = useState<{ w: number; h: number }>(() => {
@@ -121,21 +120,42 @@ export function PipView({
 
   if (!stream) return null;
 
-  // When not visible (not pinned and asleep), show a small "handle" so the user can bring PiP back.
+  // When not visible (not pinned and asleep), show a transparent "outline handle"
+  // in the exact PiP footprint so users can tap/click to bring it back (no icon).
   if (!visible) {
+    const style = {
+      ...(pipStyle || {}),
+      bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)`,
+    } as React.CSSProperties;
+
+    // If style isn't ready yet (e.g., first render before viewport measured), fall back to a small handle.
+    const hasSize =
+      typeof (style as any).width !== "undefined" || typeof (style as any).height !== "undefined" || typeof (style as any).aspectRatio !== "undefined";
+
     return (
-      <button
-        type="button"
-        className="fixed left-3 z-50 w-11 h-11 rounded-full bg-black/40 backdrop-blur text-white flex items-center justify-center pointer-events-auto"
-        style={{ bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)` }}
+      <div
+        className="fixed left-3 z-50 pointer-events-auto"
+        style={hasSize ? style : { bottom: style.bottom, width: 64, height: 64 }}
+        role="button"
         aria-label="Show PiP"
+        tabIndex={0}
         onPointerDown={(e) => {
           e.stopPropagation();
           onWakeControls();
         }}
+        onClick={(e) => {
+          e.stopPropagation();
+          onWakeControls();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onWakeControls();
+          }
+        }}
       >
-        📷
-      </button>
+        <div className="w-full h-full rounded-lg border border-white/25 bg-transparent" />
+      </div>
     );
   }
 
@@ -168,21 +188,8 @@ export function PipView({
             <button
               type="button"
               data-pip-control="1"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                skipNextClickRef.current = true;
-                onTogglePin();
-                // If this browser doesn't emit a click after pointerdown, clear the guard.
-                window.setTimeout(() => {
-                  skipNextClickRef.current = false;
-                }, 250);
-              }}
               onClick={(e) => {
                 e.stopPropagation();
-                if (skipNextClickRef.current) {
-                  skipNextClickRef.current = false;
-                  return;
-                }
                 onTogglePin();
               }}
               title={pinned ? "Unpin PiP" : "Pin PiP"}
@@ -196,20 +203,8 @@ export function PipView({
               <button
                 type="button"
                 data-pip-control="1"
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  skipNextClickRef.current = true;
-                  onFlipCamera();
-                  window.setTimeout(() => {
-                    skipNextClickRef.current = false;
-                  }, 250);
-                }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (skipNextClickRef.current) {
-                    skipNextClickRef.current = false;
-                    return;
-                  }
                   onFlipCamera();
                 }}
                 title="Flip camera"
