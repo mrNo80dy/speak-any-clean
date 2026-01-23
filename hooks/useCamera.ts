@@ -215,35 +215,79 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
   };
 
   const flipCamera = useCallback(
-    async () => {
-      if (!isMobile || roomType !== "video" || switchingRef.current) return;
-      switchingRef.current = true;
-      try {
-        const nextFacing: FacingMode = facingModeRef.current === "user" ? "environment" : "user";
-        facingModeRef.current = nextFacing;
-        setFacingMode(nextFacing);
+  async () => {
+    if (!isMobile || roomType !== "video" || switchingRef.current) return;
+    switchingRef.current = true;
+    try {
+      const nextFacing: FacingMode =
+        facingModeRef.current === "user" ? "environment" : "user";
+      facingModeRef.current = nextFacing;
+      setFacingMode(nextFacing);
 
-        // Try facingMode first.
-        const beforeId = await restartVideoTrack(nextFacing, hdEnabled);
+      // Try facingMode first.
+      const beforeId = await restartVideoTrack(nextFacing, hdEnabled);
 
-        // If it didn't actually change deviceId, force a deviceId swap.
-        const afterTrack = localStreamRef.current?.getVideoTracks?.()[0];
-        const afterId = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
-        const desired = await pickOtherDeviceId();
-
-        if (desired && (afterId === undefined || afterId === beforeId)) {
-          await restartVideoTrackByDeviceId(desired, hdEnabled);
-        }
-
-        setTimeout(() => setCamEnabled(true), 80);
-      } catch (e) {
-        log?.("flipCamera failed", { e: String(e) });
-      } finally {
-        switchingRef.current = false;
+      // Debug: what track do we have after facingMode attempt?
+      {
+        const t = localStreamRef.current?.getVideoTracks?.()[0];
+        const s = t?.getSettings?.();
+        console.log("[flipCamera] after facingMode", {
+          nextFacing,
+          beforeId,
+          afterId: s?.deviceId,
+          facingMode: (s as any)?.facingMode,
+          w: s?.width,
+          h: s?.height,
+          readyState: t?.readyState,
+          muted: t?.muted,
+          enabled: t?.enabled,
+        });
       }
-    },
-    [hdEnabled, isMobile, log, restartVideoTrack, restartVideoTrackByDeviceId, roomType, setCamEnabled]
-  );
+
+      // If it didn't actually change deviceId, force a deviceId swap.
+      const afterTrack = localStreamRef.current?.getVideoTracks?.()[0];
+      const afterId = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined)
+        ?.deviceId;
+      const desired = await pickOtherDeviceId();
+
+      console.log("[flipCamera] deviceId fallback check", {
+        desired,
+        beforeId,
+        afterId,
+        willFallback: Boolean(desired && (afterId === undefined || afterId === beforeId)),
+      });
+
+      if (desired && (afterId === undefined || afterId === beforeId)) {
+        await restartVideoTrackByDeviceId(desired, hdEnabled);
+
+        // Debug: confirm final track settings after fallback
+        {
+          const t = localStreamRef.current?.getVideoTracks?.()[0];
+          const s = t?.getSettings?.();
+          console.log("[flipCamera] after deviceId fallback", {
+            desired,
+            finalId: s?.deviceId,
+            facingMode: (s as any)?.facingMode,
+            w: s?.width,
+            h: s?.height,
+            readyState: t?.readyState,
+            muted: t?.muted,
+            enabled: t?.enabled,
+          });
+        }
+      }
+
+      setTimeout(() => setCamEnabled(true), 80);
+    } catch (e) {
+      log?.("flipCamera failed", { e: String(e) });
+      console.log("[flipCamera] failed", e);
+    } finally {
+      switchingRef.current = false;
+    }
+  },
+  [hdEnabled, isMobile, log, restartVideoTrack, restartVideoTrackByDeviceId, roomType, setCamEnabled]
+);
+
 
   const canFlip = isMobile;
 
