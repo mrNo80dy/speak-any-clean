@@ -14,7 +14,7 @@ type Props = {
   onFlipCamera?: () => void;
 };
 
-export default function PipView({
+function PipView({
   bottomOffset = 0,
   stream,
   isMobile,
@@ -225,3 +225,7 @@ export default function PipView({
     </div>
   );
 }
+
+// Export both default and named to avoid import mismatches across the app.
+export { PipView };
+export default PipView;
