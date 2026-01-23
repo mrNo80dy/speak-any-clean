@@ -243,7 +243,7 @@ const showHudAfterInteraction = () => {};
   const [pipPinned, setPipPinned] = useState<boolean>(() => {
     // Desktop default: pinned (always visible). Mobile default: NOT pinned (so it can fade).
     if (typeof window === "undefined") return !isMobile;
-    const v = window.localStorage.getItem("anyspeak.pip.pinned");
+    const v = window.localStorage.getItem("anyspeak.pip.pinned.v2");
     return v === null ? !isMobile : v === "1";
   });
 
@@ -278,6 +278,17 @@ const showHudAfterInteraction = () => {};
   // PiP visibility: if pinned it stays up; otherwise it only shows while "awake".
   const pipVisible = pipPinned || pipControlsVisible;
 
+  // If the user *unpinned* while PiP is visible, start the auto-hide timer.
+  useEffect(() => {
+    if (pipPinned) {
+      setPipControlsVisible(true);
+      clearPipControlsTimer();
+      return;
+    }
+    // Not pinned: keep it visible for a moment, then let it fall asleep.
+    wakePipControls(false);
+  }, [pipPinned, wakePipControls, clearPipControlsTimer]);
+
   // On first mount, if PiP isn't pinned, let it show long enough to pin.
   useEffect(() => {
     if (!pipPinned) wakePipControls(true);
@@ -288,7 +299,7 @@ const showHudAfterInteraction = () => {};
   // Persist pin choice
   useEffect(() => {
     try {
-      window.localStorage.setItem("anyspeak.pip.pinned", pipPinned ? "1" : "0");
+      window.localStorage.setItem("anyspeak.pip.pinned.v2", pipPinned ? "1" : "0");
     } catch {}
   }, [pipPinned]);
 
@@ -1360,12 +1371,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                   placeholder="Type a quick caption…"
                   className="flex-1 rounded-full px-3 py-2 text-sm bg-black/70 border border-neutral-700 outline-none"
                 />
-                <button
-                  type="submit"
-                  className="px-3 py-2 rounded-full text-sm bg-emerald-600 hover:bg-emerald-500 text-white"
-                >
-                  Send
-                </button>
+                
               </div>
             </form>
           )}
@@ -1403,16 +1409,19 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     <PipView
       stream={localStreamRef.current}
       isMobile={isMobile}
+      bottomOffset={isMobile && showTextInput ? 260 : 0}
       visible={pipVisible}
       controlsVisible={pipControlsVisible}
       pinned={pipPinned}
       onWakeControls={() => wakePipControls(true)}
       onTogglePin={() => {
-        const next = !pipPinned;
-        setPipPinned(next);
-        try {
-          window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
-        } catch {}
+        setPipPinned((prev) => {
+          const next = !prev;
+          try {
+            window.localStorage.setItem("anyspeak.pip.pinned.v2", next ? "1" : "0");
+          } catch {}
+          return next;
+        });
         wakePipControls(true);
         showHudAfterInteraction();
       }}
