@@ -3,8 +3,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Props = {
+  bottomOffset?: number;
   stream: MediaStream | null;
   isMobile: boolean;
+  bottomOffset?: number;
   visible: boolean;
   controlsVisible: boolean;
   pinned: boolean;
@@ -16,6 +18,7 @@ type Props = {
 export function PipView({
   stream,
   isMobile,
+  bottomOffset = 0,
   visible,
   controlsVisible,
   pinned,
@@ -124,7 +127,8 @@ export function PipView({
     return (
       <button
         type="button"
-        className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50 w-11 h-11 rounded-full bg-black/40 backdrop-blur text-white flex items-center justify-center pointer-events-auto"
+        className="fixed left-3 z-50 w-11 h-11 rounded-full bg-black/40 backdrop-blur text-white flex items-center justify-center pointer-events-auto"
+        style={{ bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)` }}
         aria-label="Show PiP"
         onPointerDown={(e) => {
           e.stopPropagation();
@@ -138,8 +142,8 @@ export function PipView({
 
   return (
     <div
-      className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50 pointer-events-auto"
-      style={pipStyle}
+      className="fixed left-3 z-50 pointer-events-auto"
+      style={{ ...pipStyle, bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)` }}
       onPointerDown={(e) => {
         // If the user is pressing a control button, do NOT treat it as a wake-tap.
         // This avoids the common mobile issue where the container handler swallows the button tap.
