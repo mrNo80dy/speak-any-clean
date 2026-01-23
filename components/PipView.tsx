@@ -7,10 +7,9 @@ type Props = {
   isMobile: boolean;
   visible: boolean;
   controlsVisible: boolean;
-  pinned: boolean;
   onWakeControls: () => void;
-  onTogglePin: () => void;
-  onFlipCamera?: () => void;
+  onHide: () => void;
+  onFlipCamera?: () => void | Promise<void>;
 };
 
 export function PipView({
@@ -18,9 +17,8 @@ export function PipView({
   isMobile,
   visible,
   controlsVisible,
-  pinned,
   onWakeControls,
-  onTogglePin,
+  onHide,
   onFlipCamera,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -116,12 +114,11 @@ export function PipView({
 
   if (!stream) return null;
 
-  // When not visible (not pinned and asleep), show a small "handle" so the user can bring PiP back.
+  // When hidden, show only a transparent outline (tap target) to restore PiP.
   if (!visible) {
     return (
-      <button
-        type="button"
-        className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50"
+      <div
+        className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50 pointer-events-auto"
         style={{
           width: 110,
           height: 160,
@@ -130,15 +127,21 @@ export function PipView({
           background: "transparent",
         }}
         aria-label="Show PiP"
+        role="button"
+        tabIndex={0}
         onPointerDown={(e) => {
           e.stopPropagation();
           onWakeControls();
         }}
-      >
-        <span className="sr-only">Show PiP</span>
-      </button>
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onWakeControls();
+          }
+        }}
+      />
     );
-}
+  }
 
   return (
     <div
@@ -164,21 +167,24 @@ export function PipView({
         />
 
         {/* PiP controls */}
-        {(controlsVisible || pinned) && (
+        {controlsVisible && (
           <div className="absolute bottom-2 left-2 flex items-center gap-2">
             <button
               type="button"
               data-pip-control="1"
               onPointerDown={(e) => {
                 e.stopPropagation();
-                onTogglePin();
+                onHide();
               }}
-              onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
-              title={pinned ? "Unpin PiP" : "Pin PiP"}
-              aria-label="Pin PiP"
-              className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
+              onClick={(e) => {
+                e.stopPropagation();
+                onHide();
+              }}
+              title="Hide PiP"
+              aria-label="Hide PiP"
+              className="w-10 h-10 flex items-center justify-center text-white text-sm bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
             >
-              {pinned ? "📌" : "📍"}
+              H
             </button>
 
             {onFlipCamera && (
