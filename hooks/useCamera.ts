@@ -84,8 +84,11 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
       if (!currentStream) return;
 
       const oldTrack = currentStream.getVideoTracks()[0];
-      const base = getConstraints(isMobile, nextHd, facingModeRef.current);
-      const constraints: MediaTrackConstraints = { ...base, deviceId: { exact: deviceId } };
+      // When selecting a specific deviceId, omit facingMode. Some Android browsers will ignore or conflict.
+      const baseNoFacing: MediaTrackConstraints = isMobile
+        ? { width: { ideal: nextHd ? 1280 : 960 }, height: { ideal: nextHd ? 720 : 540 } }
+        : { width: { ideal: nextHd ? 1920 : 1280 }, height: { ideal: nextHd ? 1080 : 720 } };
+      const constraints: MediaTrackConstraints = { ...baseNoFacing, deviceId: { exact: deviceId } };
 
       const newStream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
       const newTrack = newStream.getVideoTracks()[0];
