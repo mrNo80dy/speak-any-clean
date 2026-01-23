@@ -6,99 +6,115 @@ type Props = {
   bottomOffset?: number;
   stream: MediaStream | null;
   isMobile: boolean;
-  visible: boolean;
-  controlsVisible: boolean;
   pinned: boolean;
-  onWakeControls: () => void;
+  visible: boolean; // whether PiP is currently shown (vs "sleeping" outline only)
+  controlsVisible: boolean;
   onTogglePin: () => void;
+  onWakeControls: () => void;
   onFlipCamera?: () => void;
 };
 
-export function PipView({
+export default function PipView({
+  bottomOffset = 0,
   stream,
   isMobile,
-  bottomOffset = 0,
+  pinned,
   visible,
   controlsVisible,
-  pinned,
-  onWakeControls,
   onTogglePin,
+  onWakeControls,
   onFlipCamera,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // On many browsers a tap triggers both pointer events and a click.
-  // Without a guard, pin/flip can toggle twice (looks like "doesn't work").
+  const [aspect, setAspect] = useState<number>(0);
+  const [viewport, setViewport] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
-  // Track viewport so PiP can size correctly on orientation changes.
-  const [viewport, setViewport] = useState<{ w: number; h: number }>(() => {
-    if (typeof window === "undefined") return { w: 0, h: 0 };
-    return { w: window.innerWidth, h: window.innerHeight };
-  });
-
+  // Keep a cheap viewport state so PiP sizing updates on rotate / resize without reflow hacks.
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
+    const read = () => {
+      try {
+        const w = window.innerWidth || 0;
+        const h = window.innerHeight || 0;
+        setViewport({ w, h });
+      } catch {}
+    };
+    read();
+    window.addEventListener("resize", read, { passive: true } as any);
+    window.addEventListener("orientationchange", read, { passive: true } as any);
     return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
+      window.removeEventListener("resize", read as any);
+      window.removeEventListener("orientationchange", read as any);
     };
   }, []);
 
-  // Keep the PiP container matched to the *actual* camera aspect ratio.
-  // Default: portrait-ish on mobile, landscape on desktop.
-  const [aspect, setAspect] = useState<number>(() => (isMobile ? 9 / 16 : 16 / 9));
-
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream]);
-
-  // Update aspect ratio once metadata is available (videoWidth/videoHeight).
+  // Attach stream to <video> and keep track aspect ratio.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
 
+    try {
+      (el as any).srcObject = stream || null;
+    } catch {}
+
     const update = () => {
-      const vw = el.videoWidth || 0;
-      const vh = el.videoHeight || 0;
-      if (vw > 0 && vh > 0) setAspect(vw / vh);
+      try {
+        const vw = Number((el as any).videoWidth || 0);
+        const vh = Number((el as any).videoHeight || 0);
+        if (vw > 0 && vh > 0) setAspect(vw / vh);
+      } catch {}
+    };
+
+    const kickPlay = async () => {
+      // Some mobile browsers need an explicit play() even when autoPlay is set.
+      try {
+        await el.play();
+      } catch {}
     };
 
     el.addEventListener("loadedmetadata", update);
     el.addEventListener("resize", update as any);
     // In case metadata is already there
     update();
+    kickPlay();
+
     return () => {
       el.removeEventListener("loadedmetadata", update);
       el.removeEventListener("resize", update as any);
     };
   }, [stream]);
 
+  // Also try to resume playback when we wake PiP (user gesture helps on mobile).
+  const wake = async (e?: any) => {
+    try {
+      e?.stopPropagation?.();
+    } catch {}
+    onWakeControls();
+    const el = videoRef.current;
+    if (el) {
+      try {
+        await el.play();
+      } catch {}
+    }
+  };
+
   // Responsive PiP sizing (matched to camera aspect; avoids cutting you off)
   const pipStyle = useMemo(() => {
-    // Use viewport state (updates on rotate) instead of window lookups.
     const w = viewport.w;
     const h = viewport.h;
     if (w <= 0 || h <= 0) return {};
 
     const isLandscape = w > h;
     const arRaw = aspect || (isMobile ? 9 / 16 : 16 / 9);
-    // On mobile portrait, some devices report a landscape track (vw>vh) even though
-    // the user is holding the phone vertically. For PiP, we prefer a portrait-shaped box.
+
+    // On mobile portrait, some devices report a landscape track even though the phone is vertical.
+    // For PiP, prefer a portrait-shaped box.
     const ar = isMobile && !isLandscape && arRaw > 1.05 ? 1 / arRaw : arRaw;
 
     if (!isMobile) {
-      // Desktop: size from width.
       const width = 240;
       return { width, aspectRatio: `${ar}`, maxHeight: 260 } as React.CSSProperties;
     }
 
-    // Mobile sizing:
-    // - Portrait: size from HEIGHT first so the preview isn't "short".
-    // - Landscape: size from WIDTH first so it doesn't cover too much.
     if (!isLandscape) {
       const targetH = Math.max(160, Math.min(Math.round(h * 0.28), 260));
       const maxW = Math.max(140, Math.min(Math.round(w * 0.42), 220));
@@ -120,70 +136,59 @@ export function PipView({
 
   if (!stream) return null;
 
-  // When not visible (not pinned and asleep), show a transparent "outline handle"
-  // in the exact PiP footprint so users can tap/click to bring it back (no icon).
-  if (!visible) {
-    const style = {
-      ...(pipStyle || {}),
-      bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)`,
-    } as React.CSSProperties;
+  const style = {
+    ...(pipStyle || {}),
+    bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)`,
+  } as React.CSSProperties;
 
-    // If style isn't ready yet (e.g., first render before viewport measured), fall back to a small handle.
-    const hasSize =
-      typeof (style as any).width !== "undefined" || typeof (style as any).height !== "undefined" || typeof (style as any).aspectRatio !== "undefined";
+  // If style isn't ready yet (e.g., first render before viewport measured), fall back to a small handle.
+  const hasSize =
+    typeof (style as any).width !== "undefined" ||
+    typeof (style as any).height !== "undefined" ||
+    typeof (style as any).aspectRatio !== "undefined";
 
-    return (
-      <div
-        className="fixed left-3 z-50 pointer-events-auto"
-        style={hasSize ? style : { bottom: style.bottom, width: 64, height: 64 }}
-        role="button"
-        aria-label="Show PiP"
-        tabIndex={0}
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onWakeControls();
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onWakeControls();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onWakeControls();
-          }
-        }}
-      >
-        <div className="w-full h-full rounded-lg border border-white/25 bg-transparent" />
-      </div>
-    );
-  }
+  const containerStyle: React.CSSProperties = hasSize ? style : { bottom: style.bottom, width: 64, height: 64 };
 
   return (
     <div
       className="fixed left-3 z-50 pointer-events-auto"
-      style={{ ...pipStyle, bottom: `calc(env(safe-area-inset-bottom) + 12px + ${bottomOffset}px)` }}
+      style={containerStyle}
+      role={!visible ? "button" : undefined}
+      aria-label={!visible ? "Show PiP" : undefined}
+      tabIndex={!visible ? 0 : undefined}
       onPointerDown={(e) => {
         // If the user is pressing a control button, do NOT treat it as a wake-tap.
-        // This avoids the common mobile issue where the container handler swallows the button tap.
         const t = e.target as HTMLElement;
         if (t?.closest?.("[data-pip-control='1']")) return;
-        e.stopPropagation();
-        onWakeControls();
+        wake(e);
+      }}
+      onClick={(e) => {
+        if (!visible) wake(e);
+      }}
+      onKeyDown={(e) => {
+        if (!visible && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          wake(e);
+        }
       }}
     >
-      <div className="relative w-full h-full overflow-hidden rounded-none bg-black shadow-[0_0_0_1px_rgba(255,255,255,0.10)]">
+      {/* Outline tap-area when PiP is sleeping (no icon) */}
+      {!visible && <div className="absolute inset-0 rounded-lg border border-white/25 bg-transparent" />}
+
+      <div
+        className="relative w-full h-full overflow-hidden rounded-none bg-black shadow-[0_0_0_1px_rgba(255,255,255,0.10)]"
+        style={{ opacity: visible ? 1 : 0, transition: "opacity 250ms ease" }}
+      >
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          // Use contain so your face/body isn't cropped in portrait.
           className="w-full h-full object-contain rounded-none bg-black"
         />
 
         {/* PiP controls */}
-        {(controlsVisible || pinned) && (
+        {(controlsVisible || pinned) && visible && (
           <div className="absolute inset-0 flex flex-col items-end p-2 gap-2">
             <button
               type="button"
