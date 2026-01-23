@@ -61,38 +61,50 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
     [peersRef]
   );
 
-  const stopAndRemoveVideoTrack = useCallback(() => {
+  // IMPORTANT: do NOT remove the old track immediately.
+  // Some UI branches hide PiP when videoTracks.length === 0.
+  // We stop it (to free the camera), but keep it in the stream until we have a replacement.
+  const stopVideoTrackKeepInStream = useCallback((): MediaStreamTrack | null => {
     const stream = localStreamRef.current;
-    if (!stream) return;
+    if (!stream) return null;
     const old = stream.getVideoTracks()[0];
-    if (!old) return;
-    try {
-      stream.removeTrack(old);
-    } catch {}
+    if (!old) return null;
     try {
       old.stop();
     } catch {}
+    return old;
   }, [localStreamRef]);
 
-  const addNewVideoTrack = useCallback(
-    (newTrack: MediaStreamTrack) => {
+  const swapVideoTrack = useCallback(
+    (oldTrack: MediaStreamTrack | null, newTrack: MediaStreamTrack) => {
       const stream = localStreamRef.current;
       if (!stream) return;
+
+      // Remove old stopped track if present.
+      if (oldTrack) {
+        try {
+          stream.removeTrack(oldTrack);
+        } catch {}
+      }
+
+      // Add the new track.
       try {
         stream.addTrack(newTrack);
       } catch {}
+
       replaceOutgoingOnPeers(newTrack);
     },
     [localStreamRef, replaceOutgoingOnPeers]
   );
 
   const restartVideoTrack = useCallback(
-    async (nextFacing: FacingMode, nextHd: boolean) => {
-      if (!navigator?.mediaDevices?.getUserMedia) return;
+    async (nextFacing: FacingMode, nextHd: boolean): Promise<string | undefined> => {
+      if (!navigator?.mediaDevices?.getUserMedia) return undefined;
       const stream = localStreamRef.current;
-      if (!stream) return;
+      if (!stream) return undefined;
 
-      stopAndRemoveVideoTrack();
+      const oldTrack = stopVideoTrackKeepInStream();
+      const oldId = (oldTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
 
       let newTrack: MediaStreamTrack | undefined;
       try {
@@ -112,9 +124,10 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
         newTrack = fallbackStream.getVideoTracks()[0];
       }
 
-      if (newTrack) addNewVideoTrack(newTrack);
+      if (newTrack) swapVideoTrack(oldTrack, newTrack);
+      return oldId;
     },
-    [addNewVideoTrack, isMobile, localStreamRef, stopAndRemoveVideoTrack]
+    [isMobile, localStreamRef, stopVideoTrackKeepInStream, swapVideoTrack]
   );
 
   const restartVideoTrackByDeviceId = useCallback(
@@ -123,16 +136,16 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
       const stream = localStreamRef.current;
       if (!stream) return;
 
-      stopAndRemoveVideoTrack();
+      const oldTrack = stopVideoTrackKeepInStream();
 
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: constraintsForDeviceId(isMobile, nextHd, deviceId),
         audio: false,
       });
       const newTrack = newStream.getVideoTracks()[0];
-      if (newTrack) addNewVideoTrack(newTrack);
+      if (newTrack) swapVideoTrack(oldTrack, newTrack);
     },
-    [addNewVideoTrack, isMobile, localStreamRef, stopAndRemoveVideoTrack]
+    [isMobile, localStreamRef, stopVideoTrackKeepInStream, swapVideoTrack]
   );
 
   const applyQualityToExistingTrack = useCallback(
@@ -196,7 +209,7 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
     const currentTrack = localStreamRef.current?.getVideoTracks?.()[0];
     const currentId = (currentTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
 
-    // Heuristic: prefer switching away from current deviceId.
+    // Prefer anything that isn't the current id.
     const other = vids.find((d) => d.deviceId && d.deviceId !== currentId);
     return (other?.deviceId ?? vids[0]?.deviceId) || null;
   };
@@ -210,19 +223,16 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
         facingModeRef.current = nextFacing;
         setFacingMode(nextFacing);
 
-        // First: try facingMode restart.
-        await restartVideoTrack(nextFacing, hdEnabled);
+        // Try facingMode first.
+        const beforeId = await restartVideoTrack(nextFacing, hdEnabled);
 
-        // Many Android devices ignore facingMode and keep same device. If so, force deviceId swap.
+        // If it didn't actually change deviceId, force a deviceId swap.
+        const afterTrack = localStreamRef.current?.getVideoTracks?.()[0];
+        const afterId = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
         const desired = await pickOtherDeviceId();
-        if (desired) {
-          const afterTrack = localStreamRef.current?.getVideoTracks?.()[0];
-          const afterId = (afterTrack?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId;
-          if (afterId === undefined || afterId === desired) {
-            // already swapped or unknown; no-op
-          } else {
-            await restartVideoTrackByDeviceId(desired, hdEnabled);
-          }
+
+        if (desired && (afterId === undefined || afterId === beforeId)) {
+          await restartVideoTrackByDeviceId(desired, hdEnabled);
         }
 
         setTimeout(() => setCamEnabled(true), 80);
@@ -235,7 +245,6 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
     [hdEnabled, isMobile, log, restartVideoTrack, restartVideoTrackByDeviceId, roomType, setCamEnabled]
   );
 
-  // Basic canFlip heuristic
   const canFlip = isMobile;
 
   return {
