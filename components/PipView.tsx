@@ -145,9 +145,8 @@ export function PipView({
         e.stopPropagation();
         onWakeControls();
       }}
->
-
-      <div className="relative w-full h-full overflow-hidden rounded-none bg-black">
+    >
+      <div className="relative w-full h-full overflow-hidden rounded-none bg-black shadow-[0_0_0_1px_rgba(255,255,255,0.10)]">
         <video
           ref={videoRef}
           autoPlay
@@ -170,7 +169,7 @@ export function PipView({
               onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
               title={pinned ? "Unpin PiP" : "Pin PiP"}
               aria-label="Pin PiP"
-              className="w-9 h-9 flex items-center justify-center text-white text-lg bg-transparent border-0 rounded-none shadow-none appearance-none opacity-90 hover:opacity-100"
+              className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
             >
               {pinned ? "📌" : "📍"}
             </button>
@@ -186,7 +185,7 @@ export function PipView({
                 onClick={(e) => { e.stopPropagation(); onFlipCamera(); }}
                 title="Flip camera"
                 aria-label="Flip camera"
-                className="w-9 h-9 flex items-center justify-center text-white text-lg bg-transparent border-0 rounded-none shadow-none appearance-none opacity-90 hover:opacity-100"
+                className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
               >
                 ↺
               </button>
