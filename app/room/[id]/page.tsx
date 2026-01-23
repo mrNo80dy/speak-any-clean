@@ -1152,19 +1152,6 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
                 {/* When PiP is asleep (not pinned), leave a large invisible wake zone where PiP lives.
                     This avoids the "I can't bring it back" issue on mobile where a tiny handle is easy to miss. */}
-                {/* Mobile-only wake zone so you can always revive PiP when it fades. */}
-                    onTogglePin={() => {
-                      const next = !pipPinned;
-                      setPipPinned(next);
-                      try {
-                        window.localStorage.setItem("anyspeak.pip.pinned", next ? "1" : "0");
-                      } catch {}
-                      wakePipControls(true);
-                      showHudAfterInteraction();
-                    }}
-                    onFlipCamera={isMobile && canFlip ? flipCamera : undefined}
-                  />
-                )}
               </div>
             )}
 
@@ -1378,7 +1365,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
 
 {/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
-{roomType === "video" && localStreamRef.current && (
+{roomType === "video" && camOn && localStreamRef.current && (
   <>
     {/* Mobile-only wake zone when PiP is hidden and not pinned */}
     {isMobile && !pipPinned && !pipVisible && (
