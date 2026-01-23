@@ -72,15 +72,41 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
 
       const oldTrack = currentStream.getVideoTracks()[0];
       const constraints = getConstraints(isMobile, nextHd, nextFacing);
-      const newStream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
-      const newTrack = newStream.getVideoTracks()[0];
+      // Stop and remove the current track *before* acquiring the next one.
+      // (Important on some mobile browsers: requesting a second camera while the first is active
+      // often returns the same device or fails to switch.)
+      if (oldTrack) {
+        try {
+          currentStream.removeTrack(oldTrack);
+        } catch {}
+        try {
+          oldTrack.stop();
+        } catch {}
+      }
+
+      let newTrack: MediaStreamTrack | undefined;
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
+        newTrack = newStream.getVideoTracks()[0];
+      } catch (err) {
+        // Fallback: try again without exact deviceId (lets the browser choose the closest match)
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            ...(nextHd
+              ? { width: { ideal: 1280 }, height: { ideal: 720 } }
+              : { width: { ideal: 640 }, height: { ideal: 360 } }),
+          },
+          audio: false,
+        });
+        newTrack = fallbackStream.getVideoTracks()[0];
+      }
 
       if (newTrack) {
-        if (oldTrack) {
-          currentStream.removeTrack(oldTrack);
-          try {
-            oldTrack.stop();
-          } catch {}
+        try {
+          currentStream.addTrack(newTrack);
+        } catch {}
+        replaceOutgoingOnPeers(newTrack);
+      } catch {}
         }
         currentStream.addTrack(newTrack);
         replaceOutgoingOnPeers(newTrack);
@@ -102,15 +128,25 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
         : { width: { ideal: nextHd ? 1920 : 1280 }, height: { ideal: nextHd ? 1080 : 720 } };
       const constraints: MediaTrackConstraints = { ...baseNoFacing, deviceId: { exact: deviceId } };
 
+      // Stop and remove the current track *before* acquiring the next one.
+      if (oldTrack) {
+        try {
+          currentStream.removeTrack(oldTrack);
+        } catch {}
+        try {
+          oldTrack.stop();
+        } catch {}
+      }
+
       const newStream = await navigator.mediaDevices.getUserMedia({ video: constraints, audio: false });
       const newTrack = newStream.getVideoTracks()[0];
 
       if (newTrack) {
-        if (oldTrack) {
-          currentStream.removeTrack(oldTrack);
-          try {
-            oldTrack.stop();
-          } catch {}
+        try {
+          currentStream.addTrack(newTrack);
+        } catch {}
+        replaceOutgoingOnPeers(newTrack);
+      } catch {}
         }
         currentStream.addTrack(newTrack);
         replaceOutgoingOnPeers(newTrack);
