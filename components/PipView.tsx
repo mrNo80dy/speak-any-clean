@@ -24,6 +24,9 @@ export function PipView({
   onFlipCamera,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // On many browsers a tap triggers both pointer events and a click.
+  // Without a guard, pin/flip can toggle twice (looks like "doesn't work").
+  const skipNextClickRef = useRef(false);
 
   // Track viewport so PiP can size correctly on orientation changes.
   const [viewport, setViewport] = useState<{ w: number; h: number }>(() => {
@@ -164,9 +167,21 @@ export function PipView({
               data-pip-control="1"
               onPointerDown={(e) => {
                 e.stopPropagation();
+                skipNextClickRef.current = true;
+                onTogglePin();
+                // If this browser doesn't emit a click after pointerdown, clear the guard.
+                window.setTimeout(() => {
+                  skipNextClickRef.current = false;
+                }, 250);
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (skipNextClickRef.current) {
+                  skipNextClickRef.current = false;
+                  return;
+                }
                 onTogglePin();
               }}
-              onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
               title={pinned ? "Unpin PiP" : "Pin PiP"}
               aria-label="Pin PiP"
               className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
@@ -180,9 +195,20 @@ export function PipView({
                 data-pip-control="1"
                 onPointerDown={(e) => {
                   e.stopPropagation();
+                  skipNextClickRef.current = true;
+                  onFlipCamera();
+                  window.setTimeout(() => {
+                    skipNextClickRef.current = false;
+                  }, 250);
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (skipNextClickRef.current) {
+                    skipNextClickRef.current = false;
+                    return;
+                  }
                   onFlipCamera();
                 }}
-                onClick={(e) => { e.stopPropagation(); onFlipCamera(); }}
                 title="Flip camera"
                 aria-label="Flip camera"
                 className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
