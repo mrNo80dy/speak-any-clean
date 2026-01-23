@@ -79,15 +79,16 @@ function speakText(text: string, lang: string, rate = 1.0) {
   };
 
   const currentVoices = synth.getVoices();
+
+  // Speak immediately (default voice), then retry once when voices load (some Android browsers never fire before first speak).
+  doSpeak();
+
   if (!currentVoices || currentVoices.length === 0) {
     synth.onvoiceschanged = () => {
       synth.onvoiceschanged = null;
       doSpeak();
     };
-    return;
   }
-
-  doSpeak();
 }
 
 function scoreSimilarity(a: string, b: string): number {
@@ -402,7 +403,7 @@ useEffect(() => {
 
   function startSourceRecord() {
     setError(null);
-    if (!sttSupported || !sourceRecRef.current) {
+    if (sttSupported === false || !sourceRecRef.current) {
       setError(t.sttNotSupported);
       return;
     }
