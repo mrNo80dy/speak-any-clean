@@ -79,7 +79,7 @@ export default function FullBleedVideo({
     };
   }, [stream]);
 
-  const mirrorStyle = isLocal ? { transform: "scaleX(-1)" } : undefined;
+  const mirrorStyle = undefined;
   const effectiveFit: "cover" | "contain" = forceCover ? "cover" : fit;
 
   return (
