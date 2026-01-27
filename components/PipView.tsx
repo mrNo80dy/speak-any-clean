@@ -1,16 +1,25 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 
 type Props = {
   stream: MediaStream | null;
   isMobile: boolean;
   visible: boolean;
   controlsVisible: boolean;
-  pinned: boolean;
+
+  // Called when the user taps/clicks the PiP area to wake controls.
   onWakeControls: () => void;
-  onTogglePin: () => void;
-  onFlipCamera?: () => void;
+
+  // Optional: hide PiP (your new "pin hides PiP" behavior).
+  onHide?: () => void;
+
+  // Optional: legacy pin toggle (kept for compatibility).
+  pinned?: boolean;
+  onTogglePin?: () => void;
+
+  // Optional: flip camera (mobile only).
+  onFlipCamera?: () => Promise<void>;
 };
 
 export function PipView({
@@ -18,189 +27,137 @@ export function PipView({
   isMobile,
   visible,
   controlsVisible,
-  pinned,
   onWakeControls,
+  onHide,
+  pinned,
   onTogglePin,
   onFlipCamera,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Track viewport so PiP can size correctly on orientation changes.
-  const [viewport, setViewport] = useState<{ w: number; h: number }>(() => {
-    if (typeof window === "undefined") return { w: 0, h: 0 };
-    return { w: window.innerWidth, h: window.innerHeight };
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
-    };
-  }, []);
-
-  // Keep the PiP container matched to the *actual* camera aspect ratio.
-  // Default: portrait-ish on mobile, landscape on desktop.
-  const [aspect, setAspect] = useState<number>(() => (isMobile ? 9 / 16 : 16 / 9));
-
-  useEffect(() => {
-  const el = videoRef.current;
-  if (!el || !stream) return;
-
-  try {
-    (el as any).srcObject = stream;
-  } catch {}
-
-  if (visible) {
-    const p = el.play?.();
-    if (p && typeof (p as any).catch === "function") (p as any).catch(() => {});
-  }
-}, [stream, visible]);
-
-// Update aspect ratio once metadata is available (videoWidth/videoHeight).
+  // Keep srcObject attached (and re-attach after hide/show to avoid black video).
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
 
-    const update = () => {
-      const vw = el.videoWidth || 0;
-      const vh = el.videoHeight || 0;
-      if (vw > 0 && vh > 0) setAspect(vw / vh);
-    };
-
-    el.addEventListener("loadedmetadata", update);
-    el.addEventListener("resize", update as any);
-    // In case metadata is already there
-    update();
-    return () => {
-      el.removeEventListener("loadedmetadata", update);
-      el.removeEventListener("resize", update as any);
-    };
-  }, [stream]);
-
-  // Responsive PiP sizing (matched to camera aspect; avoids cutting you off)
-  const pipStyle = useMemo(() => {
-    // Use viewport state (updates on rotate) instead of window lookups.
-    const w = viewport.w;
-    const h = viewport.h;
-    if (w <= 0 || h <= 0) return {};
-
-    const isLandscape = w > h;
-    const arRaw = aspect || (isMobile ? 9 / 16 : 16 / 9);
-    // On mobile portrait, some devices report a landscape track (vw>vh) even though
-    // the user is holding the phone vertically. For PiP, we prefer a portrait-shaped box.
-    const ar = isMobile && !isLandscape && arRaw > 1.05 ? 1 / arRaw : arRaw;
-
-    if (!isMobile) {
-      // Desktop: size from width.
-      const width = 240;
-      return { width, aspectRatio: `${ar}`, maxHeight: 260 } as React.CSSProperties;
+    if (!visible) {
+      // Detach when hidden so the browser doesn't keep a stale rendering surface.
+      try {
+        (el as any).srcObject = null;
+      } catch {}
+      return;
     }
 
-    // Mobile sizing:
-    // - Portrait: size from HEIGHT first so the preview isn't "short".
-    // - Landscape: size from WIDTH first so it doesn't cover too much.
-    if (!isLandscape) {
-      const targetH = Math.max(160, Math.min(Math.round(h * 0.28), 260));
-      const maxW = Math.max(140, Math.min(Math.round(w * 0.42), 220));
-      const rawW = Math.round(targetH * ar);
-      const scale = rawW > maxW ? maxW / rawW : 1;
-      const hFinal = Math.round(targetH * scale);
-      const wFinal = Math.round(rawW * scale);
-      return { width: wFinal, height: hFinal, aspectRatio: `${ar}` } as React.CSSProperties;
-    }
+    try {
+      (el as any).srcObject = stream ?? null;
+    } catch {}
 
-    const targetW = Math.max(150, Math.min(Math.round(w * 0.34), 220));
-    const maxH = Math.max(140, Math.min(Math.round(h * 0.42), 220));
-    const rawH = Math.round(targetW / ar);
-    const scale = rawH > maxH ? maxH / rawH : 1;
-    const wFinal = Math.round(targetW * scale);
-    const hFinal = Math.round(rawH * scale);
-    return { width: wFinal, height: hFinal, aspectRatio: `${ar}` } as React.CSSProperties;
-  }, [isMobile, aspect, viewport]);
+    // Try to play (especially important on Android Chrome after re-attach).
+    const p = el.play?.();
+    if (p && typeof (p as any).catch === "function") (p as any).catch(() => {});
+  }, [stream, visible]);
 
-  if (!stream) return null;
+  if (!visible) return null;
 
-  // When not visible (not pinned and asleep), show a small "handle" so the user can bring PiP back.
-
+  const handlePin = () => {
+    // Prefer new behavior
+    if (onHide) return onHide();
+    // Fallback legacy
+    if (onTogglePin) return onTogglePin();
+  };
 
   return (
     <div
-      className="fixed left-3 bottom-[calc(env(safe-area-inset-bottom)+12px)] z-50 pointer-events-auto"
-      style={pipStyle}
-      onPointerDown={(e) => {
-        // If the user is pressing a control button, do NOT treat it as a wake-tap.
-        // This avoids the common mobile issue where the container handler swallows the button tap.
-        const t = e.target as HTMLElement;
-        if (t?.closest?.("[data-pip-control='1']")) return;
+      className="pointer-events-auto select-none"
+      onClick={(e) => {
         e.stopPropagation();
         onWakeControls();
       }}
+      onTouchStart={(e) => {
+        e.stopPropagation();
+        onWakeControls();
+      }}
+      style={{
+        position: "absolute",
+        left: 16,
+        bottom: isMobile ? 110 : 16,
+        width: isMobile ? 130 : 220,
+        height: isMobile ? 220 : 124,
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "rgba(0,0,0,0.35)",
+        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+      }}
     >
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        autoPlay
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          transform: "scaleX(-1)",
+        }}
+      />
+
+      {/* Controls overlay (bottom-left) */}
       <div
-        className="relative w-full h-full overflow-hidden rounded-none shadow-[0_0_0_1px_rgba(255,255,255,0.10)]"
-        style={{ backgroundColor: visible ? "black" : "transparent" }}
+        style={{
+          position: "absolute",
+          left: 8,
+          bottom: 8,
+          display: "flex",
+          gap: 8,
+          opacity: controlsVisible ? 1 : 0,
+          pointerEvents: controlsVisible ? "auto" : "none",
+          transition: "opacity 160ms ease",
+        }}
       >
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          // Use contain so your face/body isn't cropped in portrait.
-          className="w-full h-full object-contain rounded-none bg-black"
-          style={{ opacity: visible ? 1 : 0 }}
-          onLoadedMetadata={() => {
-            const el = videoRef.current;
-            if (!el || !visible) return;
-            const p = el.play?.();
-            if (p && typeof (p as any).catch === "function") (p as any).catch(() => {});
+        <button
+          type="button"
+          aria-label="Hide PiP"
+          onClick={(e) => {
+            e.stopPropagation();
+            handlePin();
           }}
-        />
+          className="rounded-full"
+          style={{
+            width: 42,
+            height: 42,
+            background: "rgba(0,0,0,0.55)",
+            color: "white",
+            border: "1px solid rgba(255,255,255,0.18)",
+          }}
+        >
+          {pinned ? "PIN" : "HIDE"}
+        </button>
 
-        {!visible && (
-          <div className="absolute inset-0 rounded-none border border-white/25 pointer-events-none" />
-        )}
-
-        {/* PiP controls */}
-        {visible && (controlsVisible || pinned) && (
-          <div className="absolute bottom-2 left-2 flex items-center gap-2">
-            <button
-              type="button"
-              data-pip-control="1"
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                onTogglePin();
-              }}
-              onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
-              title={pinned ? "Unpin PiP" : "Pin PiP"}
-              aria-label="Pin PiP"
-              className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
-            >
-              {pinned ? "📌" : "📍"}
-            </button>
-
-            {onFlipCamera && (
-              <button
-                type="button"
-                data-pip-control="1"
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  onFlipCamera();
-                }}
-                onClick={(e) => { e.stopPropagation(); onFlipCamera(); }}
-                title="Flip camera"
-                aria-label="Flip camera"
-                className="w-10 h-10 flex items-center justify-center text-white text-lg bg-black/40 backdrop-blur border border-white/10 rounded-full shadow-sm opacity-95 active:scale-[0.98]"
-              >
-                ↺
-              </button>
-            )}
-          </div>
+        {onFlipCamera && (
+          <button
+            type="button"
+            aria-label="Flip camera"
+            onClick={(e) => {
+              e.stopPropagation();
+              onFlipCamera?.();
+            }}
+            className="rounded-full"
+            style={{
+              width: 42,
+              height: 42,
+              background: "rgba(0,0,0,0.55)",
+              color: "white",
+              border: "1px solid rgba(255,255,255,0.18)",
+              fontSize: 16,
+            }}
+          >
+            ↻
+          </button>
         )}
       </div>
     </div>
   );
 }
+
+export default PipView;
