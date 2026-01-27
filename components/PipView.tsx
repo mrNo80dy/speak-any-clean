@@ -127,8 +127,8 @@ export function PipView({
   // ---- SIZE (tuned smaller) -------------------------------
   // Keep the same “portrait” feel on mobile but make it less intrusive.
   const boxStyle = {
-    width: isMobile ? 120 : 160,
-    height: isMobile ? 188 : 106,
+    width: isMobile ? 100 : 140,
+    height: isMobile ? 156 : 94,
   } as const;
 
   return (
