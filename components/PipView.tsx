@@ -29,12 +29,7 @@ function EyeOffIcon() {
       className="opacity-90"
       aria-hidden="true"
     >
-      <path
-        d="M3 3l18 18"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
+      <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       <path
         d="M10.58 10.58a2 2 0 0 0 2.83 2.83"
         stroke="currentColor"
@@ -67,24 +62,14 @@ function FlipIcon() {
         strokeWidth="2"
         strokeLinecap="round"
       />
-      <path
-        d="M3 3v6h6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
+      <path d="M3 3v6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       <path
         d="M3 12a9 9 0 0 0 9 9 9 9 0 0 0 6.36-2.64"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
       />
-      <path
-        d="M21 21v-6h-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
+      <path d="M21 21v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
     </svg>
   );
 }
@@ -105,8 +90,7 @@ export function PipView({
   const streamKey = useMemo(() => {
     const id = stream?.id || "";
     const v = stream?.getVideoTracks?.()[0];
-    const vid =
-      (v?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId || "";
+    const vid = (v?.getSettings?.() as MediaTrackSettings | undefined)?.deviceId || "";
     return `${id}::${vid}::${v?.id || ""}`;
   }, [stream]);
 
@@ -140,9 +124,11 @@ export function PipView({
 
   if (!stream) return null;
 
+  // ---- SIZE (tuned smaller) -------------------------------
+  // Keep the same “portrait” feel on mobile but make it less intrusive.
   const boxStyle = {
-    width: isMobile ? 140 : 180,
-    height: isMobile ? 220 : 120,
+    width: isMobile ? 120 : 160,
+    height: isMobile ? 188 : 106,
   } as const;
 
   return (
@@ -176,9 +162,7 @@ export function PipView({
         </div>
 
         {/* Transparent outline tap area when PiP is hidden */}
-        {!visible && (
-          <div className="absolute inset-0 rounded-2xl border border-white/35 bg-transparent" />
-        )}
+        {!visible && <div className="absolute inset-0 rounded-2xl border border-white/35 bg-transparent" />}
 
         {/* Controls overlay bottom-left (always fades; wakes on tap) */}
         <div
@@ -192,7 +176,7 @@ export function PipView({
           {onHide && (
             <button
               type="button"
-              className="h-11 w-11 rounded-full bg-black/45 backdrop-blur flex items-center justify-center"
+              className="h-10 w-10 rounded-full bg-black/45 backdrop-blur flex items-center justify-center"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
@@ -206,7 +190,7 @@ export function PipView({
           {isMobile && onFlipCamera && (
             <button
               type="button"
-              className="h-11 w-11 rounded-full bg-black/45 backdrop-blur flex items-center justify-center"
+              className="h-10 w-10 rounded-full bg-black/45 backdrop-blur flex items-center justify-center"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
