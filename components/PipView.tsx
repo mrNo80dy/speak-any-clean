@@ -156,7 +156,7 @@ export function PipView({
             const el = videoRef.current;
             if (!el || !visible) return;
             const p = el.play?.();
-            if (p && typeof (p as any).catch === \"function\") (p as any).catch(() => {});
+            if (p && typeof (p as any).catch === "function") (p as any).catch(() => {});
           }}
         />
 
