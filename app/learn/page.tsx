@@ -1257,7 +1257,7 @@ function stopAttemptRecord() {
     ) : sttWarning ? (
       <span className="text-amber-200">{sttWarning}</span>
     ) : isTranscribing ? (
-      <span>{t.transcribing}</span>
+      <span>{(t as any).transcribing ?? t.translating}</span>
     ) : loading ? (
       <span>{t.translating}</span>
     ) : null}
