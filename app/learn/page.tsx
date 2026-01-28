@@ -1182,7 +1182,8 @@ function stopAttemptRecord() {
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <Label className="text-xs text-slate-100">{t.to}</Label>
-                <button
+                <div className="flex items-center justify-between gap-2">
+<button
                   type="button"
                   onClick={swapLangs}
                   className="text-[11px] text-slate-200 hover:text-white underline underline-offset-2"
@@ -1227,25 +1228,15 @@ function stopAttemptRecord() {
     {t.typeMode}
   </Button>
 
-  <Button
-    size="sm"
-    onClick={() => {
-      if (isRecordingSource) stopSourceRecord();
-      else startSourceRecord();
-    }}
-    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
-  >
-    {isRecordingSource ? t.stopRecording : t.recordSentence}
-  </Button>
-
-<Button
+    <Button
   size="sm"
-  variant="outline"
-  onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
-  disabled={!translatedText.trim()}
+  onClick={() => {
+    if (isRecordingSource) stopSourceRecord();
+    else startSourceRecord();
+  }}
   className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
-  {t.playTranslation}
+  {isRecordingSource ? t.stopRecording : t.recordSentence}
 </Button>
     </div>
 
@@ -1285,14 +1276,12 @@ function stopAttemptRecord() {
   <Label className="text-[11px] text-slate-300">{t.translation}</Label>
 <Button
   size="sm"
-  onClick={() => {
-    if (isRecordingAttempt) stopAttemptRecord();
-    else startAttemptRecord();
-  }}
+  variant="outline"
+  onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
   disabled={!translatedText.trim()}
   className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
-  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+  {t.playTranslation}
 </Button>
 </div>
   <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
@@ -1311,23 +1300,17 @@ function stopAttemptRecord() {
 <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
   <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
-  <Button
-    size="sm"
-    onClick={() => {
-      try {
-        if (attemptAudioUrl) {
-          attemptAudioRef.current?.play?.();
-        } else {
-          const said = attemptText?.trim();
-          if (said) speakText(said, toLang, ttsRate);
-        }
-      } catch {}
-    }}
-    disabled={!attemptAudioUrl && !attemptText?.trim()}
-    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
-  >
-    {t.playAttempt}
-  </Button>
+<Button
+  size="sm"
+  onClick={() => {
+    if (isRecordingAttempt) stopAttemptRecord();
+    else startAttemptRecord();
+  }}
+  disabled={!translatedText.trim()}
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+>
+  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+</Button>
 </div>
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
@@ -1354,6 +1337,24 @@ function stopAttemptRecord() {
               >
                 {showFeedback ? t.hideFeedback : t.showFeedback}
               </button>
+<Button
+  size="sm"
+  onClick={() => {
+    try {
+      if (attemptAudioUrl) {
+        attemptAudioRef.current?.play?.();
+      } else {
+        const said = attemptText?.trim();
+        if (said) speakText(said, toLang, ttsRate);
+      }
+    } catch {}
+  }}
+  disabled={!attemptAudioUrl && !attemptText?.trim()}
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+>
+  {t.playAttempt}
+</Button>
+</div>
 
               {showFeedback && (
                 <div className="space-y-1">
