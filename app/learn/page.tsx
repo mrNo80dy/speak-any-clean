@@ -63,7 +63,12 @@ function buildLearnLanguages(): LanguageConfig[] {
   // Build at runtime to avoid module-init ordering issues during SSR/prerender.
   return LEARN_LANGUAGE_CODES.map((code) => {
     const base = LANGUAGES.find((l) => l.code === code);
-
+    const merged: LanguageConfig = base
+      ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
+      : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
+    return merged;
+  });
+}
 
 type TranslateResponse = {
   translatedText?: string;
