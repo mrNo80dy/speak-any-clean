@@ -230,7 +230,7 @@ const UI_BASE = {
     to: "To language",
     typeMode: "Type mode",
     listening: "Listening…",
-    recordSentence: "Record sentence",
+    recordSentence: "Speak sentence",
     stopRecording: "Stop",
     micBlocked:
       "Mic access was blocked by the browser. Check microphone permission if you want to use speech input.",
@@ -1216,7 +1216,7 @@ function stopAttemptRecord() {
             />
 
             
-{/* Controls row: Type mode (left), Record sentence (right) */}
+{/* Controls row: Type mode (left), Speak sentence (right) */}
 <div className="flex w-full items-center justify-between gap-2">
   <Button
     size="sm"
