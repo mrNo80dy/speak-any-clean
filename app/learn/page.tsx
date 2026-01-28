@@ -400,39 +400,6 @@ useEffect(() => {
     if (!tts) return;
     speakText(tts, toLang, ttsRate);
   }
-function getMediaRecorderOptions(): MediaRecorderOptions | undefined {
-  // Optimize for speech: smaller uploads => faster STT on mobile.
-  // Prefer Opus in WebM when available.
-  const preferred = [
-    "audio/webm;codecs=opus",
-    "audio/webm; codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-  ];
-
-  let mimeType: string | undefined;
-  for (const t of preferred) {
-    try {
-      if (
-        typeof (window as any).MediaRecorder?.isTypeSupported === "function" &&
-        (window as any).MediaRecorder.isTypeSupported(t)
-      ) {
-        mimeType = t;
-        break;
-      }
-    } catch {}
-  }
-
-  const opts: any = {};
-  if (mimeType) opts.mimeType = mimeType;
-
-  // 24 kbps is plenty for speech and keeps blobs small on mobile.
-  opts.audioBitsPerSecond = 24000;
-
-  return opts as MediaRecorderOptions;
-}
-
-
 
   function startSourceRecord() {
     setError(null);
@@ -497,7 +464,7 @@ function getMediaRecorderOptions(): MediaRecorderOptions | undefined {
       attemptStreamRef.current = stream;
       attemptChunksRef.current = [];
 
-      const mr = new MediaRecorder(stream, getMediaRecorderOptions());
+      const mr = new MediaRecorder(stream);
       attemptMrRef.current = mr;
 
       mr.ondataavailable = (e) => {
@@ -520,15 +487,6 @@ function getMediaRecorderOptions(): MediaRecorderOptions | undefined {
       };
 
       mr.start();
-        // AUTO_STOP: prevent accidental long recordings on mobile
-        setTimeout(() => {
-          try {
-            if (sourceMrRef.current && sourceMrRef.current.state !== "inactive") {
-              sourceMrRef.current.stop();
-            }
-          } catch {}
-        }, 10000);
-
     }
 
     // Start speech recognition (for transcript + scoring)
@@ -698,38 +656,7 @@ function stopAttemptRecord() {
             />
 
             {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
-            <div className="flex items-center justify-between gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={focusTypeMode}
-                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 text-[11px]"
-              >
-                {t.typeMode}
-              </Button>
-
-              <Button
-  size="sm"
-  onClick={() => {
-    if (isRecordingSource) stopSourceRecord();
-    else startSourceRecord();
-  }}
-  disabled={sttSupported === false}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
->
-  {isRecordingSource ? t.stopRecording : t.recordSentence}
-</Button>
-
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handlePlayTarget}
-                disabled={!canPlay}
-                className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 disabled:opacity-60 text-[11px]"
-              >
-                {t.playTranslation}
-              </Button>
-            </div>
+            <div className="flex items-center justify-between gap-2"></div>
 
             {/* Speed + translating status */}
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -764,7 +691,19 @@ function stopAttemptRecord() {
 
           {/* Translation output */}
           <div className="space-y-1">
-            <Label className="text-xs text-slate-100">{t.translation}</Label>
+            <Label className="text-xs text-slate-100"<div className="flex items-center justify-between gap-2">
+  <Label className="text-[11px] text-slate-300">{t.translation}</Label>
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
+    disabled={!translatedText.trim()}
+    className="bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-50 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {t.playTranslation}
+  </Button>
+</div>
+Label>
             <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
               {translatedText ? (
                 translationDisplay
@@ -777,22 +716,24 @@ function stopAttemptRecord() {
           {/* Practice */}
           <div className="space-y-2 border-t border-slate-600 pt-2">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-sm text-slate-100">{t.practiceTitle}</Label>
-              <Button
-  size="sm"
-  onClick={() => {
-    if (isRecordingAttempt) stopAttemptRecord();
-    else startAttemptRecord();
-  }}
-  disabled={!translatedText.trim()}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[11px]"
->
-  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
-</Button>
-            </div>
+              <Label className="text-sm text-slate-100">{t.practiceTitle}</Label></div>
 
             <div className="space-y-1">
-              <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
+              <div className="flex items-center justify-between gap-2">
+  <div className="text-[12px] text-slate-200 font-semibold">{t.practice}</div>
+  <Button
+    size="sm"
+    onClick={() => {
+      if (isRecordingAttempt) stopAttemptRecord();
+      else startAttemptRecord();
+    }}
+    disabled={!translatedText.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+  </Button>
+</div>
+<Label className="text-[11px] text-slate-300">{t.recognized}</Label>
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
               </div>
@@ -824,7 +765,7 @@ function stopAttemptRecord() {
             </div>
 
             {/* Collapsed feedback */}
-            <div className="space-y-1">
+            <div className="w-full bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-50 font-semibold shadow-sm text-[12px]">
               <button
                 type="button"
                 onClick={() => setShowFeedback((v) => !v)}
