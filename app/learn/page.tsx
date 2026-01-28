@@ -1219,12 +1219,12 @@ function stopAttemptRecord() {
             
 {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
 <div className="flex items-center gap-2">
-<Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+<Button
     size="sm"
     variant="outline"
     onClick={focusTypeMode}
-    className="border-slate-200 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[11px]"
-  >
+   
+   className="border-slate-200 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[11px]">
     {t.typeMode}
   </Button>
 
