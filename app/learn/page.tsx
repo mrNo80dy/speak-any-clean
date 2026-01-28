@@ -151,7 +151,7 @@ function getUiLang(deviceLang: string): UiLang {
   return deviceLang.toLowerCase().startsWith("pt") ? "pt" : "en";
 }
 
-const UI = {
+const UI_BASE = {
   en: {
 
     title: "Any-Speak Learn",
@@ -548,28 +548,32 @@ const UI = {
     scorePlaceholder: "کوشش کے بعد اسکور نظر آئے گا۔",
     scoreLine: (n: number) => `مثالی جملے سے ${n}% مماثلت۔`,
   },
-  "es-ES": UI.es,
-  "es-MX": UI.es,
-  "es-US": UI.es,
-  "es-419": UI.es,
-  "pt-BR": UI.pt,
-  "pt-PT": UI.pt,
-  "zh-CN": UI.zh,
-  "zh-Hans": UI.zh,
-  "zh-SG": UI.zh,
-  "zh-TW": UI.zh,
-  "ar-EG": UI.ar,
-  "ar-SA": UI.ar,
-  "ar-AE": UI.ar,
-  "fr-FR": UI.fr,
-  "fr-CA": UI.fr,
-  "hi-IN": UI.hi,
-  "bn-BD": UI.bn,
-  "id-ID": UI.id,
-  "ru-RU": UI.ru,
-  "de-DE": UI.de,
-  "ja-JP": UI.ja,
-  "ur-PK": UI.ur,
+} as const;
+
+const UI = {
+  ...UI_BASE,
+  "es-ES": UI_BASE.es,
+  "es-MX": UI_BASE.es,
+  "es-US": UI_BASE.es,
+  "es-419": UI_BASE.es,
+  "pt-BR": UI_BASE.pt,
+  "pt-PT": UI_BASE.pt,
+  "zh-CN": UI_BASE.zh,
+  "zh-Hans": UI_BASE.zh,
+  "zh-SG": UI_BASE.zh,
+  "zh-TW": UI_BASE.zh,
+  "ar-EG": UI_BASE.ar,
+  "ar-SA": UI_BASE.ar,
+  "ar-AE": UI_BASE.ar,
+  "fr-FR": UI_BASE.fr,
+  "fr-CA": UI_BASE.fr,
+  "hi-IN": UI_BASE.hi,
+  "bn-BD": UI_BASE.bn,
+  "id-ID": UI_BASE.id,
+  "ru-RU": UI_BASE.ru,
+  "de-DE": UI_BASE.de,
+  "ja-JP": UI_BASE.ja,
+  "ur-PK": UI_BASE.ur,
 } as const;
 
 export default function LearnPage() {
