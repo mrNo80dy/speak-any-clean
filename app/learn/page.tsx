@@ -1190,7 +1190,6 @@ function stopAttemptRecord() {
                 >
                   ↔
                 </button>
-  <div className="flex-1" />
               </div>
               <select
                 value={toLang}
@@ -1220,8 +1219,7 @@ function stopAttemptRecord() {
             
 {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
 <div className="flex items-center gap-2">
-  <div className="flex-1" />
-<Button
+<Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
     size="sm"
     variant="outline"
     onClick={focusTypeMode}
@@ -1230,13 +1228,13 @@ function stopAttemptRecord() {
     {t.typeMode}
   </Button>
 
-    <Button
+    <Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
   size="sm"
   onClick={() => {
     if (isRecordingSource) stopSourceRecord();
     else startSourceRecord();
   }}
-  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {isRecordingSource ? t.stopRecording : t.recordSentence}
 </Button>
@@ -1267,22 +1265,21 @@ function stopAttemptRecord() {
     step={0.05}
     value={ttsRate}
     onChange={(e) => setTtsRate(parseFloat(e.target.value))}
-    className="w-full"
+    className="w-full min-w-0"
   />
   <div className="text-[11px] text-slate-200 tabular-nums">{ttsRate.toFixed(2)}x</div>
 </div>
 
 {/* Translation output */}
 <div className="space-y-1">
-  <div className="flex items-center gap-2">
-  <Label className="text-[11px] text-slate-300">{t.translation}</Label>
-  <div className="flex-1" />
+  <div className="flex w-full items-center justify-between gap-2">
+  <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.translation}</Label>
 <Button
   size="sm"
   variant="outline"
   onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
   disabled={!translatedText.trim()}
-  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {t.playTranslation}
 </Button>
@@ -1301,9 +1298,8 @@ function stopAttemptRecord() {
   <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
 </div>
 <div className="space-y-1">
-              <div className="flex items-center gap-2">
-  <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
-  <div className="flex-1" />
+              <div className="flex w-full items-center justify-between gap-2">
+  <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.recognized}</Label>
 <Button
   size="sm"
   onClick={() => {
@@ -1311,7 +1307,7 @@ function stopAttemptRecord() {
     else startAttemptRecord();
   }}
   disabled={!translatedText.trim()}
-  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
 </Button>
@@ -1341,7 +1337,6 @@ function stopAttemptRecord() {
               >
                 {showFeedback ? t.hideFeedback : t.showFeedback}
               </button>
-  <div className="flex-1" />
 <Button
   size="sm"
   onClick={() => {
