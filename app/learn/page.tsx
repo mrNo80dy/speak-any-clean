@@ -1221,7 +1221,7 @@ function stopAttemptRecord() {
 {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
 <div className="flex items-center gap-2">
   <div className="flex-1" />
-<Button className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+<Button
     size="sm"
     variant="outline"
     onClick={focusTypeMode}
@@ -1230,7 +1230,7 @@ function stopAttemptRecord() {
     {t.typeMode}
   </Button>
 
-    <Button className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+    <Button
   size="sm"
   onClick={() => {
     if (isRecordingSource) stopSourceRecord();
