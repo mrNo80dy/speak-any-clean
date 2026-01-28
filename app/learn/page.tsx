@@ -1165,7 +1165,7 @@ function stopAttemptRecord() {
           {/* Language selectors */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs text-slate-100">{t.from}</Label>
+              <Label className="text-xs text-slate-100 whitespace-nowrap">{t.from}</Label>
               <select
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
@@ -1181,8 +1181,8 @@ function stopAttemptRecord() {
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <Label className="text-xs text-slate-100">{t.to}</Label>
-                <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs text-slate-100 whitespace-nowrap">{t.to}</Label>
+                <div className="flex items-center gap-2">
 <button
                   type="button"
                   onClick={swapLangs}
@@ -1190,6 +1190,7 @@ function stopAttemptRecord() {
                 >
                   ↔
                 </button>
+  <div className="flex-1" />
               </div>
               <select
                 value={toLang}
@@ -1218,8 +1219,9 @@ function stopAttemptRecord() {
 
             
 {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
-<div className="flex items-center justify-between gap-2">
-  <Button
+<div className="flex items-center gap-2">
+  <div className="flex-1" />
+<Button className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
     size="sm"
     variant="outline"
     onClick={focusTypeMode}
@@ -1228,13 +1230,13 @@ function stopAttemptRecord() {
     {t.typeMode}
   </Button>
 
-    <Button
+    <Button className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
   size="sm"
   onClick={() => {
     if (isRecordingSource) stopSourceRecord();
     else startSourceRecord();
   }}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {isRecordingSource ? t.stopRecording : t.recordSentence}
 </Button>
@@ -1272,14 +1274,15 @@ function stopAttemptRecord() {
 
 {/* Translation output */}
 <div className="space-y-1">
-  <div className="flex items-center justify-between gap-2">
+  <div className="flex items-center gap-2">
   <Label className="text-[11px] text-slate-300">{t.translation}</Label>
+  <div className="flex-1" />
 <Button
   size="sm"
   variant="outline"
   onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
   disabled={!translatedText.trim()}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {t.playTranslation}
 </Button>
@@ -1298,8 +1301,9 @@ function stopAttemptRecord() {
   <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
 </div>
 <div className="space-y-1">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
   <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
+  <div className="flex-1" />
 <Button
   size="sm"
   onClick={() => {
@@ -1307,7 +1311,7 @@ function stopAttemptRecord() {
     else startAttemptRecord();
   }}
   disabled={!translatedText.trim()}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  className="ml-auto bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
   {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
 </Button>
@@ -1318,7 +1322,7 @@ function stopAttemptRecord() {
 
 {/* Attempt playback */}
 {attemptAudioUrl && (
-  <div className="flex items-center justify-between gap-2">
+  <div className="flex items-center gap-2">
     
 
     <audio ref={attemptAudioRef} src={attemptAudioUrl} preload="auto" />
@@ -1337,6 +1341,7 @@ function stopAttemptRecord() {
               >
                 {showFeedback ? t.hideFeedback : t.showFeedback}
               </button>
+  <div className="flex-1" />
 <Button
   size="sm"
   onClick={() => {
