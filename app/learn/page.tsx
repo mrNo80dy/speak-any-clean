@@ -48,7 +48,7 @@ const LEARN_LANGUAGE_OVERRIDES: Record<string, Partial<LanguageConfig>> = {
 };
 
 const LEARN_LANGUAGES: LanguageConfig[] = LEARN_LANGUAGE_CODES.map((code) => {
-  const base = LEARN_LANGUAGES.find((l) => l.code === code);
+  const base = LANGUAGES.find((l) => l.code === code);
   const merged: LanguageConfig = base
     ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
     : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
