@@ -614,6 +614,20 @@ const showHudAfterInteraction = () => {};
     log,
   });
 
+
+  const { makeOffer, negotiate, handleOffer, handleAnswer, handleIce, clearPendingIce } =
+    useAnySpeakWebRtc({
+      clientId,
+      isMobile,
+      iceServers,
+      localStreamRef,
+      peersRef,
+      shouldMuteRawAudioRef,
+      setConnected,
+      log,
+      upsertPeerStream,
+    });
+
   // Allow "audio → video" upgrades: if this is an audio room and the user turns
   // camera on, add a video track and renegotiate with connected peers.
   const toggleCameraWithUpgrade = useCallback(async () => {
@@ -773,19 +787,6 @@ const showHudAfterInteraction = () => {};
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const { makeOffer, negotiate, handleOffer, handleAnswer, handleIce, clearPendingIce } =
-    useAnySpeakWebRtc({
-      clientId,
-      isMobile,
-      iceServers,
-      localStreamRef,
-      peersRef,
-      shouldMuteRawAudioRef,
-      setConnected,
-      log,
-      upsertPeerStream,
-    });
 
   // ---- RAW AUDIO KILL SWITCH (element-level, reliable on mobile) ------------
   useEffect(() => {
