@@ -595,12 +595,12 @@ const showHudAfterInteraction = () => {};
     micOn,
     camOn,
     acquire,
+    ensureVideoTrack,
     attachLocalVideo,
     setMicEnabled,
     setCamEnabled,
     stop,
   } = localMedia;
-
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
@@ -613,6 +613,44 @@ const showHudAfterInteraction = () => {};
     peersRef,
     log,
   });
+
+  // Allow "audio → video" upgrades: if this is an audio room and the user turns
+  // camera on, add a video track and renegotiate with connected peers.
+  const toggleCameraWithUpgrade = useCallback(async () => {
+    // For video rooms, existing toggle logic is fine.
+    if (roomType === "video") {
+      toggleCamera();
+      return;
+    }
+
+    // Audio room: camera OFF -> ON needs a track + renegotiation.
+    const stream = localStreamRef.current;
+    const hasVideo = Boolean(stream && stream.getVideoTracks().length > 0);
+    const currentlyOn = Boolean(stream && stream.getVideoTracks().some((t) => t.enabled));
+
+    const next = !currentlyOn;
+    if (next) {
+      // Ensure we have a base stream first (audio-only is fine).
+      await acquire();
+      // Add a video track if we don't already have one.
+      if (!hasVideo) {
+        await ensureVideoTrack(true);
+      } else {
+        setCamEnabled(true);
+      }
+
+      // Renegotiate with all peers so they can receive the new video m-line.
+      const ch = channelRef.current;
+      if (ch) {
+        const ids = Array.from(peersRef.current.keys());
+        await Promise.all(ids.map((id) => negotiate(id, ch, "camera_on").catch(() => {})));
+      }
+      return;
+    }
+
+    // Turning camera OFF is local-only; remote will stop receiving frames.
+    setCamEnabled(false);
+  }, [acquire, ensureVideoTrack, localStreamRef, negotiate, peersRef, roomType, setCamEnabled, toggleCamera]);
 
   // Auto video quality:
   // - Mobile: start SD (more reliable/less load)
@@ -736,7 +774,7 @@ const showHudAfterInteraction = () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const { makeOffer, handleOffer, handleAnswer, handleIce, clearPendingIce } =
+  const { makeOffer, negotiate, handleOffer, handleAnswer, handleIce, clearPendingIce } =
     useAnySpeakWebRtc({
       clientId,
       isMobile,
@@ -1547,11 +1585,11 @@ onPointerCancel={() => {
       type="button"
       onClick={() => {
         bumpHud("cam");
-        toggleCamera();
+        void toggleCameraWithUpgrade();
       }}
       onMouseEnter={() => onHudEnter("cam")}
       onMouseLeave={() => onHudLeave("cam")}
-      disabled={roomType !== "video"}
+      disabled={false}
       style={{ width: AUX_BTN, height: AUX_BTN, opacity: hudOpacityFor("cam") }}
       className="rounded-2xl bg-black/35 backdrop-blur border border-white/10 text-white/95 shadow flex items-center justify-center active:scale-[0.98] transition disabled:opacity-40"
       title="Camera"
