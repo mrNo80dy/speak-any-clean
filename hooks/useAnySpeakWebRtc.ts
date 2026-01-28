@@ -37,6 +37,20 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
   // ---- ICE candidate queue (pre-SDP safety)
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
 
+  // ---- Perfect negotiation (glare-safe renegotiation)
+  // We keep per-peer negotiation flags keyed by remoteId.
+  const makingOfferRef = useRef<Map<string, boolean>>(new Map());
+  const ignoreOfferRef = useRef<Map<string, boolean>>(new Map());
+
+  const isPolite = useCallback(
+    (remoteId: string) => {
+      // Deterministic tie-breaker: lower clientId is "polite".
+      // Either side can start renegotiation; this prevents offer collisions (glare).
+      return clientId.localeCompare(remoteId) < 0;
+    },
+    [clientId]
+  );
+
   // Camera startup can be slightly delayed (especially on mobile). If we create an
   // offer/answer before the local video track exists, the SDP may omit video and the
   // remote side will never receive it. This waits briefly for a video track when a
@@ -169,12 +183,30 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
         log("ontrack", { from: remoteId, kind: e.track?.kind });
       };
 
+      // If track changes trigger renegotiation, attempt a glare-safe offer.
+      // This complements manual renegotiation (we still expose a function).
+      pc.onnegotiationneeded = async () => {
+        try {
+          // Only negotiate when stable.
+          if (pc.signalingState !== "stable") return;
+          await negotiate(remoteId, channel, "onnegotiationneeded");
+        } catch (err) {
+          log("negotiationneeded error", { err: (err as Error).message });
+        }
+      };
+
       // Add local tracks (mobile: keep STT-only policy by not sending audio)
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => {
           if (isMobile && t.kind === "audio") return;
           pc.addTrack(t, localStreamRef.current!);
         });
+
+        // Ensure transceivers exist for both kinds so we can upgrade/downgrade mid-call.
+        const haveVideo = pc.getTransceivers().some((tr) => tr.receiver?.track?.kind === "video");
+        const haveAudio = pc.getTransceivers().some((tr) => tr.receiver?.track?.kind === "audio");
+        if (!haveVideo) pc.addTransceiver("video", { direction: "sendrecv" });
+        if (!haveAudio) pc.addTransceiver("audio", { direction: isMobile ? "recvonly" : "sendrecv" });
       } else {
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.addTransceiver("audio", { direction: "recvonly" });
@@ -184,17 +216,22 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
       peersRef.current.set(remoteId, peer);
       return peer;
     },
+    // NOTE: negotiate is defined below; useCallback hoisting is ok because function identity is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [clientId, iceServers, isMobile, localStreamRef, log, peersRef, setConnected, shouldMuteRawAudioRef, upsertPeerStream]
   );
 
-  const makeOffer = useCallback(
-    async (toId: string, channel: RealtimeChannel) => {
+  const negotiate = useCallback(
+    async (toId: string, channel: RealtimeChannel, reason: string) => {
       const { pc } = getOrCreatePeer(toId, channel);
 
+      // Prevent overlapping offers per-peer.
+      if (makingOfferRef.current.get(toId)) return;
+
       // Ensure the local video track is present before creating the offer.
-      // Prevents SDP omitting video due to camera startup race.
       await waitForLocalVideoTrack();
 
+      // Sync local tracks into the PC before we offer.
       if (localStreamRef.current) {
         const haveKinds = new Set(
           pc.getSenders().map((s) => s.track?.kind).filter(Boolean) as string[]
@@ -206,26 +243,57 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
         });
       }
 
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true,
-      });
-      await pc.setLocalDescription(offer);
+      try {
+        makingOfferRef.current.set(toId, true);
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
+        await pc.setLocalDescription(offer);
 
-      channel.send({
-        type: "broadcast",
-        event: "webrtc",
-        payload: { type: "offer", from: clientId, to: toId, sdp: offer },
-      });
+        channel.send({
+          type: "broadcast",
+          event: "webrtc",
+          payload: { type: "offer", from: clientId, to: toId, sdp: offer },
+        });
 
-      log("sent offer", { to: toId });
+        log("sent offer", { to: toId, reason });
+      } finally {
+        makingOfferRef.current.set(toId, false);
+      }
     },
     [clientId, getOrCreatePeer, isMobile, localStreamRef, log, waitForLocalVideoTrack]
+  );
+
+  const makeOffer = useCallback(
+    async (toId: string, channel: RealtimeChannel) => {
+      await negotiate(toId, channel, "initial");
+    },
+    [negotiate]
   );
 
   const handleOffer = useCallback(
     async (fromId: string, sdp: RTCSessionDescriptionInit, channel: RealtimeChannel) => {
       const { pc } = getOrCreatePeer(fromId, channel);
+
+      const polite = isPolite(fromId);
+      const makingOffer = Boolean(makingOfferRef.current.get(fromId));
+      const offerCollision = sdp.type === "offer" && (makingOffer || pc.signalingState !== "stable");
+      const ignore = !polite && offerCollision;
+      ignoreOfferRef.current.set(fromId, ignore);
+      if (ignore) {
+        log("ignored offer (glare)", { from: fromId });
+        return;
+      }
+
+      // If we're polite and collided, rollback our local description before applying remote.
+      if (offerCollision) {
+        try {
+          await pc.setLocalDescription({ type: "rollback" });
+        } catch {
+          // Some browsers may not support rollback in all states; continue best-effort.
+        }
+      }
 
       await pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushIce(fromId);
@@ -256,13 +324,14 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
 
       log("sent answer", { to: fromId });
     },
-    [clientId, flushIce, getOrCreatePeer, isMobile, localStreamRef, log, waitForLocalVideoTrack]
+    [clientId, flushIce, getOrCreatePeer, isMobile, isPolite, localStreamRef, log, waitForLocalVideoTrack]
   );
 
   const handleAnswer = useCallback(
     async (fromId: string, sdp: RTCSessionDescriptionInit) => {
       const peer = peersRef.current.get(fromId);
       if (!peer) return;
+      if (ignoreOfferRef.current.get(fromId)) return;
       await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
       await flushIce(fromId);
       log("applied answer", { from: fromId });
@@ -301,6 +370,7 @@ export function useAnySpeakWebRtc(args: AnySpeakWebRtcArgs) {
     clearPendingIce,
     getOrCreatePeer,
     makeOffer,
+    negotiate,
     handleOffer,
     handleAnswer,
     handleIce,
