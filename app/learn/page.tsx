@@ -217,13 +217,14 @@ function normalizeWords(s: string) {
 }
 
 function pickSupportedLang(code: string, fallback: string) {
-  const has = LANGUAGES.some((l) => l.code === code);
+  // Only allow languages that exist in our Learn list
+  const has = LEARN_LANGUAGE_CODES.includes(code);
   if (has) return code;
 
   // Try base language match: pt-BR -> pt-PT style or vice versa
   const base = code.slice(0, 2).toLowerCase();
-  const baseMatch = learnLanguages.find((l) => l.code.slice(0, 2).toLowerCase() === base);
-  if (baseMatch) return baseMatch.code;
+  const baseMatchCode = LEARN_LANGUAGE_CODES.find((c) => c.slice(0, 2).toLowerCase() === base);
+  if (baseMatchCode) return baseMatchCode;
 
   return fallback;
 }
