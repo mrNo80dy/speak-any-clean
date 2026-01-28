@@ -1273,6 +1273,14 @@ function stopAttemptRecord() {
 <div className="space-y-1">
   <div className="flex w-full items-center justify-between gap-2">
     <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.translation}</Label>
+    <Button
+    size="sm"
+    onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
+    disabled={!translatedText.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {t.playTranslation}
+  </Button>
   </div>
   <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
     {translatedText ? (
@@ -1285,27 +1293,9 @@ function stopAttemptRecord() {
 
 {/* Practice */}
 <div className="pt-1">
-  <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
-</div>
-<div className="space-y-1">
-              <div className="flex w-full items-center justify-between gap-2">
-  <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.recognized}</Label>
-  <Button
-    size="sm"
-    onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
-    disabled={!translatedText.trim()}
-    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
-  >
-    {t.playTranslation}
-  </Button>
-</div>
-              <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
-                {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
-              </div>
-
-{/* Practice actions */}
-<div className="flex w-full items-center justify-end">
-  <Button
+  <div className="flex w-full items-center justify-between gap-2">
+    <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
+    <Button
     size="sm"
     onClick={() => {
       if (isRecordingAttempt) stopAttemptRecord();
@@ -1316,7 +1306,15 @@ function stopAttemptRecord() {
   >
     {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
   </Button>
+  </div>
 </div>
+<div className="space-y-1">
+              <div className="flex w-full items-center justify-between gap-2">
+  <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.recognized}</Label>
+</div>
+              <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
+                {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
+              </div>
 
 <audio ref={attemptAudioRef} src={attemptAudioUrl ?? undefined} preload="auto" />
 </div>
