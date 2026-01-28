@@ -59,8 +59,18 @@ const LEARN_LANGUAGE_OVERRIDES: Record<string, Partial<LanguageConfig>> = {
   "ur-PK": { label: "Urdu" },
 };
 
-const LEARN_LANGUAGES: LanguageConfig[] = LEARN_LANGUAGE_CODES.map((code) => {
-  const base = LEARN_LANGUAGES.find((l) => l.code === code);
+function buildLearnLanguages(): LanguageConfig[] {
+  // Build at runtime to avoid module-init ordering issues during SSR/prerender.
+  return LEARN_LANGUAGE_CODES.map((code) => {
+    const base = LANGUAGES.find((l) => l.code === code);
+    const merged: LanguageConfig = base
+      ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
+      : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
+    return merged;
+  });
+}
+
+
   const merged: LanguageConfig = base
     ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
     : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
@@ -220,7 +230,7 @@ function pickSupportedLang(code: string, fallback: string) {
 
   // Try base language match: pt-BR -> pt-PT style or vice versa
   const base = code.slice(0, 2).toLowerCase();
-  const baseMatch = LEARN_LANGUAGES.find((l) => l.code.slice(0, 2).toLowerCase() === base);
+  const baseMatch = learnLanguages.find((l) => l.code.slice(0, 2).toLowerCase() === base);
   if (baseMatch) return baseMatch.code;
 
   return fallback;
@@ -667,6 +677,7 @@ const UI = {
 
 export default function LearnPage() {
   const [uiLang, setUiLang] = useState("en");
+  const learnLanguages = useMemo(() => buildLearnLanguages(), []);
   const t = (UI as any)[uiLang] ?? (UI as any)[uiLang.split("-")[0]] ?? UI.en;
 
   const [fromLang, setFromLang] = useState("en-US");
@@ -678,13 +689,13 @@ export default function LearnPage() {
     setUiLang(ui);
 
     const candidate =
-      LEARN_LANGUAGES.some((l) => l.code === d)
+      learnLanguages.some((l) => l.code === d)
         ? d
-        : LEARN_LANGUAGES.some((l) => l.code === ui)
+        : learnLanguages.some((l) => l.code === ui)
           ? ui
           : "en-US";
     setFromLang(candidate);
-  }, []);
+    }, [learnLanguages]);
 // Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
@@ -1202,7 +1213,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setFromLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
+                {learnLanguages.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
@@ -1226,7 +1237,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
+                {learnLanguages.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
