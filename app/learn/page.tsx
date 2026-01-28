@@ -97,35 +97,25 @@ async function translateText(
 }
 
 
-async function transcribeAudio(
-  blob: Blob,
-  lang: string
-): Promise<{ text: string } | null> {
-  // We don't know which endpoint name your repo uses; CC works in calls, so one of these should exist.
-  const candidates = ["/api/cc", "/api/caption", "/api/captions", "/api/stt", "/api/transcribe", "/api/speech-to-text"];
-
+async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
   const fd = new FormData();
   fd.append("file", blob, "audio.webm");
-  fd.append("lang", lang);
+  fd.append("lang", lang || "en-US");
 
-  for (const url of candidates) {
-    try {
-      const res = await fetch(url, { method: "POST", body: fd });
-      if (!res.ok) continue;
-
-      const data: any = await res.json().catch(() => null);
-      const text =
-        (data?.text as string | undefined) ||
-        (data?.transcript as string | undefined) ||
-        (data?.recognizedText as string | undefined) ||
-        (data?.result as string | undefined);
-
-      if (text && text.trim()) return { text: text.trim() };
-    } catch {
-      // ignore and try next
-    }
+  // Prefer /api/stt (you created it). If you later rename endpoints, update here.
+  const res = await fetch("/api/stt", { method: "POST", body: fd });
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(t || `STT failed: ${res.status}`);
   }
-  return null;
+  const data: any = await res.json().catch(() => null);
+  const text =
+    (data?.text as string | undefined) ||
+    (data?.transcript as string | undefined) ||
+    (data?.recognizedText as string | undefined) ||
+    (data?.result?.text as string | undefined) ||
+    "";
+  return (text || "").trim();
 }
 function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
