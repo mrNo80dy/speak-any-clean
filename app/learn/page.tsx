@@ -1252,8 +1252,40 @@ function stopAttemptRecord() {
 
             {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
             <div className="flex items-center justify-between gap-2">
-              
-            </div>
+  {/* Type mode */}
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={focusTypeMode}
+    className="border-slate-500 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[12px]"
+  >
+    {t.typeMode}
+  </Button>
+
+  {/* Record sentence */}
+  <Button
+    size="sm"
+    onClick={() => {
+      if (isRecordingSource) stopSourceRecord();
+      else startSourceRecord();
+    }}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold text-[12px]"
+  >
+    {isRecordingSource ? t.stopRecording : t.recordSentence}
+  </Button>
+
+  {/* Play translation */}
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={handlePlayTarget}
+    disabled={!translatedText.trim()}
+    className="border-slate-500 text-slate-50 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-[12px]"
+  >
+    {t.playTranslation}
+  </Button>
+</div>
+
 
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
