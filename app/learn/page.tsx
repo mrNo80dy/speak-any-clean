@@ -675,6 +675,8 @@ export default function LearnPage() {
 
   
 
+
+  const [uiLang, setUiLang] = useState("en");
 useEffect(() => {
   const d = getDeviceLanguage();
   const ui = d.toLowerCase();
