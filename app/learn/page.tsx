@@ -703,7 +703,7 @@ function stopAttemptRecord() {
     {t.playTranslation}
   </Button>
 </div>
-Label>
+
             <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
               {translatedText ? (
                 translationDisplay
