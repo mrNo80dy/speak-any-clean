@@ -7,6 +7,55 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
 
+const LEARN_LANGUAGE_CODES: string[] = [
+  "en-US",
+  "en-GB",
+  "zh-CN",
+  "hi-IN",
+  "es-MX",
+  "es-ES",
+  "ar",
+  "ar-EG",
+  "fr-FR",
+  "bn-BD",
+  "pt-BR",
+  "pt-PT",
+  "id-ID",
+  "ru-RU",
+  "de-DE",
+  "ja-JP",
+  "ur-PK",
+];
+
+const LEARN_LANGUAGE_OVERRIDES: Record<string, Partial<LanguageConfig>> = {
+  "en-US": { label: "English (United States)" },
+  "en-GB": { label: "English (United Kingdom)" },
+  "zh-CN": { label: "Chinese (Simplified)" },
+  "hi-IN": { label: "Hindi" },
+  "es-MX": { label: "Spanish (Latin America)" },
+  "es-ES": { label: "Spanish (Spain)" },
+  "ar": { label: "Arabic (Modern Standard)" },
+  "ar-EG": { label: "Arabic (Egyptian)" },
+  "fr-FR": { label: "French" },
+  "bn-BD": { label: "Bengali" },
+  "pt-BR": { label: "Portuguese (Brazil)" },
+  "pt-PT": { label: "Portuguese (Portugal)" },
+  "id-ID": { label: "Indonesian" },
+  "ru-RU": { label: "Russian" },
+  "de-DE": { label: "German" },
+  "ja-JP": { label: "Japanese" },
+  "ur-PK": { label: "Urdu" },
+};
+
+const LEARN_LANGUAGES: LanguageConfig[] = LEARN_LANGUAGE_CODES.map((code) => {
+  const base = LEARN_LANGUAGES.find((l) => l.code === code);
+  const merged: LanguageConfig = base
+    ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
+    : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
+  return merged;
+});
+
+
 type TranslateResponse = {
   translatedText?: string;
   targetLang?: string;
@@ -47,25 +96,37 @@ async function translateText(
   }
 }
 
-async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
+
+async function transcribeAudio(
+  blob: Blob,
+  lang: string
+): Promise<{ text: string } | null> {
+  // We don't know which endpoint name your repo uses; CC works in calls, so one of these should exist.
+  const candidates = ["/api/cc", "/api/caption", "/api/captions", "/api/stt", "/api/transcribe", "/api/speech-to-text"];
+
   const fd = new FormData();
   fd.append("file", blob, "audio.webm");
-  fd.append("lang", lang || "en-US");
-  const res = await fetch("/api/stt", { method: "POST", body: fd });
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error(t || `STT failed: ${res.status}`);
+  fd.append("lang", lang);
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { method: "POST", body: fd });
+      if (!res.ok) continue;
+
+      const data: any = await res.json().catch(() => null);
+      const text =
+        (data?.text as string | undefined) ||
+        (data?.transcript as string | undefined) ||
+        (data?.recognizedText as string | undefined) ||
+        (data?.result as string | undefined);
+
+      if (text && text.trim()) return { text: text.trim() };
+    } catch {
+      // ignore and try next
+    }
   }
-  const data: any = await res.json().catch(() => null);
-  const text =
-    (data?.text as string | undefined) ||
-    (data?.transcript as string | undefined) ||
-    (data?.recognizedText as string | undefined) ||
-    "";
-  return (text || "").trim();
+  return null;
 }
-
-
 function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -150,7 +211,7 @@ function pickSupportedLang(code: string, fallback: string) {
 
   // Try base language match: pt-BR -> pt-PT style or vice versa
   const base = code.slice(0, 2).toLowerCase();
-  const baseMatch = LANGUAGES.find((l) => l.code.slice(0, 2).toLowerCase() === base);
+  const baseMatch = LEARN_LANGUAGES.find((l) => l.code.slice(0, 2).toLowerCase() === base);
   if (baseMatch) return baseMatch.code;
 
   return fallback;
@@ -170,8 +231,9 @@ function getUiLang(deviceLang: string): UiLang {
   return deviceLang.toLowerCase().startsWith("pt") ? "pt" : "en";
 }
 
-const UI = {
+const UI_BASE = {
   en: {
+
     title: "Any-Speak Learn",
     subtitle: "Say or type something. It translates automatically. Then practice saying it.",
     from: "From language",
@@ -186,7 +248,6 @@ const UI = {
       "Speech features are not supported on this browser. You can still type, translate, and listen.",
     inputPlaceholder: "Type what you want to say…",
     translating: "Translating…",
-    transcribing: "Transcribing…",
     translation: "Translation",
     translationPlaceholder: "Start typing or record a sentence to see it here.",
     playTranslation: "Play translation",
@@ -205,6 +266,7 @@ const UI = {
     scoreLine: (n: number) => `${n}% match to the ideal sentence.`,
   },
   pt: {
+
     title: "Any-Speak Learn",
     subtitle: "Fale ou digite. Tradução automática. Depois pratique falando.",
     from: "Do idioma",
@@ -219,7 +281,6 @@ const UI = {
       "Recursos de fala não são suportados neste navegador. Você ainda pode digitar, traduzir e ouvir.",
     inputPlaceholder: "Digite o que você quer dizer…",
     translating: "Traduzindo…",
-    transcribing: "Transcrevendo…",
     translation: "Tradução",
     translationPlaceholder: "Digite ou grave uma frase para ver a tradução aqui.",
     playTranslation: "Ouvir tradução",
@@ -237,6 +298,362 @@ const UI = {
     scorePlaceholder: "Você verá uma pontuação após uma tentativa.",
     scoreLine: (n: number) => `${n}% de correspondência com a frase ideal.`,
   },
+  es: {
+    title: "Any-Speak Learn",
+    subtitle: "Di o escribe algo. Se traduce automáticamente. Luego practica diciéndolo.",
+    from: "Idioma de origen",
+    to: "Idioma de destino",
+    typeMode: "Modo de escritura",
+    listening: "Escuchando…",
+    recordSentence: "Grabar frase",
+    stopRecording: "Detener",
+    micBlocked: "El navegador bloqueó el acceso al micrófono. Revisa el permiso del micrófono si quieres usar la voz.",
+    sttNotSupported: "Las funciones de voz no están disponibles en este navegador. Aun así puedes escribir, traducir y escuchar.",
+    inputPlaceholder: "Escribe lo que quieres decir…",
+    translating: "Traduciendo…",
+    translation: "Traducción",
+    translationPlaceholder: "Empieza a escribir o graba una frase para verla aquí.",
+    playTranslation: "Reproducir traducción",
+    speed: "Velocidad",
+    practiceTitle: "Práctica",
+    recordAttempt: "Grabar mi intento",
+    stopAttempt: "Detener intento",
+    playAttempt: "Reproducir mi intento",
+    noAudioSupport: "La grabación de audio no es compatible con este navegador.",
+    recognized: "Lo que dijiste (reconocido)",
+    recognizedPlaceholder: "Después de grabar, tu intento aparecerá aquí.",
+    showFeedback: "Mostrar comentarios",
+    hideFeedback: "Ocultar comentarios",
+    accuracy: "Precisión (estimación aproximada)",
+    scorePlaceholder: "Verás una puntuación después de un intento.",
+    scoreLine: (n: number) => `${n}% de coincidencia con la frase ideal.`,
+  },
+  zh: {
+    title: "Any-Speak 练习",
+    subtitle: "说或输入一句话。系统会自动翻译。然后练习把它说出来。",
+    from: "源语言",
+    to: "目标语言",
+    typeMode: "输入模式",
+    listening: "正在聆听…",
+    recordSentence: "录制句子",
+    stopRecording: "停止",
+    micBlocked: "浏览器已阻止麦克风访问。如需语音输入，请检查麦克风权限。",
+    sttNotSupported: "此浏览器不支持语音功能。你仍可以输入、翻译并收听。",
+    inputPlaceholder: "输入你想说的话…",
+    translating: "正在翻译…",
+    translation: "翻译",
+    translationPlaceholder: "开始输入或录制句子以在此查看。",
+    playTranslation: "播放翻译",
+    speed: "语速",
+    practiceTitle: "练习",
+    recordAttempt: "录制我的尝试",
+    stopAttempt: "停止尝试",
+    playAttempt: "播放我的尝试",
+    noAudioSupport: "此浏览器不支持录音。",
+    recognized: "你说的内容（识别）",
+    recognizedPlaceholder: "录制后，你的尝试会显示在这里。",
+    showFeedback: "显示反馈",
+    hideFeedback: "隐藏反馈",
+    accuracy: "准确度（粗略估计）",
+    scorePlaceholder: "完成一次尝试后会显示评分。",
+    scoreLine: (n: number) => `与理想句子匹配 ${n}%。`,
+  },
+  ar: {
+    title: "Any-Speak للتعلّم",
+    subtitle: "قل أو اكتب شيئًا. تتم الترجمة تلقائيًا. ثم تدرّب على نطقه.",
+    from: "لغة المصدر",
+    to: "لغة الهدف",
+    typeMode: "وضع الكتابة",
+    listening: "جارٍ الاستماع…",
+    recordSentence: "سجّل الجملة",
+    stopRecording: "إيقاف",
+    micBlocked: "تم حظر الوصول إلى الميكروفون بواسطة المتصفح. تحقّق من إذن الميكروفون لاستخدام الإدخال الصوتي.",
+    sttNotSupported: "ميزات الصوت غير مدعومة في هذا المتصفح. يمكنك ما زلت الكتابة والترجمة والاستماع.",
+    inputPlaceholder: "اكتب ما تريد قوله…",
+    translating: "جارٍ الترجمة…",
+    translation: "الترجمة",
+    translationPlaceholder: "ابدأ بالكتابة أو سجّل جملة لعرضها هنا.",
+    playTranslation: "تشغيل الترجمة",
+    speed: "السرعة",
+    practiceTitle: "تدريب",
+    recordAttempt: "سجّل محاولتي",
+    stopAttempt: "إيقاف المحاولة",
+    playAttempt: "تشغيل محاولتي",
+    noAudioSupport: "تسجيل الصوت غير مدعوم في هذا المتصفح.",
+    recognized: "ما قلته (تم التعرّف عليه)",
+    recognizedPlaceholder: "بعد التسجيل ستظهر محاولتك هنا.",
+    showFeedback: "إظهار الملاحظات",
+    hideFeedback: "إخفاء الملاحظات",
+    accuracy: "الدقّة (تقدير تقريبي)",
+    scorePlaceholder: "سترى نتيجة بعد محاولة.",
+    scoreLine: (n: number) => `نسبة التطابق مع الجملة المثالية: ${n}%.`,
+  },
+  fr: {
+    title: "Any-Speak Apprentissage",
+    subtitle: "Dites ou tapez quelque chose. Traduction automatique. Puis entraînez-vous à le dire.",
+    from: "Langue source",
+    to: "Langue cible",
+    typeMode: "Mode saisie",
+    listening: "Écoute…",
+    recordSentence: "Enregistrer la phrase",
+    stopRecording: "Arrêter",
+    micBlocked: "L’accès au micro a été bloqué par le navigateur. Vérifiez l’autorisation du micro pour utiliser la voix.",
+    sttNotSupported: "Les fonctions vocales ne sont pas prises en charge sur ce navigateur. Vous pouvez toujours saisir, traduire et écouter.",
+    inputPlaceholder: "Tapez ce que vous voulez dire…",
+    translating: "Traduction…",
+    translation: "Traduction",
+    translationPlaceholder: "Commencez à taper ou enregistrez une phrase pour l’afficher ici.",
+    playTranslation: "Lire la traduction",
+    speed: "Vitesse",
+    practiceTitle: "Entraînement",
+    recordAttempt: "Enregistrer mon essai",
+    stopAttempt: "Arrêter l’essai",
+    playAttempt: "Lire mon essai",
+    noAudioSupport: "L’enregistrement audio n’est pas pris en charge sur ce navigateur.",
+    recognized: "Ce que vous avez dit (reconnu)",
+    recognizedPlaceholder: "Après l’enregistrement, votre essai apparaîtra ici.",
+    showFeedback: "Afficher les retours",
+    hideFeedback: "Masquer les retours",
+    accuracy: "Précision (estimation)",
+    scorePlaceholder: "Vous verrez un score après un essai.",
+    scoreLine: (n: number) => `${n} % de correspondance avec la phrase idéale.`,
+  },
+  hi: {
+    title: "Any-Speak सीखें",
+    subtitle: "कुछ बोलें या लिखें। यह अपने आप अनुवाद करता है। फिर उसे बोलने का अभ्यास करें।",
+    from: "स्रोत भाषा",
+    to: "लक्ष्य भाषा",
+    typeMode: "टाइप मोड",
+    listening: "सुन रहा है…",
+    recordSentence: "वाक्य रिकॉर्ड करें",
+    stopRecording: "रोकें",
+    micBlocked: "ब्राउज़र ने माइक्रोफ़ोन की अनुमति रोक दी है। आवाज़ इनपुट के लिए माइक्रोफ़ोन अनुमति जाँचें।",
+    sttNotSupported: "इस ब्राउज़र में बोलने की सुविधाएँ उपलब्ध नहीं हैं। आप फिर भी टाइप, अनुवाद और सुन सकते हैं।",
+    inputPlaceholder: "जो कहना है वह टाइप करें…",
+    translating: "अनुवाद हो रहा है…",
+    translation: "अनुवाद",
+    translationPlaceholder: "यहाँ देखने के लिए लिखना शुरू करें या वाक्य रिकॉर्ड करें।",
+    playTranslation: "अनुवाद चलाएँ",
+    speed: "गति",
+    practiceTitle: "अभ्यास",
+    recordAttempt: "मेरा प्रयास रिकॉर्ड करें",
+    stopAttempt: "प्रयास रोकें",
+    playAttempt: "मेरा प्रयास चलाएँ",
+    noAudioSupport: "इस ब्राउज़र में ऑडियो रिकॉर्डिंग समर्थित नहीं है।",
+    recognized: "आपने क्या कहा (पहचाना गया)",
+    recognizedPlaceholder: "रिकॉर्ड करने के बाद आपका प्रयास यहाँ दिखेगा।",
+    showFeedback: "फ़ीडबैक दिखाएँ",
+    hideFeedback: "फ़ीडबैक छिपाएँ",
+    accuracy: "सटीकता (लगभग अनुमान)",
+    scorePlaceholder: "एक प्रयास के बाद स्कोर दिखेगा।",
+    scoreLine: (n: number) => `आदर्श वाक्य से ${n}% मिलान।`,
+  },
+  bn: {
+    title: "Any-Speak শেখা",
+    subtitle: "কিছু বলুন বা লিখুন। এটি স্বয়ংক্রিয়ভাবে অনুবাদ করবে। তারপর বলার অনুশীলন করুন।",
+    from: "উৎস ভাষা",
+    to: "লক্ষ্য ভাষা",
+    typeMode: "টাইপ মোড",
+    listening: "শুনছে…",
+    recordSentence: "বাক্য রেকর্ড করুন",
+    stopRecording: "থামান",
+    micBlocked: "ব্রাউজার মাইক্রোফোনের অনুমতি ব্লক করেছে। ভয়েস ইনপুটের জন্য অনুমতি পরীক্ষা করুন।",
+    sttNotSupported: "এই ব্রাউজারে ভয়েস ফিচার সমর্থিত নয়। তবুও আপনি টাইপ, অনুবাদ ও শুনতে পারবেন।",
+    inputPlaceholder: "আপনি যা বলতে চান তা লিখুন…",
+    translating: "অনুবাদ হচ্ছে…",
+    translation: "অনুবাদ",
+    translationPlaceholder: "এখানে দেখতে লিখতে শুরু করুন বা বাক্য রেকর্ড করুন।",
+    playTranslation: "অনুবাদ চালান",
+    speed: "গতি",
+    practiceTitle: "অনুশীলন",
+    recordAttempt: "আমার চেষ্টা রেকর্ড করুন",
+    stopAttempt: "চেষ্টা থামান",
+    playAttempt: "আমার চেষ্টা চালান",
+    noAudioSupport: "এই ব্রাউজারে অডিও রেকর্ডিং সমর্থিত নয়।",
+    recognized: "আপনি যা বলেছেন (স্বীকৃত)",
+    recognizedPlaceholder: "রেকর্ড করার পর আপনার চেষ্টা এখানে দেখা যাবে।",
+    showFeedback: "ফিডব্যাক দেখান",
+    hideFeedback: "ফিডব্যাক লুকান",
+    accuracy: "নির্ভুলতা (আনুমানিক)",
+    scorePlaceholder: "একবার চেষ্টা করার পরে স্কোর দেখাবে।",
+    scoreLine: (n: number) => `আদর্শ বাক্যের সাথে ${n}% মিল।`,
+  },
+  id: {
+    title: "Any-Speak Belajar",
+    subtitle: "Ucapkan atau ketik sesuatu. Terjemahan otomatis. Lalu berlatih mengucapkannya.",
+    from: "Bahasa sumber",
+    to: "Bahasa tujuan",
+    typeMode: "Mode ketik",
+    listening: "Mendengarkan…",
+    recordSentence: "Rekam kalimat",
+    stopRecording: "Berhenti",
+    micBlocked: "Akses mikrofon diblokir oleh browser. Periksa izin mikrofon untuk menggunakan input suara.",
+    sttNotSupported: "Fitur suara tidak didukung di browser ini. Anda tetap bisa mengetik, menerjemahkan, dan mendengarkan.",
+    inputPlaceholder: "Ketik apa yang ingin Anda ucapkan…",
+    translating: "Menerjemahkan…",
+    translation: "Terjemahan",
+    translationPlaceholder: "Mulai mengetik atau rekam kalimat untuk melihatnya di sini.",
+    playTranslation: "Putar terjemahan",
+    speed: "Kecepatan",
+    practiceTitle: "Latihan",
+    recordAttempt: "Rekam percobaan saya",
+    stopAttempt: "Hentikan percobaan",
+    playAttempt: "Putar percobaan saya",
+    noAudioSupport: "Perekaman audio tidak didukung di browser ini.",
+    recognized: "Yang Anda ucapkan (terdeteksi)",
+    recognizedPlaceholder: "Setelah merekam, percobaan Anda akan muncul di sini.",
+    showFeedback: "Tampilkan masukan",
+    hideFeedback: "Sembunyikan masukan",
+    accuracy: "Akurasi (perkiraan)",
+    scorePlaceholder: "Anda akan melihat skor setelah percobaan.",
+    scoreLine: (n: number) => `${n}% cocok dengan kalimat ideal.`,
+  },
+  ru: {
+    title: "Any-Speak Обучение",
+    subtitle: "Скажите или напишите фразу. Перевод автоматически. Затем потренируйтесь произнести её.",
+    from: "Исходный язык",
+    to: "Целевой язык",
+    typeMode: "Режим ввода",
+    listening: "Слушаю…",
+    recordSentence: "Записать фразу",
+    stopRecording: "Стоп",
+    micBlocked: "Доступ к микрофону заблокирован браузером. Проверьте разрешение микрофона для голосового ввода.",
+    sttNotSupported: "Голосовые функции не поддерживаются в этом браузере. Вы всё равно можете вводить текст, переводить и слушать.",
+    inputPlaceholder: "Введите то, что хотите сказать…",
+    translating: "Перевод…",
+    translation: "Перевод",
+    translationPlaceholder: "Начните ввод или запишите фразу, чтобы увидеть перевод здесь.",
+    playTranslation: "Проиграть перевод",
+    speed: "Скорость",
+    practiceTitle: "Практика",
+    recordAttempt: "Записать мою попытку",
+    stopAttempt: "Остановить попытку",
+    playAttempt: "Проиграть мою попытку",
+    noAudioSupport: "Запись аудио не поддерживается в этом браузере.",
+    recognized: "Что вы сказали (распознано)",
+    recognizedPlaceholder: "После записи ваша попытка появится здесь.",
+    showFeedback: "Показать отзыв",
+    hideFeedback: "Скрыть отзыв",
+    accuracy: "Точность (примерно)",
+    scorePlaceholder: "После попытки появится оценка.",
+    scoreLine: (n: number) => `Совпадение с идеальной фразой: ${n}%.`,
+  },
+  de: {
+    title: "Any-Speak Lernen",
+    subtitle: "Sag oder tippe etwas. Es wird automatisch übersetzt. Danach übe, es zu sagen.",
+    from: "Ausgangssprache",
+    to: "Zielsprache",
+    typeMode: "Eingabemodus",
+    listening: "Hört zu…",
+    recordSentence: "Satz aufnehmen",
+    stopRecording: "Stopp",
+    micBlocked: "Der Browser hat den Mikrofonzugriff blockiert. Prüfe die Mikrofonberechtigung für Spracheingabe.",
+    sttNotSupported: "Sprachfunktionen werden in diesem Browser nicht unterstützt. Du kannst trotzdem tippen, übersetzen und anhören.",
+    inputPlaceholder: "Tippe, was du sagen möchtest…",
+    translating: "Übersetzen…",
+    translation: "Übersetzung",
+    translationPlaceholder: "Beginne zu tippen oder nimm einen Satz auf, um ihn hier zu sehen.",
+    playTranslation: "Übersetzung abspielen",
+    speed: "Tempo",
+    practiceTitle: "Übung",
+    recordAttempt: "Meinen Versuch aufnehmen",
+    stopAttempt: "Versuch stoppen",
+    playAttempt: "Meinen Versuch abspielen",
+    noAudioSupport: "Audioaufnahme wird in diesem Browser nicht unterstützt.",
+    recognized: "Was du gesagt hast (erkannt)",
+    recognizedPlaceholder: "Nach der Aufnahme erscheint dein Versuch hier.",
+    showFeedback: "Feedback anzeigen",
+    hideFeedback: "Feedback ausblenden",
+    accuracy: "Genauigkeit (grobe Schätzung)",
+    scorePlaceholder: "Nach einem Versuch siehst du eine Bewertung.",
+    scoreLine: (n: number) => `${n}% Übereinstimmung mit dem idealen Satz.`,
+  },
+  ja: {
+    title: "Any-Speak 学習",
+    subtitle: "話すか入力してください。自動で翻訳します。その後、発話練習をします。",
+    from: "元の言語",
+    to: "翻訳先の言語",
+    typeMode: "入力モード",
+    listening: "聞き取り中…",
+    recordSentence: "文を録音",
+    stopRecording: "停止",
+    micBlocked: "ブラウザがマイクアクセスをブロックしました。音声入力を使うにはマイク許可を確認してください。",
+    sttNotSupported: "このブラウザでは音声機能がサポートされていません。入力・翻訳・再生は利用できます。",
+    inputPlaceholder: "言いたいことを入力…",
+    translating: "翻訳中…",
+    translation: "翻訳",
+    translationPlaceholder: "入力または録音するとここに表示されます。",
+    playTranslation: "翻訳を再生",
+    speed: "速度",
+    practiceTitle: "練習",
+    recordAttempt: "自分の試しを録音",
+    stopAttempt: "試しを停止",
+    playAttempt: "自分の試しを再生",
+    noAudioSupport: "このブラウザでは録音できません。",
+    recognized: "あなたの発話（認識結果）",
+    recognizedPlaceholder: "録音後、ここに表示されます。",
+    showFeedback: "フィードバックを表示",
+    hideFeedback: "フィードバックを非表示",
+    accuracy: "正確さ（目安）",
+    scorePlaceholder: "試した後にスコアが表示されます。",
+    scoreLine: (n: number) => `理想文との一致率 ${n}%。`,
+  },
+  ur: {
+    title: "Any-Speak سیکھیں",
+    subtitle: "کچھ بولیں یا لکھیں۔ یہ خودکار طور پر ترجمہ کرتا ہے۔ پھر اسے بولنے کی مشق کریں۔",
+    from: "ماخذ زبان",
+    to: "ہدف زبان",
+    typeMode: "ٹائپ موڈ",
+    listening: "سن رہا ہے…",
+    recordSentence: "جملہ ریکارڈ کریں",
+    stopRecording: "روکیں",
+    micBlocked: "براؤزر نے مائیک تک رسائی روک دی ہے۔ آواز کے لیے مائیک اجازت چیک کریں۔",
+    sttNotSupported: "اس براؤزر میں وائس فیچرز دستیاب نہیں ہیں۔ آپ پھر بھی ٹائپ، ترجمہ اور سن سکتے ہیں۔",
+    inputPlaceholder: "جو کہنا چاہتے ہیں وہ لکھیں…",
+    translating: "ترجمہ ہو رہا ہے…",
+    translation: "ترجمہ",
+    translationPlaceholder: "یہاں دیکھنے کے لیے لکھنا شروع کریں یا جملہ ریکارڈ کریں۔",
+    playTranslation: "ترجمہ چلائیں",
+    speed: "رفتار",
+    practiceTitle: "مشق",
+    recordAttempt: "میری کوشش ریکارڈ کریں",
+    stopAttempt: "کوشش روکیں",
+    playAttempt: "میری کوشش چلائیں",
+    noAudioSupport: "اس براؤزر میں آڈیو ریکارڈنگ سپورٹ نہیں ہے۔",
+    recognized: "آپ نے کیا کہا (پہچانا گیا)",
+    recognizedPlaceholder: "ریکارڈ کے بعد آپ کی کوشش یہاں ظاہر ہوگی۔",
+    showFeedback: "فیڈبیک دکھائیں",
+    hideFeedback: "فیڈبیک چھپائیں",
+    accuracy: "درستگی (تقریبی اندازہ)",
+    scorePlaceholder: "کوشش کے بعد اسکور نظر آئے گا۔",
+    scoreLine: (n: number) => `مثالی جملے سے ${n}% مماثلت۔`,
+  },
+} as const;
+
+const UI = {
+  ...UI_BASE,
+  "es-ES": UI_BASE.es,
+  "es-MX": UI_BASE.es,
+  "es-US": UI_BASE.es,
+  "es-419": UI_BASE.es,
+  "pt-BR": UI_BASE.pt,
+  "pt-PT": UI_BASE.pt,
+  "zh-CN": UI_BASE.zh,
+  "zh-Hans": UI_BASE.zh,
+  "zh-SG": UI_BASE.zh,
+  "zh-TW": UI_BASE.zh,
+  "ar-EG": UI_BASE.ar,
+  "ar-SA": UI_BASE.ar,
+  "ar-AE": UI_BASE.ar,
+  "fr-FR": UI_BASE.fr,
+  "fr-CA": UI_BASE.fr,
+  "hi-IN": UI_BASE.hi,
+  "bn-BD": UI_BASE.bn,
+  "id-ID": UI_BASE.id,
+  "ru-RU": UI_BASE.ru,
+  "de-DE": UI_BASE.de,
+  "ja-JP": UI_BASE.ja,
+  "ur-PK": UI_BASE.ur,
 } as const;
 
 export default function LearnPage() {
@@ -273,7 +690,6 @@ export default function LearnPage() {
   const sourceMrRef = useRef<MediaRecorder | null>(null);
   const sourceStreamRef = useRef<MediaStream | null>(null);
   const sourceChunksRef = useRef<BlobPart[]>([]);
-
   const attemptRecRef = useRef<any>(null);
   const attemptMrRef = useRef<MediaRecorder | null>(null);
   const attemptStreamRef = useRef<MediaStream | null>(null);
@@ -308,12 +724,27 @@ export default function LearnPage() {
     srcRec.onresult = (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
-      const last = results[results.length - 1];
-      const raw = last[0]?.transcript || "";
-      setSourceText(raw.trim());
-      setIsRecordingSource(false);
-      setInputMode("type");
-    };
+
+      // Build a stable transcript across browsers:
+      // - Prefer final results when available
+      // - Otherwise fall back to concatenating everything we have
+      let finalParts: string[] = [];
+      let allParts: string[] = [];
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const t = (r?.[0]?.transcript || "").trim();
+        if (!t) continue;
+        allParts.push(t);
+        if (r.isFinal) finalParts.push(t);
+      }
+
+      const text = (finalParts.length ? finalParts : allParts).join(" ").trim();
+      if (!text) return;
+  setSourceText(text);
+  setInputMode("speak");
+};
+
 
     srcRec.onerror = (event: any) => {
       console.error("[Learn] source STT error", event.error);
@@ -332,14 +763,30 @@ export default function LearnPage() {
     attRec.onresult = (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
-      const last = results[results.length - 1];
-      const raw = last[0]?.transcript || "";
-      const text = raw.trim();
+
+      // Build a stable transcript across browsers:
+      // - Prefer final results when available
+      // - Otherwise fall back to concatenating everything we have
+      let finalParts: string[] = [];
+      let allParts: string[] = [];
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const t = (r?.[0]?.transcript || "").trim();
+        if (!t) continue;
+        allParts.push(t);
+        if (r.isFinal) finalParts.push(t);
+      }
+
+      const text = (finalParts.length ? finalParts : allParts).join(" ").trim();
+      if (!text) return;
+
       setAttemptText(text);
 
       if (translatedText) setAttemptScore(scoreSimilarity(translatedText, text));
       setShowFeedback(false); // keep it collapsed by default
     };
+
 
     attRec.onerror = (event: any) => {
       console.error("[Learn] attempt STT error", event.error);
@@ -427,7 +874,7 @@ useEffect(() => {
     speakText(tts, toLang, ttsRate);
   }
 
-  function startSourceRecord() {
+  async function startSourceRecord() {
   setError(null);
 
   const canRecordAudio = typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
@@ -530,7 +977,7 @@ function stopSourceRecord() {
   setInputMode("type");
 }
 
-async function startAttemptRecord() {
+  async function startAttemptRecord() {
   setError(null);
   if (!translatedText.trim()) return;
 
@@ -734,7 +1181,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setFromLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {LANGUAGES.map((lang: LanguageConfig) => (
+                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
@@ -758,7 +1205,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {LANGUAGES.map((lang: LanguageConfig) => (
+                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
@@ -779,7 +1226,9 @@ function stopAttemptRecord() {
             />
 
             {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
-            <div className="flex items-center justify-between gap-2"></div>
+            <div className="flex items-center justify-between gap-2">
+              
+            </div>
 
             <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
