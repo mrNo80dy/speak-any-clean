@@ -71,6 +71,47 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     return stream;
   }, [attachLocalVideo, opts.wantVideo, wantAudio]);
 
+  // Add a video track to an already-acquired audio-only stream.
+  // This enables "audio call → turn camera on" (renegotiation handled elsewhere).
+  const ensureVideoTrack = useCallback(
+    async (enabled: boolean = true) => {
+      if (typeof navigator === "undefined") return null;
+      const stream = localStreamRef.current;
+      if (!stream) return null;
+
+      // If a video track already exists, just toggle it.
+      const existing = stream.getVideoTracks?.()[0] || null;
+      if (existing) {
+        existing.enabled = enabled;
+        setCamOn(enabled);
+        if (localVideoElRef.current) attachLocalVideo(localVideoElRef.current);
+        return existing;
+      }
+
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 960, max: 1280 },
+          height: { ideal: 540, max: 720 },
+          frameRate: { ideal: 20, max: 24 },
+        },
+        audio: false,
+      });
+
+      const v = newStream.getVideoTracks?.()[0] || null;
+      if (!v) return null;
+      v.enabled = enabled;
+
+      try {
+        stream.addTrack(v);
+      } catch {}
+
+      setCamOn(enabled);
+      if (localVideoElRef.current) attachLocalVideo(localVideoElRef.current);
+      return v;
+    },
+    [attachLocalVideo]
+  );
+
   const setMicEnabled = useCallback((enabled: boolean) => {
     const s = localStreamRef.current;
     const a = s?.getAudioTracks?.()[0] || null;
@@ -120,6 +161,7 @@ export function useLocalMedia(opts: UseLocalMediaOpts) {
     micOn,
     camOn,
     acquire,
+    ensureVideoTrack,
     attachLocalVideo,
     setMicEnabled,
     setCamEnabled,
