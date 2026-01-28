@@ -7,18 +7,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
 
-
-
-function getDeviceLanguage(): string {
-  try {
-    if (typeof navigator === "undefined") return "en-US";
-    const lang = (navigator.language || "en-US").trim();
-    return lang || "en-US";
-  } catch {
-    return "en-US";
-  }
-}
-
 const LEARN_LANGUAGE_CODES: string[] = [
   "en-US",
   "en-GB",
@@ -59,16 +47,14 @@ const LEARN_LANGUAGE_OVERRIDES: Record<string, Partial<LanguageConfig>> = {
   "ur-PK": { label: "Urdu" },
 };
 
-function buildLearnLanguages(): LanguageConfig[] {
-  // Build at runtime to avoid module-init ordering issues during SSR/prerender.
-  return LEARN_LANGUAGE_CODES.map((code) => {
-    const base = LANGUAGES.find((l) => l.code === code);
-    const merged: LanguageConfig = base
-      ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
-      : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
-    return merged;
-  });
-}
+const LEARN_LANGUAGES: LanguageConfig[] = LEARN_LANGUAGE_CODES.map((code) => {
+  const base = LEARN_LANGUAGES.find((l) => l.code === code);
+  const merged: LanguageConfig = base
+    ? { ...base, ...(LEARN_LANGUAGE_OVERRIDES[code] || {}) }
+    : ({ code, label: (LEARN_LANGUAGE_OVERRIDES[code]?.label as string) || code } as LanguageConfig);
+  return merged;
+});
+
 
 type TranslateResponse = {
   translatedText?: string;
@@ -111,13 +97,16 @@ async function translateText(
 }
 
 
-async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
-  // Try a few endpoints (legacy + current). Prefer /api/stt when present.
-  const candidates = ["/api/stt", "/api/cc", "/api/caption", "/api/captions", "/api/transcribe", "/api/speech-to-text"];
+async function transcribeAudio(
+  blob: Blob,
+  lang: string
+): Promise<{ text: string } | null> {
+  // We don't know which endpoint name your repo uses; CC works in calls, so one of these should exist.
+  const candidates = ["/api/cc", "/api/caption", "/api/captions", "/api/stt", "/api/transcribe", "/api/speech-to-text"];
 
   const fd = new FormData();
   fd.append("file", blob, "audio.webm");
-  fd.append("lang", lang || "en-US");
+  fd.append("lang", lang);
 
   for (const url of candidates) {
     try {
@@ -129,16 +118,16 @@ async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
         (data?.text as string | undefined) ||
         (data?.transcript as string | undefined) ||
         (data?.recognizedText as string | undefined) ||
-        (data?.result as string | undefined) ||
-        "";
+        (data?.result as string | undefined);
 
-      if (text && text.trim()) return text.trim();
+      if (text && text.trim()) return { text: text.trim() };
     } catch {
       // ignore and try next
     }
   }
-  return "";
-}function speakText(text: string, lang: string, rate = 1.0) {
+  return null;
+}
+function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
   if (!synth) {
@@ -217,14 +206,13 @@ function normalizeWords(s: string) {
 }
 
 function pickSupportedLang(code: string, fallback: string) {
-  // Only allow languages that exist in our Learn list
-  const has = LEARN_LANGUAGE_CODES.includes(code);
+  const has = LANGUAGES.some((l) => l.code === code);
   if (has) return code;
 
   // Try base language match: pt-BR -> pt-PT style or vice versa
   const base = code.slice(0, 2).toLowerCase();
-  const baseMatchCode = LEARN_LANGUAGE_CODES.find((c) => c.slice(0, 2).toLowerCase() === base);
-  if (baseMatchCode) return baseMatchCode;
+  const baseMatch = LEARN_LANGUAGES.find((l) => l.code.slice(0, 2).toLowerCase() === base);
+  if (baseMatch) return baseMatch.code;
 
   return fallback;
 }
@@ -669,27 +657,14 @@ const UI = {
 } as const;
 
 export default function LearnPage() {
-  const [uiLang, setUiLang] = useState("en");
-  const learnLanguages = useMemo(() => buildLearnLanguages(), []);
-  const t = (UI as any)[uiLang] ?? (UI as any)[uiLang.split("-")[0]] ?? UI.en;
+  const deviceLang = useMemo(() => getDeviceLang(), []);
+  const uiLang = useMemo(() => getUiLang(deviceLang), [deviceLang]);
+  const t = UI[uiLang];
 
-  const [fromLang, setFromLang] = useState("en-US");
+  const [fromLang, setFromLang] = useState(() => pickSupportedLang(deviceLang, "en-US"));
   const [toLang, setToLang] = useState("en-US");
 
-  useEffect(() => {
-    const d = getDeviceLanguage();
-    const ui = d.toLowerCase();
-    setUiLang(ui);
-
-    const candidate =
-      learnLanguages.some((l) => l.code === d)
-        ? d
-        : learnLanguages.some((l) => l.code === ui)
-          ? ui
-          : "en-US";
-    setFromLang(candidate);
-    }, [learnLanguages]);
-// Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
+  // Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
   const [sourceText, setSourceText] = useState("");
@@ -1206,7 +1181,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setFromLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {learnLanguages.map((lang: LanguageConfig) => (
+                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
@@ -1230,7 +1205,7 @@ function stopAttemptRecord() {
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                {learnLanguages.map((lang: LanguageConfig) => (
+                {LEARN_LANGUAGES.map((lang: LanguageConfig) => (
                   <option key={lang.code} value={lang.code}>
                     {lang.label}
                   </option>
@@ -1250,44 +1225,98 @@ function stopAttemptRecord() {
               className="bg-slate-900 border border-slate-500 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
 
-            {/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
-            <div className="flex items-center justify-between gap-2">
-  {/* Type mode */}
+            
+{/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
+<div className="flex items-center justify-between gap-2">
   <Button
     size="sm"
     variant="outline"
     onClick={focusTypeMode}
-    className="border-slate-500 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[12px]"
+    className="border-slate-200 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[11px]"
   >
     {t.typeMode}
   </Button>
 
-  {/* Record sentence */}
   <Button
     size="sm"
     onClick={() => {
       if (isRecordingSource) stopSourceRecord();
       else startSourceRecord();
     }}
-    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold text-[12px]"
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
   >
     {isRecordingSource ? t.stopRecording : t.recordSentence}
   </Button>
 
-  {/* Play translation */}
   <Button
     size="sm"
     variant="outline"
-    onClick={handlePlayTarget}
+    onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
     disabled={!translatedText.trim()}
-    className="border-slate-500 text-slate-50 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 text-[12px]"
+    className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 text-[11px]"
   >
     {t.playTranslation}
   </Button>
 </div>
 
+{/* Status line */}
+{(error || isTranscribing || loading || sttWarning) && (
+  <div className="text-[12px] text-slate-200">
+    {error ? (
+      <span className="text-red-200">{error}</span>
+    ) : sttWarning ? (
+      <span className="text-amber-200">{sttWarning}</span>
+    ) : isTranscribing ? (
+      <span>{t.transcribing}</span>
+    ) : loading ? (
+      <span>{t.translating}</span>
+    ) : null}
+  </div>
+)}
 
-            <div className="space-y-1">
+{/* Speed control */}
+<div className="flex items-center gap-3 rounded-md border border-slate-600 bg-slate-900 px-3 py-2">
+  <div className="text-[11px] text-slate-200">{t.speed}</div>
+  <input
+    type="range"
+    min={0.6}
+    max={1.2}
+    step={0.05}
+    value={ttsRate}
+    onChange={(e) => setTtsRate(parseFloat(e.target.value))}
+    className="w-full"
+  />
+  <div className="text-[11px] text-slate-200 tabular-nums">{ttsRate.toFixed(2)}x</div>
+</div>
+
+{/* Translation output */}
+<div className="space-y-1">
+  <div className="flex items-center justify-between gap-2">
+    <Label className="text-[11px] text-slate-300">{t.translation}</Label>
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
+      disabled={!translatedText.trim()}
+      className="bg-slate-700 hover:bg-slate-600 border border-slate-500 text-slate-50 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+    >
+      {t.playTranslation}
+    </Button>
+  </div>
+  <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
+    {translatedText ? (
+      translationDisplay
+    ) : (
+      <span className="text-slate-400">{t.translationPlaceholder}</span>
+    )}
+  </div>
+</div>
+
+{/* Practice */}
+<div className="pt-1">
+  <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
+</div>
+<div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
   <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
   <Button
