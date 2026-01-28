@@ -691,7 +691,7 @@ function stopAttemptRecord() {
 
           {/* Translation output */}
           <div className="space-y-1">
-            <Label className="text-xs text-slate-100"<div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2">
   <Label className="text-[11px] text-slate-300">{t.translation}</Label>
   <Button
     size="sm"
