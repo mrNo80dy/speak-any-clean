@@ -282,12 +282,27 @@ export default function LearnPage() {
     srcRec.onresult = (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
-      const last = results[results.length - 1];
-      const raw = last[0]?.transcript || "";
-      setSourceText(raw.trim());
-      setIsRecordingSource(false);
-      setInputMode("type");
-    };
+
+      // Build a stable transcript across browsers:
+      // - Prefer final results when available
+      // - Otherwise fall back to concatenating everything we have
+      let finalParts: string[] = [];
+      let allParts: string[] = [];
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const t = (r?.[0]?.transcript || "").trim();
+        if (!t) continue;
+        allParts.push(t);
+        if (r.isFinal) finalParts.push(t);
+      }
+
+      const text = (finalParts.length ? finalParts : allParts).join(" ").trim();
+      if (!text) return;
+  setSourceText(text);
+  setInputMode("speak");
+};
+
 
     srcRec.onerror = (event: any) => {
       console.error("[Learn] source STT error", event.error);
@@ -306,14 +321,30 @@ export default function LearnPage() {
     attRec.onresult = (event: any) => {
       const results = event.results;
       if (!results || results.length === 0) return;
-      const last = results[results.length - 1];
-      const raw = last[0]?.transcript || "";
-      const text = raw.trim();
+
+      // Build a stable transcript across browsers:
+      // - Prefer final results when available
+      // - Otherwise fall back to concatenating everything we have
+      let finalParts: string[] = [];
+      let allParts: string[] = [];
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        const t = (r?.[0]?.transcript || "").trim();
+        if (!t) continue;
+        allParts.push(t);
+        if (r.isFinal) finalParts.push(t);
+      }
+
+      const text = (finalParts.length ? finalParts : allParts).join(" ").trim();
+      if (!text) return;
+
       setAttemptText(text);
 
       if (translatedText) setAttemptScore(scoreSimilarity(translatedText, text));
       setShowFeedback(false); // keep it collapsed by default
     };
+
 
     attRec.onerror = (event: any) => {
       console.error("[Learn] attempt STT error", event.error);
