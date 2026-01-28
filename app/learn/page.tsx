@@ -1228,14 +1228,11 @@ function stopAttemptRecord() {
     {t.typeMode}
   </Button>
 
-    <Button className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
-  size="sm"
+    <Button size="sm"
   onClick={() => {
     if (isRecordingSource) stopSourceRecord();
     else startSourceRecord();
-  }}
-  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
->
+  }} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm">
   {isRecordingSource ? t.stopRecording : t.recordSentence}
 </Button>
     </div>
