@@ -1240,16 +1240,14 @@ function stopAttemptRecord() {
 
 <Button
   size="sm"
-  onClick={() => {
-    if (isRecordingAttempt) stopAttemptRecord();
-    else startAttemptRecord();
-  }}
+  variant="outline"
+  onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
   disabled={!translatedText.trim()}
   className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
 >
-  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+  {t.playTranslation}
 </Button>
-</div>
+    </div>
 
 {/* Status line */}
 {(error || isTranscribing || loading || sttWarning) && (
@@ -1284,17 +1282,19 @@ function stopAttemptRecord() {
 {/* Translation output */}
 <div className="space-y-1">
   <div className="flex items-center justify-between gap-2">
-    <Label className="text-[11px] text-slate-300">{t.translation}</Label>
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
-      disabled={!translatedText.trim()}
-      className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
-    >
-      {t.playTranslation}
-    </Button>
-  </div>
+  <Label className="text-[11px] text-slate-300">{t.translation}</Label>
+<Button
+  size="sm"
+  onClick={() => {
+    if (isRecordingAttempt) stopAttemptRecord();
+    else startAttemptRecord();
+  }}
+  disabled={!translatedText.trim()}
+  className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+>
+  {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+</Button>
+</div>
   <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
     {translatedText ? (
       translationDisplay
@@ -1311,7 +1311,23 @@ function stopAttemptRecord() {
 <div className="space-y-1">
               <div className="flex items-center justify-between gap-2">
   <Label className="text-[11px] text-slate-300">{t.recognized}</Label>
-  
+  <Button
+    size="sm"
+    onClick={() => {
+      try {
+        if (attemptAudioUrl) {
+          attemptAudioRef.current?.play?.();
+        } else {
+          const said = attemptText?.trim();
+          if (said) speakText(said, toLang, ttsRate);
+        }
+      } catch {}
+    }}
+    disabled={!attemptAudioUrl && !attemptText?.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {t.playAttempt}
+  </Button>
 </div>
               <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
                 {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
@@ -1320,23 +1336,7 @@ function stopAttemptRecord() {
 {/* Attempt playback */}
 {attemptAudioUrl && (
   <div className="flex items-center justify-between gap-2">
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={() => {
-                      try {
-                        if (attemptAudioUrl) {
-                          attemptAudioRef.current?.play?.();
-                        } else {
-                          const said = (attemptText || "").trim();
-                          if (said) speakText(said, toLang, ttsRate);
-                        }
-                      } catch {}
-                    }}
-      className="border-slate-200 text-slate-50 bg-slate-700 hover:bg-slate-600 text-[11px]"
-    >
-      {t.playAttempt}
-    </Button>
+    
 
     <audio ref={attemptAudioRef} src={attemptAudioUrl} preload="auto" />
   </div>
