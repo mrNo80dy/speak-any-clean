@@ -684,11 +684,6 @@ export default function LearnPage() {
           : "en-US";
     setFromLang(candidate);
   }, []);
-
-  
-
-
-  const [uiLang, setUiLang] = useState("en");
 // Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
