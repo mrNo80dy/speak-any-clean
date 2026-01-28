@@ -666,27 +666,29 @@ const UI = {
 } as const;
 
 export default function LearnPage() {
-  const deviceLang = useMemo(() => getDeviceLang(), []);
-  const uiLang = useMemo(() => getUiLang(deviceLang), [deviceLang]);
   const t = (UI as any)[uiLang] ?? (UI as any)[uiLang.split("-")[0]] ?? UI.en;
 
-  const [fromLang, setFromLang] = useState(() => pickSupportedLang(deviceLang, "en-US"));
+  const [fromLang, setFromLang] = useState("en-US");
   const [toLang, setToLang] = useState("en-US");
+
+  useEffect(() => {
+    const d = getDeviceLanguage();
+    const ui = d.toLowerCase();
+    setUiLang(ui);
+
+    const candidate =
+      LEARN_LANGUAGES.some((l) => l.code === d)
+        ? d
+        : LEARN_LANGUAGES.some((l) => l.code === ui)
+          ? ui
+          : "en-US";
+    setFromLang(candidate);
+  }, []);
 
   
 
 
   const [uiLang, setUiLang] = useState("en");
-useEffect(() => {
-  const d = getDeviceLanguage();
-  const ui = d.toLowerCase();
-  // UI language: try full, then base
-  setUiLang(ui);
-
-  // From language defaults to device language if supported by our learn list
-  const candidate = LEARN_LANGUAGES.some((l) => l.code === d) ? d : LEARN_LANGUAGES.some((l) => l.code === ui) ? ui : "en-US";
-  setFromLang(candidate);
-}, []);
 // Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
