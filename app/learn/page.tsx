@@ -270,6 +270,10 @@ export default function LearnPage() {
   const [ttsRate, setTtsRate] = useState<number>(0.85);
 
   const sourceRecRef = useRef<any>(null);
+  const sourceMrRef = useRef<MediaRecorder | null>(null);
+  const sourceStreamRef = useRef<MediaStream | null>(null);
+  const sourceChunksRef = useRef<BlobPart[]>([]);
+
   const attemptRecRef = useRef<any>(null);
   const attemptMrRef = useRef<MediaRecorder | null>(null);
   const attemptStreamRef = useRef<MediaStream | null>(null);
