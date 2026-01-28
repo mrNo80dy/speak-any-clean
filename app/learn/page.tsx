@@ -1165,7 +1165,7 @@ function stopAttemptRecord() {
           {/* Language selectors */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label className="text-xs text-slate-100 whitespace-nowrap">{t.from}</Label>
+              <Label className="text-xs text-slate-100">{t.from}</Label>
               <select
                 value={fromLang}
                 onChange={(e) => setFromLang(e.target.value)}
@@ -1181,16 +1181,16 @@ function stopAttemptRecord() {
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <Label className="text-xs text-slate-100 whitespace-nowrap">{t.to}</Label>
+                <Label className="text-xs text-slate-100">{t.to}</Label>
                 <button
                   type="button"
                   onClick={swapLangs}
-                  className="text-[11px] text-slate-200 hover:text-white underline underline-offset-2 whitespace-nowrap"
+                  className="text-[11px] text-slate-200 hover:text-white underline underline-offset-2"
                 >
                   ↔
                 </button>
               </div>
-<select
+              <select
                 value={toLang}
                 onChange={(e) => setToLang(e.target.value)}
                 className="w-full rounded-md border border-slate-500 bg-slate-900 px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1216,9 +1216,141 @@ function stopAttemptRecord() {
             />
 
             
-{/* Controls row: Type mode (left), Record sentence (center), Play translation (right) */}
+{/* Controls row: Type mode (left), Record sentence (right) */}
 <div className="flex w-full items-center justify-between gap-2">
+  <Button
+    size="sm"
+    variant="outline"
+    onClick={focusTypeMode}
+    className="border-slate-200 text-slate-50 bg-slate-800 hover:bg-slate-700 text-[11px]"
+  >
+    {t.typeMode}
+  </Button>
 
+  <Button
+    size="sm"
+    onClick={() => {
+      if (isRecordingSource) stopSourceRecord();
+      else startSourceRecord();
+    }}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {isRecordingSource ? t.stopRecording : t.recordSentence}
+  </Button>
+</div>
+
+{/* Status line */}
+{(error || isTranscribing || loading || sttWarning) && (
+  <div className="text-[12px] text-slate-200">
+    {error ? (
+      <span className="text-red-200">{error}</span>
+    ) : sttWarning ? (
+      <span className="text-amber-200">{sttWarning}</span>
+    ) : isTranscribing ? (
+      <span>{(t as any).transcribing ?? t.translating}</span>
+    ) : loading ? (
+      <span>{t.translating}</span>
+    ) : null}
+  </div>
+)}
+
+{/* Speed control */}
+<div className="flex items-center gap-3 rounded-md border border-slate-600 bg-slate-900 px-3 py-2">
+  <div className="text-[11px] text-slate-200">{t.speed}</div>
+  <input
+    type="range"
+    min={0.6}
+    max={1.2}
+    step={0.05}
+    value={ttsRate}
+    onChange={(e) => setTtsRate(parseFloat(e.target.value))}
+    className="w-full"
+  />
+  <div className="text-[11px] text-slate-200 tabular-nums">{ttsRate.toFixed(2)}x</div>
+</div>
+
+{/* Translation output */}
+<div className="space-y-1">
+  <div className="flex w-full items-center justify-between gap-2">
+    <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.translation}</Label>
+  </div>
+  <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
+    {translatedText ? (
+      translationDisplay
+    ) : (
+      <span className="text-slate-400">{t.translationPlaceholder}</span>
+    )}
+  </div>
+</div>
+
+{/* Practice */}
+<div className="pt-1">
+  <div className="text-[12px] text-slate-200 font-semibold">{t.practiceTitle}</div>
+</div>
+<div className="space-y-1">
+              <div className="flex w-full items-center justify-between gap-2">
+  <Label className="text-[11px] text-slate-300 whitespace-nowrap">{t.recognized}</Label>
+  <Button
+    size="sm"
+    onClick={() => translatedText && speakText(translatedText, toLang, ttsRate)}
+    disabled={!translatedText.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {t.playTranslation}
+  </Button>
+</div>
+              <div className="min-h-[2.5rem] rounded-md border border-slate-500 bg-slate-900 px-3 py-2 text-sm text-slate-50">
+                {attemptText || <span className="text-slate-400">{t.recognizedPlaceholder}</span>}
+              </div>
+
+{/* Practice actions */}
+<div className="flex w-full items-center justify-end">
+  <Button
+    size="sm"
+    onClick={() => {
+      if (isRecordingAttempt) stopAttemptRecord();
+      else startAttemptRecord();
+    }}
+    disabled={!translatedText.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {isRecordingAttempt ? t.stopAttempt : t.recordAttempt}
+  </Button>
+</div>
+
+<audio ref={attemptAudioRef} src={attemptAudioUrl} preload="auto" />
+</div>
+
+            {/* Collapsed feedback */}
+            <div className="space-y-1">
+              <div className="flex w-full items-center justify-between gap-2">
+  <button
+    type="button"
+    onClick={() => setShowFeedback((v) => !v)}
+    className="text-[11px] text-slate-200 hover:text-white underline underline-offset-2"
+    disabled={!attemptText.trim() && attemptScore === null}
+    title={!attemptText.trim() && attemptScore === null ? t.scorePlaceholder : ""}
+  >
+    {showFeedback ? t.hideFeedback : t.showFeedback}
+  </button>
+
+  <Button
+    size="sm"
+    onClick={() => {
+      try {
+        if (attemptAudioUrl) {
+          attemptAudioRef.current?.play?.();
+        } else {
+          const said = (attemptText || "").trim();
+          if (said) speakText(said, toLang, ttsRate);
+        }
+      } catch {}
+    }}
+    disabled={!attemptAudioUrl && !attemptText.trim()}
+    className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-semibold disabled:opacity-60 text-[12px] shadow-sm"
+  >
+    {t.playAttempt}
+  </Button>
 </div>
 
               {showFeedback && (
