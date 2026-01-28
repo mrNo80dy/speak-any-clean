@@ -47,6 +47,37 @@ async function translateText(
   }
 }
 
+
+async function transcribeAudio(
+  blob: Blob,
+  lang: string
+): Promise<{ text: string } | null> {
+  // We don't know which endpoint name your repo uses; CC works in calls, so one of these should exist.
+  const candidates = ["/api/cc", "/api/caption", "/api/captions", "/api/stt", "/api/transcribe", "/api/speech-to-text"];
+
+  const fd = new FormData();
+  fd.append("file", blob, "audio.webm");
+  fd.append("lang", lang);
+
+  for (const url of candidates) {
+    try {
+      const res = await fetch(url, { method: "POST", body: fd });
+      if (!res.ok) continue;
+
+      const data: any = await res.json().catch(() => null);
+      const text =
+        (data?.text as string | undefined) ||
+        (data?.transcript as string | undefined) ||
+        (data?.recognizedText as string | undefined) ||
+        (data?.result as string | undefined);
+
+      if (text && text.trim()) return { text: text.trim() };
+    } catch {
+      // ignore and try next
+    }
+  }
+  return null;
+}
 function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
@@ -167,6 +198,7 @@ const UI = {
       "Speech features are not supported on this browser. You can still type, translate, and listen.",
     inputPlaceholder: "Type what you want to say…",
     translating: "Translating…",
+    transcribing: "Transcribing…",
     translation: "Translation",
     translationPlaceholder: "Start typing or record a sentence to see it here.",
     playTranslation: "Play translation",
@@ -199,6 +231,7 @@ const UI = {
       "Recursos de fala não são suportados neste navegador. Você ainda pode digitar, traduzir e ouvir.",
     inputPlaceholder: "Digite o que você quer dizer…",
     translating: "Traduzindo…",
+    transcribing: "Transcrevendo…",
     translation: "Tradução",
     translationPlaceholder: "Digite ou grave uma frase para ver a tradução aqui.",
     playTranslation: "Ouvir tradução",
@@ -232,6 +265,7 @@ export default function LearnPage() {
   const [sourceText, setSourceText] = useState("");
   const [translatedText, setTranslatedText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [attemptText, setAttemptText] = useState("");
@@ -248,6 +282,9 @@ export default function LearnPage() {
   const [ttsRate, setTtsRate] = useState<number>(0.85);
 
   const sourceRecRef = useRef<any>(null);
+  const sourceMrRef = useRef<MediaRecorder | null>(null);
+  const sourceStreamRef = useRef<MediaStream | null>(null);
+  const sourceChunksRef = useRef<BlobPart[]>([]);
   const attemptRecRef = useRef<any>(null);
   const attemptMrRef = useRef<MediaRecorder | null>(null);
   const attemptStreamRef = useRef<MediaStream | null>(null);
@@ -432,8 +469,14 @@ useEffect(() => {
     speakText(tts, toLang, ttsRate);
   }
 
-  function startSourceRecord() {
-    setError(null);
+  async function startSourceRecord() {
+  setError(null);
+
+  const canRecordAudio =
+    typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
+
+  if (!canRecordAudio) {
+    // Fall back to SpeechRecognition if available
     if (sttSupported === false || !sourceRecRef.current) {
       setError(t.sttNotSupported);
       return;
@@ -444,44 +487,105 @@ useEffect(() => {
       sourceRecRef.current.lang = fromLang;
       sourceRecRef.current.start();
     } catch (err) {
-      console.error("[Learn] start source error", err);
+      console.error("[Learn] start source STT error", err);
       setIsRecordingSource(false);
       setInputMode("type");
     }
+    return;
   }
 
-  function stopSourceRecord() {
-    try {
-      sourceRecRef.current?.stop?.();
-    } catch {}
+  try {
+    setInputMode("speak");
+    setIsRecordingSource(true);
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    sourceStreamRef.current = stream;
+    sourceChunksRef.current = [];
+
+    const mr = new MediaRecorder(stream);
+    sourceMrRef.current = mr;
+
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) sourceChunksRef.current.push(e.data);
+    };
+
+    mr.onstop = async () => {
+      const parts = sourceChunksRef.current;
+      sourceChunksRef.current = [];
+      const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
+
+      // Stop tracks
+      try {
+        sourceStreamRef.current?.getTracks().forEach((t) => t.stop());
+      } catch {}
+      sourceStreamRef.current = null;
+      sourceMrRef.current = null;
+
+      setIsRecordingSource(false);
+      setInputMode("type");
+
+      // Transcribe via server (same tech as Call CC)
+      setIsTranscribing(true);
+      try {
+        const result = await transcribeAudio(blob, fromLang);
+        if (result?.text) {
+          setSourceText(result.text);
+        } else {
+          setError(t.sttNotSupported);
+        }
+      } finally {
+        setIsTranscribing(false);
+      }
+    };
+
+    mr.start();
+  } catch (err) {
+    console.error("[Learn] start source MediaRecorder error", err);
     setIsRecordingSource(false);
     setInputMode("type");
+    try {
+      sourceStreamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch {}
+    sourceStreamRef.current = null;
+    sourceMrRef.current = null;
   }
+}
+
+function stopSourceRecord() {
+  // Stop MR (preferred)
+  try {
+    if (sourceMrRef.current && sourceMrRef.current.state !== "inactive") {
+      sourceMrRef.current.stop();
+      return;
+    }
+  } catch {}
+
+  // Stop STT fallback
+  try {
+    sourceRecRef.current?.stop?.();
+  } catch {}
+
+  setIsRecordingSource(false);
+  setInputMode("type");
+}
 
   async function startAttemptRecord() {
   setError(null);
   if (!translatedText.trim()) return;
 
-  if (!sttSupported || !attemptRecRef.current) {
-    setError(t.sttNotSupported);
+  const canRecordAudio =
+    typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
+  if (!canRecordAudio) {
+    setError(t.noAudioSupport);
     return;
   }
 
-  // Audio capture (for playback)
-  const canRecordAudio = typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
-  if (!canRecordAudio) {
-    setError(t.noAudioSupport);
-    // Still allow STT attempt without audio playback
-  }
-
   try {
-    // Reset attempt state
     setIsRecordingAttempt(true);
     setAttemptText("");
     setAttemptScore(null);
     setShowFeedback(false);
 
-    // Clear previous audio
     if (attemptAudioUrl) {
       try {
         URL.revokeObjectURL(attemptAudioUrl);
@@ -489,82 +593,76 @@ useEffect(() => {
     }
     setAttemptAudioUrl(null);
 
-    // Start MediaRecorder if available
-    if (canRecordAudio) {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      attemptStreamRef.current = stream;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    attemptStreamRef.current = stream;
+    attemptChunksRef.current = [];
+
+    const mr = new MediaRecorder(stream);
+    attemptMrRef.current = mr;
+
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) attemptChunksRef.current.push(e.data);
+    };
+
+    mr.onstop = async () => {
+      const parts = attemptChunksRef.current;
       attemptChunksRef.current = [];
+      const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
 
-      const mr = new MediaRecorder(stream);
-      attemptMrRef.current = mr;
-
-      mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) attemptChunksRef.current.push(e.data);
-      };
-
-      mr.onstop = () => {
-        const parts = attemptChunksRef.current;
-        attemptChunksRef.current = [];
-        const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAttemptAudioUrl(url);
-
-        // Auto-play once recording is ready
-        setTimeout(() => {
-          try {
-            attemptAudioRef.current?.play?.();
-          } catch {}
-        }, 0);
-      };
-
-      mr.start();
-    }
-
-    // Start speech recognition (for transcript + scoring)
-    attemptRecRef.current.lang = toLang;
-    attemptRecRef.current.start();
-  } catch (err) {
-    console.error("[Learn] start attempt error", err);
-    setIsRecordingAttempt(false);
-
-    // Cleanup stream if it was opened
-    try {
-      attemptMrRef.current?.stop?.();
-    } catch {}
-    attemptMrRef.current = null;
-
-    if (attemptStreamRef.current) {
+      // Stop tracks
       try {
-        attemptStreamRef.current.getTracks().forEach((t) => t.stop());
+        attemptStreamRef.current?.getTracks().forEach((t) => t.stop());
       } catch {}
-    }
+      attemptStreamRef.current = null;
+      attemptMrRef.current = null;
+
+      setIsRecordingAttempt(false);
+
+      // Save + autoplay attempt audio
+      const url = URL.createObjectURL(blob);
+      setAttemptAudioUrl(url);
+      setTimeout(() => {
+        try {
+          attemptAudioRef.current?.play?.();
+        } catch {}
+      }, 0);
+
+      // Transcribe via server (same tech as Call CC)
+      setIsTranscribing(true);
+      try {
+        const result = await transcribeAudio(blob, toLang);
+        const text = result?.text?.trim() || "";
+        if (text) {
+          setAttemptText(text);
+          setAttemptScore(scoreSimilarity(translatedText, text));
+        } else {
+          setAttemptText("");
+          setAttemptScore(null);
+          setError(t.sttNotSupported);
+        }
+      } finally {
+        setIsTranscribing(false);
+      }
+    };
+
+    mr.start();
+  } catch (err) {
+    console.error("[Learn] start attempt MediaRecorder error", err);
+    setIsRecordingAttempt(false);
+    try {
+      attemptStreamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch {}
     attemptStreamRef.current = null;
+    attemptMrRef.current = null;
   }
 }
 
 function stopAttemptRecord() {
-  // Stop speech recognition
-  try {
-    attemptRecRef.current?.stop?.();
-  } catch {}
-
-  // Stop audio recording
   try {
     if (attemptMrRef.current && attemptMrRef.current.state !== "inactive") {
       attemptMrRef.current.stop();
     }
   } catch {}
-
-  // Stop mic tracks
-  if (attemptStreamRef.current) {
-    try {
-      attemptStreamRef.current.getTracks().forEach((t) => t.stop());
-    } catch {}
-  }
-  attemptStreamRef.current = null;
-  attemptMrRef.current = null;
-
-  setIsRecordingAttempt(false);
 }
 
   function swapLangs() {
@@ -738,7 +836,7 @@ function stopAttemptRecord() {
               </div>
 
               <div className="text-[11px] text-slate-200">
-                {loading ? t.translating : null}
+                {isTranscribing ? t.transcribing : loading ? t.translating : null}
               </div>
             </div>
           </div>
