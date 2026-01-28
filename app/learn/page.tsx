@@ -666,6 +666,7 @@ const UI = {
 } as const;
 
 export default function LearnPage() {
+  const [uiLang, setUiLang] = useState("en");
   const t = (UI as any)[uiLang] ?? (UI as any)[uiLang.split("-")[0]] ?? UI.en;
 
   const [fromLang, setFromLang] = useState("en-US");
