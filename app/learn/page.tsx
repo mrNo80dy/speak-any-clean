@@ -7,6 +7,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { LANGUAGES, type LanguageConfig } from "@/lib/languages";
 
+
+
+function getDeviceLanguage(): string {
+  try {
+    if (typeof navigator === "undefined") return "en-US";
+    const lang = (navigator.language || "en-US").trim();
+    return lang || "en-US";
+  } catch {
+    return "en-US";
+  }
+}
+
 const LEARN_LANGUAGE_CODES: string[] = [
   "en-US",
   "en-GB",
@@ -656,12 +668,24 @@ const UI = {
 export default function LearnPage() {
   const deviceLang = useMemo(() => getDeviceLang(), []);
   const uiLang = useMemo(() => getUiLang(deviceLang), [deviceLang]);
-  const t = UI[uiLang];
+  const t = (UI as any)[uiLang] ?? (UI as any)[uiLang.split("-")[0]] ?? UI.en;
 
   const [fromLang, setFromLang] = useState(() => pickSupportedLang(deviceLang, "en-US"));
   const [toLang, setToLang] = useState("en-US");
 
-  // Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
+  
+
+useEffect(() => {
+  const d = getDeviceLanguage();
+  const ui = d.toLowerCase();
+  // UI language: try full, then base
+  setUiLang(ui);
+
+  // From language defaults to device language if supported by our learn list
+  const candidate = LEARN_LANGUAGES.some((l) => l.code === d) ? d : LEARN_LANGUAGES.some((l) => l.code === ui) ? ui : "en-US";
+  setFromLang(candidate);
+}, []);
+// Keep this only for the “Type mode” button (focus/stop recording). Text is always allowed.
   const [inputMode, setInputMode] = useState<"type" | "speak">("type");
 
   const [sourceText, setSourceText] = useState("");
