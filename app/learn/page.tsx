@@ -97,16 +97,13 @@ async function translateText(
 }
 
 
-async function transcribeAudio(
-  blob: Blob,
-  lang: string
-): Promise<{ text: string } | null> {
-  // We don't know which endpoint name your repo uses; CC works in calls, so one of these should exist.
-  const candidates = ["/api/cc", "/api/caption", "/api/captions", "/api/stt", "/api/transcribe", "/api/speech-to-text"];
+async function transcribeAudio(blob: Blob, lang: string): Promise<string> {
+  // Try a few endpoints (legacy + current). Prefer /api/stt when present.
+  const candidates = ["/api/stt", "/api/cc", "/api/caption", "/api/captions", "/api/transcribe", "/api/speech-to-text"];
 
   const fd = new FormData();
   fd.append("file", blob, "audio.webm");
-  fd.append("lang", lang);
+  fd.append("lang", lang || "en-US");
 
   for (const url of candidates) {
     try {
@@ -118,16 +115,16 @@ async function transcribeAudio(
         (data?.text as string | undefined) ||
         (data?.transcript as string | undefined) ||
         (data?.recognizedText as string | undefined) ||
-        (data?.result as string | undefined);
+        (data?.result as string | undefined) ||
+        "";
 
-      if (text && text.trim()) return { text: text.trim() };
+      if (text && text.trim()) return text.trim();
     } catch {
       // ignore and try next
     }
   }
-  return null;
-}
-function speakText(text: string, lang: string, rate = 1.0) {
+  return "";
+}function speakText(text: string, lang: string, rate = 1.0) {
   if (typeof window === "undefined") return;
   const synth = window.speechSynthesis;
   if (!synth) {
