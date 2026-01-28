@@ -1318,7 +1318,7 @@ function stopAttemptRecord() {
   </Button>
 </div>
 
-<audio ref={attemptAudioRef} src={attemptAudioUrl} preload="auto" />
+<audio ref={attemptAudioRef} src={attemptAudioUrl ?? undefined} preload="auto" />
 </div>
 
             {/* Collapsed feedback */}
