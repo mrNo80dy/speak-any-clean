@@ -530,6 +530,121 @@ function stopSourceRecord() {
   setInputMode("type");
 }
 
+async function startAttemptRecord() {
+  setError(null);
+  if (!translatedText.trim()) return;
+
+  const canRecordAudio = typeof window !== "undefined" && typeof (window as any).MediaRecorder !== "undefined";
+
+  // Prefer MediaRecorder + server STT (works on mobile reliably)
+  if (canRecordAudio) {
+    try {
+      setIsRecordingAttempt(true);
+      setAttemptText("");
+      setAttemptScore(null);
+      setShowFeedback(false);
+
+      // Clear previous audio
+      if (attemptAudioUrl) {
+        try { URL.revokeObjectURL(attemptAudioUrl); } catch {}
+      }
+      setAttemptAudioUrl(null);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      attemptStreamRef.current = stream;
+      attemptChunksRef.current = [];
+
+      // Use Opus when supported (smaller blobs, faster)
+      const opts: MediaRecorderOptions = {};
+      const preferred = "audio/webm;codecs=opus";
+      if (typeof MediaRecorder !== "undefined" && (MediaRecorder as any).isTypeSupported?.(preferred)) {
+        opts.mimeType = preferred;
+        (opts as any).audioBitsPerSecond = 24000;
+      }
+
+      const mr = new MediaRecorder(stream, opts);
+      attemptMrRef.current = mr;
+
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) attemptChunksRef.current.push(e.data);
+      };
+
+      mr.onstop = async () => {
+        const parts = attemptChunksRef.current;
+        attemptChunksRef.current = [];
+        const blob = new Blob(parts, { type: mr.mimeType || "audio/webm" });
+
+        // Stop tracks
+        try { attemptStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
+        attemptStreamRef.current = null;
+        attemptMrRef.current = null;
+
+        setIsRecordingAttempt(false);
+
+        // Audio playback
+        const url = URL.createObjectURL(blob);
+        setAttemptAudioUrl(url);
+        setTimeout(() => {
+          try { attemptAudioRef.current?.play?.(); } catch {}
+        }, 0);
+
+        // Transcribe + score
+        setIsTranscribing(true);
+        try {
+          const text = await transcribeAudio(blob, toLang);
+          setAttemptText(text || "");
+          setAttemptScore(text ? scoreSimilarity(translatedText, text) : null);
+        } catch (e: any) {
+          console.error("[Learn] attempt transcribe failed", e);
+          setError(e?.message || "STT error.");
+          setAttemptText("");
+          setAttemptScore(null);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      mr.start();
+
+      // Safety auto-stop (prevents long blobs)
+      setTimeout(() => {
+        try {
+          if (attemptMrRef.current && attemptMrRef.current.state !== "inactive") attemptMrRef.current.stop();
+        } catch {}
+      }, 12000);
+
+      return;
+    } catch (err) {
+      console.error("[Learn] start attempt MediaRecorder error", err);
+      setIsRecordingAttempt(false);
+      try { attemptMrRef.current?.stop?.(); } catch {}
+      attemptMrRef.current = null;
+      if (attemptStreamRef.current) {
+        try { attemptStreamRef.current.getTracks().forEach((t) => t.stop()); } catch {}
+      }
+      attemptStreamRef.current = null;
+      // fall through to SR if available
+    }
+  }
+
+  // Fallback: browser SpeechRecognition (desktop)
+  if (!sttSupported || !attemptRecRef.current) {
+    setError(t.sttNotSupported);
+    return;
+  }
+  try {
+    setIsRecordingAttempt(true);
+    setAttemptText("");
+    setAttemptScore(null);
+    setShowFeedback(false);
+    attemptRecRef.current.lang = toLang;
+    attemptRecRef.current.start();
+  } catch (err) {
+    console.error("[Learn] start attempt SR error", err);
+    setIsRecordingAttempt(false);
+  }
+}
+
 function stopAttemptRecord() {
   // Stop MR first
   try {
