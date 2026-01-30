@@ -111,16 +111,18 @@ export default function RoomPage() {
   // ---- Call metrics (Supabase: calls table) -----------------
   // We may not have auth wired yet. Generate a stable local UUID per browser so
   // we can log call metrics now and later swap to supabase.auth user.id.
-  const localUserId = useMemo(() => {
+  const getLocalUuid = useCallback((): string | null => {
     if (typeof window === "undefined") return null;
     const key = "anyspeak_local_user_id";
-    let id = window.localStorage.getItem(key);
-    if (!id) {
-      id = crypto.randomUUID();
-      window.localStorage.setItem(key, id);
+    let v = window.localStorage.getItem(key);
+    if (!v) {
+      v = crypto.randomUUID();
+      window.localStorage.setItem(key, v);
     }
-    return id;
+    return v;
   }, []);
+
+  const localUserId = useMemo(() => getLocalUuid(), [getLocalUuid]);
 
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
@@ -274,7 +276,7 @@ const showHudAfterInteraction = () => {};
     const durationSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
 
     try {
-      await supabase
+      const { error } = await supabase
         .from("calls")
         .update({
           ended_at: new Date().toISOString(),
@@ -283,8 +285,11 @@ const showHudAfterInteraction = () => {};
           used_turn: usedTurnRef.current,
         })
         .eq("id", callId);
-    } catch {
-      // ignore
+
+      if (error) console.error("CALLS UPDATE FAILED", error);
+      else console.log("CALLS UPDATE OK", callId);
+    } catch (err) {
+      console.error("CALLS UPDATE FAILED", err);
     }
   }, []);
 
@@ -391,11 +396,15 @@ const showHudAfterInteraction = () => {};
           .select("id")
           .single();
 
-        if (!error && data?.id) {
-          callIdRef.current = data.id as string;
+        if (error) {
+          console.error("CALLS INSERT FAILED", error);
+        } else {
+          console.log("CALLS INSERT OK", data);
         }
-      } catch {
-        // ignore
+
+        if (!error && data?.id) callIdRef.current = data.id as string;
+      } catch (err) {
+        console.error("CALLS INSERT FAILED", err);
       }
 
       // After the connection stabilizes, detect whether TURN (relay) was used.
@@ -408,14 +417,6 @@ const showHudAfterInteraction = () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, roomId, localUserId]);
 
-  useEffect(() => {
-    return () => {
-      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
-      void finalizeCallMetrics();
-    };
-  }, [finalizeCallMetrics]);
-
-  // Always attempt to finalize metrics when the page unloads/unmounts.
   useEffect(() => {
     return () => {
       if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
@@ -1761,4 +1762,3 @@ onPointerCancel={() => {
     </div>
   );
 }
-
