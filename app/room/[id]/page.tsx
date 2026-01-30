@@ -852,6 +852,10 @@ const showHudAfterInteraction = () => {};
     })();
   }, [roomType, joinCamOn, acquire, setCamEnabled]);
 
+  // Keep a ref for the current listening state so callbacks can safely decide
+  // whether to restart listening after mobile SpeechRecognition stops.
+  const sttListeningRef = useRef(false);
+
   const {
     sttListening,
     sttArmedNotListening,
@@ -876,8 +880,26 @@ const showHudAfterInteraction = () => {};
     log: (m, data) => log(m, data ?? {}),
     onFinalTranscript: (text, recLang) => {
       void sendFinalTranscript(text, recLang);
+      // Mobile browsers often stop SpeechRecognition after a final result.
+      // If the user wants the mic "on" (armed), immediately re-arm listening.
+      // This removes the need for PTT while staying gesture-compliant.
+      if (isMobile) {
+        window.setTimeout(() => {
+          try {
+            // Only restart if we're no longer listening and user intent is still "armed".
+            if (!sttListeningRef.current && micArmedRef.current && micOnRef.current) {
+              void toggleMic();
+            }
+          } catch {}
+        }, 250);
+      }
     },
   });
+
+  // Keep ref updated.
+  useEffect(() => {
+    sttListeningRef.current = sttListening;
+  }, [sttListening]);
 
   // "Mic on" must reflect real STT state. On mobile, we arm the mic from a user
   // gesture (required by mobile browsers), but once armed it should be hands-free.
