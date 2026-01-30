@@ -53,10 +53,6 @@ export function useAnySpeakStt({
   const sttRestartTimerRef = useRef<number | null>(null);
   const sttLastSentAtRef = useRef<number>(0);
 
-  // Auto-restart backoff (especially for mobile Web Speech)
-  const sttAutoRestartWindowStartRef = useRef<number>(0);
-  const sttAutoRestartCountRef = useRef<number>(0);
-
   // Android finalize-on-silence refs
   const sttPendingTextRef = useRef<string>("");
   const sttFinalizeTimerRef = useRef<number | null>(null);
@@ -190,50 +186,6 @@ export function useAnySpeakStt({
     }
   };
 
-  const scheduleAutoRestart = (reason: string, delayMs = 450) => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-
-    // Only restart if user intends mic to be on/armed and we didn't request stop.
-    if (sttStopRequestedRef.current) return;
-    if (!micArmedRef.current && !micOnRef.current) return;
-
-    // Backoff window to avoid tight restart loops on Android.
-    const now = Date.now();
-    const winStart = sttAutoRestartWindowStartRef.current || 0;
-    if (!winStart || now - winStart > 12000) {
-      sttAutoRestartWindowStartRef.current = now;
-      sttAutoRestartCountRef.current = 0;
-    }
-    sttAutoRestartCountRef.current += 1;
-
-    if (sttAutoRestartCountRef.current > 8) {
-      log("stt auto-restart: too many restarts; disabling", {
-        reason,
-        count: sttAutoRestartCountRef.current,
-      });
-      setSttStatus("error");
-      setSttErrorMessage(
-        "Captions mic kept stopping on this device. Try reloading, closing other apps using the mic, or switching browsers."
-      );
-      sttStopRequestedRef.current = true;
-      return;
-    }
-
-    clearSttRestartTimer();
-    sttRestartTimerRef.current = window.setTimeout(() => {
-      try {
-        if (!sttRunningRef.current) {
-          rec.lang = speakLang || "en-US";
-          rec.start();
-          log("stt auto-restart start() called", { reason, lang: rec.lang });
-        }
-      } catch (e: any) {
-        log("stt auto-restart FAILED", { reason, message: e?.message || String(e) });
-      }
-    }, delayMs) as any;
-  };
-
   // ---- STT setup: Web Speech API -----------------------------
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -332,41 +284,24 @@ export function useAnySpeakStt({
       }
     };
 
-rec.onerror = (event: any) => {
-  const code = event?.error;
-  log("stt error", { error: code, message: event?.message, event });
-  setSttStatus("error");
-  setSttErrorMessage(code || event?.message || "Speech recognition error.");
+    rec.onerror = (event: any) => {
+      log("stt error", { error: event?.error, message: event?.message, event });
+      setSttStatus("error");
+      setSttErrorMessage(event?.error || event?.message || "Speech recognition error.");
 
-  // Fatal errors: we must stop and require user action
-  if (code === "not-allowed" || code === "service-not-allowed") {
-    sttStopRequestedRef.current = true;
-    micArmedRef.current = false;
-    setSttArmedNotListening(false);
-    clearSttRestartTimer();
-    clearFlushTimer();
-    try {
-      rec.stop();
-    } catch {}
-    return;
-  }
-
-  // Audio capture issues: often transient on mobile. Try to restart if user still wants mic on.
-  if (code === "audio-capture") {
-    // don't permanently disarm; schedule a restart with a bit more delay
-    sttRunningRef.current = false;
-    scheduleAutoRestart("audio-capture", 900);
-    return;
-  }
-
-  // Common transient errors on mobile: no-speech, aborted, network.
-  // Keep the mic armed and restart quietly.
-  if (code === "no-speech" || code === "aborted" || code === "network") {
-    sttRunningRef.current = false;
-    scheduleAutoRestart(String(code || "transient-error"), 700);
-    return;
-  }
-};
+      if (
+        event?.error === "audio-capture" ||
+        event?.error === "not-allowed" ||
+        event?.error === "service-not-allowed"
+      ) {
+        sttStopRequestedRef.current = true;
+        clearSttRestartTimer();
+        clearFlushTimer();
+        try {
+          rec.stop();
+        } catch {}
+      }
+    };
 
     rec.onend = () => {
       sttRunningRef.current = false;
@@ -396,32 +331,18 @@ rec.onerror = (event: any) => {
         }, 300);
       }
 
-// Mobile: auto-restart if the user still has mic armed (hands-free mode).
-if (isMobile) {
-  // IMPORTANT: On mobile, Web Speech often ends after a few seconds of silence.
-  // If the user still wants the mic on, treat onend as a normal boundary and restart
-  // WITHOUT flipping the UI to "off" (otherwise it feels like it stopped working).
-  if (micArmedRef.current && !sttStopRequestedRef.current) {
-    // Keep UI in "listening" state while we schedule a restart.
-    setSttListening(true);
-    setSttArmedNotListening(false);
+      // Android: don't auto-restart
+      if (isMobile) {
+        setSttListening(false);
 
-    scheduleAutoRestart("mobile-onend", 550);
-    log("stt ended (mobile) — scheduling auto-restart", { ranForMs });
-  } else if (sttStopRequestedRef.current) {
-    // User explicitly stopped (mic button / PTT).
-    setSttListening(false);
-    setSttArmedNotListening(micArmedRef.current);
-    log("stt ended (mobile) — stop requested", { ranForMs });
-  } else {
-    // Not armed: just reflect reality.
-    setSttListening(false);
-    setSttArmedNotListening(false);
-  }
-  return;
-}
+        if (micArmedRef.current && !sttStopRequestedRef.current) {
+          setSttArmedNotListening(true);
+          log("stt ended (mobile) — needs manual resume", { ranForMs });
+        }
+        return;
+      }
 
-// Desktop: keep auto-restart
+      // Desktop: keep auto-restart
       if (micOnRef.current && !sttStopRequestedRef.current) {
         clearSttRestartTimer();
         sttRestartTimerRef.current = window.setTimeout(() => {
