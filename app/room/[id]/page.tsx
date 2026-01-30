@@ -108,6 +108,26 @@ export default function RoomPage() {
   const params = useParams<{ id: string }>();
   const roomId = params?.id;
 
+  // ---- Call metrics (Supabase: calls table) -----------------
+  // We may not have auth wired yet. Generate a stable local UUID per browser so
+  // we can log call metrics now and later swap to supabase.auth user.id.
+  const localUserId = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const key = "anyspeak_local_user_id";
+    let id = window.localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      window.localStorage.setItem(key, id);
+    }
+    return id;
+  }, []);
+
+  const callIdRef = useRef<string | null>(null);
+  const callStartedAtRef = useRef<number | null>(null);
+  const usedVideoRef = useRef(false);
+  const usedTurnRef = useRef(false);
+  const turnDetectTimerRef = useRef<number | null>(null);
+
   // ---- Debug Mode + URL params ---------------------------------
   const searchParams = useSearchParams();
   const debugEnabled = searchParams?.get("debug") === "1";
@@ -219,6 +239,55 @@ const showHudAfterInteraction = () => {};
   const shouldSpeakTranslatedRef = useRef(false);
   const shouldMuteRawAudioRef = useRef(true);
 
+  const getAnyPeerPc = useCallback((): RTCPeerConnection | null => {
+    const first = peersRef.current.values().next();
+    if (!first || first.done) return null;
+    return first.value?.pc ?? null;
+  }, []);
+
+  const detectTurnFromPc = useCallback(async (pc: RTCPeerConnection) => {
+    try {
+      const stats = await pc.getStats();
+      let usedTurn = false;
+      stats.forEach((report: any) => {
+        if (
+          report?.type === "candidate-pair" &&
+          report?.state === "succeeded" &&
+          report?.nominated === true
+        ) {
+          if (report?.localCandidateType === "relay" || report?.remoteCandidateType === "relay") {
+            usedTurn = true;
+          }
+        }
+      });
+      usedTurnRef.current = usedTurn;
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const finalizeCallMetrics = useCallback(async () => {
+    const callId = callIdRef.current;
+    const startedAt = callStartedAtRef.current;
+    if (!callId || !startedAt) return;
+
+    const durationSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+
+    try {
+      await supabase
+        .from("calls")
+        .update({
+          ended_at: new Date().toISOString(),
+          duration_seconds: durationSeconds,
+          used_video: usedVideoRef.current,
+          used_turn: usedTurnRef.current,
+        })
+        .eq("id", callId);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   // Track if user manually touched mic so we don't "helpfully" auto-mute later
   const userTouchedMicRef = useRef(false);
 
@@ -299,6 +368,60 @@ const showHudAfterInteraction = () => {};
   const [logs, setLogs] = useState<string[]>([]);
   const [roomInfo, setRoomInfo] = useState<RoomInfo | null>(null);
   const [displayName, setDisplayName] = useState<string>("You");
+
+  // ---- Call metrics: start/end + TURN detection ---------------------------
+  useEffect(() => {
+    if (!connected) return;
+    if (!roomId) return;
+    if (!localUserId) return;
+    if (callIdRef.current) return;
+
+    (async () => {
+      callStartedAtRef.current = Date.now();
+      try {
+        const { data, error } = await supabase
+          .from("calls")
+          .insert({
+            room_id: roomId,
+            caller_id: localUserId,
+            started_at: new Date().toISOString(),
+            used_video: usedVideoRef.current,
+            used_turn: usedTurnRef.current,
+          })
+          .select("id")
+          .single();
+
+        if (!error && data?.id) {
+          callIdRef.current = data.id as string;
+        }
+      } catch {
+        // ignore
+      }
+
+      // After the connection stabilizes, detect whether TURN (relay) was used.
+      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
+      turnDetectTimerRef.current = window.setTimeout(() => {
+        const pc = getAnyPeerPc();
+        if (pc) void detectTurnFromPc(pc);
+      }, 8000);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, roomId, localUserId]);
+
+  useEffect(() => {
+    return () => {
+      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
+      void finalizeCallMetrics();
+    };
+  }, [finalizeCallMetrics]);
+
+  // Always attempt to finalize metrics when the page unloads/unmounts.
+  useEffect(() => {
+    return () => {
+      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
+      void finalizeCallMetrics();
+    };
+  }, [finalizeCallMetrics]);
 
   const [spotlightId, setSpotlightId] = useState<string>("local");
 
@@ -601,6 +724,11 @@ const showHudAfterInteraction = () => {};
     setCamEnabled,
     stop,
   } = localMedia;
+
+  // Call metrics: if video is ever enabled during the call, keep it true.
+  useEffect(() => {
+    if (camOn) usedVideoRef.current = true;
+  }, [camOn]);
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
@@ -963,6 +1091,10 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     } catch {}
     try {
       stop();
+    } catch {}
+    try {
+      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
+      await finalizeCallMetrics();
     } catch {}
     try {
       router.push("/");
