@@ -398,16 +398,25 @@ rec.onerror = (event: any) => {
 
 // Mobile: auto-restart if the user still has mic armed (hands-free mode).
 if (isMobile) {
-  setSttListening(false);
-
+  // IMPORTANT: On mobile, Web Speech often ends after a few seconds of silence.
+  // If the user still wants the mic on, treat onend as a normal boundary and restart
+  // WITHOUT flipping the UI to "off" (otherwise it feels like it stopped working).
   if (micArmedRef.current && !sttStopRequestedRef.current) {
-    setSttArmedNotListening(true);
-    // If it ran long enough, restart automatically.
+    // Keep UI in "listening" state while we schedule a restart.
+    setSttListening(true);
+    setSttArmedNotListening(false);
+
     scheduleAutoRestart("mobile-onend", 550);
     log("stt ended (mobile) — scheduling auto-restart", { ranForMs });
-  } else if (micArmedRef.current && sttStopRequestedRef.current) {
-    setSttArmedNotListening(true);
+  } else if (sttStopRequestedRef.current) {
+    // User explicitly stopped (mic button / PTT).
+    setSttListening(false);
+    setSttArmedNotListening(micArmedRef.current);
     log("stt ended (mobile) — stop requested", { ranForMs });
+  } else {
+    // Not armed: just reflect reality.
+    setSttListening(false);
+    setSttArmedNotListening(false);
   }
   return;
 }
