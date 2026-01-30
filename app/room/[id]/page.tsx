@@ -509,7 +509,7 @@ const showHudAfterInteraction = () => {};
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [ccOn, setCcOn] = useState(false);
+  const [ccOn, setCcOn] = useState(true);
 
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
@@ -1793,3 +1793,4 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
