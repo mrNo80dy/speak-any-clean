@@ -111,18 +111,16 @@ export default function RoomPage() {
   // ---- Call metrics (Supabase: calls table) -----------------
   // We may not have auth wired yet. Generate a stable local UUID per browser so
   // we can log call metrics now and later swap to supabase.auth user.id.
-  const getLocalUuid = useCallback((): string | null => {
+  const localUserId = useMemo(() => {
     if (typeof window === "undefined") return null;
     const key = "anyspeak_local_user_id";
-    let v = window.localStorage.getItem(key);
-    if (!v) {
-      v = crypto.randomUUID();
-      window.localStorage.setItem(key, v);
+    let id = window.localStorage.getItem(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      window.localStorage.setItem(key, id);
     }
-    return v;
+    return id;
   }, []);
-
-  const localUserId = useMemo(() => getLocalUuid(), [getLocalUuid]);
 
   const callIdRef = useRef<string | null>(null);
   const callStartedAtRef = useRef<number | null>(null);
@@ -276,7 +274,7 @@ const showHudAfterInteraction = () => {};
     const durationSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
 
     try {
-      const { error } = await supabase
+      await supabase
         .from("calls")
         .update({
           ended_at: new Date().toISOString(),
@@ -285,11 +283,8 @@ const showHudAfterInteraction = () => {};
           used_turn: usedTurnRef.current,
         })
         .eq("id", callId);
-
-      if (error) console.error("CALLS UPDATE FAILED", error);
-      else console.log("CALLS UPDATE OK", callId);
-    } catch (err) {
-      console.error("CALLS UPDATE FAILED", err);
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -396,15 +391,11 @@ const showHudAfterInteraction = () => {};
           .select("id")
           .single();
 
-        if (error) {
-          console.error("CALLS INSERT FAILED", error);
-        } else {
-          console.log("CALLS INSERT OK", data);
+        if (!error && data?.id) {
+          callIdRef.current = data.id as string;
         }
-
-        if (!error && data?.id) callIdRef.current = data.id as string;
-      } catch (err) {
-        console.error("CALLS INSERT FAILED", err);
+      } catch {
+        // ignore
       }
 
       // After the connection stabilizes, detect whether TURN (relay) was used.
@@ -417,6 +408,14 @@ const showHudAfterInteraction = () => {};
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, roomId, localUserId]);
 
+  useEffect(() => {
+    return () => {
+      if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
+      void finalizeCallMetrics();
+    };
+  }, [finalizeCallMetrics]);
+
+  // Always attempt to finalize metrics when the page unloads/unmounts.
   useEffect(() => {
     return () => {
       if (turnDetectTimerRef.current) window.clearTimeout(turnDetectTimerRef.current);
@@ -510,7 +509,7 @@ const showHudAfterInteraction = () => {};
   // Manual text captions
   const [showTextInput, setShowTextInput] = useState(false);
   const [textInput, setTextInput] = useState("");
-  const [ccOn, setCcOn] = useState(true);
+  const [ccOn, setCcOn] = useState(false);
 
   // ✅ Enforced room mode (from DB)
   const roomType: RoomType | null = roomInfo?.room_type ?? null;
@@ -880,7 +879,21 @@ const showHudAfterInteraction = () => {};
     },
   });
 
-  const micUiOn = isMobile ? true : (sttListening || sttArmedNotListening);
+  // "Mic on" must reflect real STT state. On mobile, we arm the mic from a user
+  // gesture (required by mobile browsers), but once armed it should be hands-free.
+  const micUiOn = sttListening || sttArmedNotListening;
+
+  const ensureMobileMicArmed = useCallback(async () => {
+    if (!isMobile) return;
+    // If already armed, do nothing.
+    if (micArmedRef.current) return;
+    userTouchedMicRef.current = true;
+    try {
+      await toggleMic();
+    } catch (err) {
+      log("mobile mic arm failed", { err: String(err) });
+    }
+  }, [isMobile, log, toggleMic]);
 
   function upsertPeerStream(remoteId: string, stream: MediaStream) {
     setPeerStreams((prev) => ({ ...prev, [remoteId]: stream }));
@@ -1168,7 +1181,11 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
             <div
               className="relative z-10 flex h-full w-full items-center justify-center"
-              onClick={() => setJoinCamOn(false)}
+              onClick={async () => {
+                // Any tap here counts as a user gesture; arm the mic for hands-free STT on mobile.
+                await ensureMobileMicArmed();
+                setJoinCamOn(false);
+              }}
             >
               <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
                 <button
@@ -1180,6 +1197,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
                     } catch (e) {
                       log("prejoin acquire failed", { e: String(e) });
                     }
+                    await ensureMobileMicArmed();
                     setJoinCamOn(true);
                   }}
                   className="
@@ -1203,7 +1221,10 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
                 <button
                   type="button"
-                  onClick={() => setJoinCamOn(false)}
+                  onClick={async () => {
+                    await ensureMobileMicArmed();
+                    setJoinCamOn(false);
+                  }}
                   className="
                     w-[96px] h-[96px]
                     rounded-full
@@ -1653,45 +1674,33 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 )}
 {/* Controls overlay */}
         <div className="fixed inset-0 z-50 pointer-events-none">
-          {/* Bottom-center PTT (always visible ring) */}
+          {/* Bottom-center mic toggle (hands-free on mobile). */}
           {isMobile && (
-          <div
-  className="fixed left-1/2 -translate-x-1/2 pointer-events-auto"
-  style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
->
-
-            <button
-              type="button"
-              aria-label="Push to talk"
-              title={micUiOn ? "Hold to talk" : "Mic muted"}
-              style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "none", userSelect: "none", WebkitUserSelect: "none" }}
-              className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80" : "border-white/25"} ${pttHeldUi ? (micUiOn ? "bg-emerald-400/80" : "bg-white/15") : "bg-transparent"} backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
-             onPointerDown={(e) => {
-  if (!micUiOn) return; // Option A: indicator only when muted
-  e.preventDefault();
-  try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
-  setPttHeldUi(true);
-  pttDown();
-}}
-onPointerUp={(e) => {
-  if (!micUiOn) return;
-  e.preventDefault();
-  try { (e.currentTarget as any).releasePointerCapture?.(e.pointerId); } catch {}
-  setPttHeldUi(false);
-  pttUp();
-}}
-onPointerCancel={() => {
-  if (!micUiOn) return;
-  setPttHeldUi(false);
-  pttCancel();
-}}
-
-              onContextMenu={(e) => e.preventDefault()}
+            <div
+              className="fixed left-1/2 -translate-x-1/2 pointer-events-auto"
+              style={{ bottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
             >
-              {/* Mic icon disappears when muted */}
-              {micUiOn && <span className="text-2xl">🎙️</span>}
-            </button>
-          </div>
+              <button
+                type="button"
+                aria-label={micUiOn ? "Mute microphone" : "Enable microphone"}
+                title={micUiOn ? "Mic on" : "Tap to enable mic"}
+                style={{ width: PTT_SIZE, height: PTT_SIZE, touchAction: "manipulation", userSelect: "none", WebkitUserSelect: "none" }}
+                className={`rounded-full border-2 ${micUiOn ? "border-emerald-400/80 bg-emerald-400/25" : "border-white/25 bg-black/20"} backdrop-blur shadow-[0_0_0_1px_rgba(255,255,255,0.06)] active:scale-[0.98] transition flex items-center justify-center`}
+                onClick={async () => {
+                  userTouchedMicRef.current = true;
+                  if (!micArmedRef.current) {
+                    // First-ever enable: browsers require a user gesture.
+                    await ensureMobileMicArmed();
+                    return;
+                  }
+                  // After we've been armed once, allow simple mute/unmute.
+                  await toggleMic();
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <span className="text-2xl">{micUiOn ? "🎙️" : "🎙️✕"}</span>
+              </button>
+            </div>
           )}
 
         {/* Bottom-right vertical stack */}
