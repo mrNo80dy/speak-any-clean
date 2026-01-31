@@ -883,16 +883,7 @@ const showHudAfterInteraction = () => {};
       // Mobile browsers often stop SpeechRecognition after a final result.
       // If the user wants the mic "on" (armed), immediately re-arm listening.
       // This removes the need for PTT while staying gesture-compliant.
-      if (isMobile) {
-        window.setTimeout(() => {
-          try {
-            // Only restart if we're no longer listening and user intent is still "armed".
-            if (!sttListeningRef.current && micArmedRef.current && micOnRef.current) {
-              void toggleMic();
-            }
-          } catch {}
-        }, 250);
-      }
+      
     },
   });
 
@@ -1793,4 +1784,5 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
 
