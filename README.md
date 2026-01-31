@@ -1,4 +1,4 @@
-# Real-Time Video Translation App
+# Real-Time Video Translation App1
 
 A peer-to-peer video chat application with real-time speech translation, similar to EZDubs.
 
@@ -53,4 +53,5 @@ The app works in "mock mode" without Supabase for UI development. To enable full
 5. Translations are displayed as captions and optionally spoken via TTS
 
 CANARY: speak-any-clean @ <your initials> @ <current time>
+
 
