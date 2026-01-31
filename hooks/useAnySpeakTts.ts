@@ -16,6 +16,8 @@ type AnySpeakTtsOpts = {
  */
 export function useAnySpeakTts({ getLang, onLog }: AnySpeakTtsOpts) {
   const ttsUnlockedRef = useRef(false);
+  // True while *our* most recent utterance is speaking. Useful for gating STT to avoid echo loops.
+  const ttsSpeakingRef = useRef(false);
 
   const unlockTts = useCallback(() => {
     if (ttsUnlockedRef.current) return;
@@ -92,6 +94,15 @@ export function useAnySpeakTts({ getLang, onLog }: AnySpeakTtsOpts) {
         utterance.rate = rate;
         utterance.volume = typeof volume === "number" ? volume : 1;
 
+        // Mark speaking so STT can gate itself to avoid capturing our own translated audio.
+        const setSpeaking = (v: boolean) => {
+          ttsSpeakingRef.current = v;
+          (window as any).__anyspeak_tts_speaking = v;
+        };
+
+        utterance.onstart = () => setSpeaking(true);
+        utterance.onend = () => setSpeaking(false);
+
         const voices = synth.getVoices?.() || [];
         const match =
           voices.find((v) => v.lang === utterance.lang) ||
@@ -99,7 +110,13 @@ export function useAnySpeakTts({ getLang, onLog }: AnySpeakTtsOpts) {
 
         if (match) utterance.voice = match;
 
-        utterance.onerror = (e) => console.warn("[TTS] error", e);
+        // (keep warning, but do not block cleanup)
+        utterance.onerror = (e) => {
+          try {
+            setSpeaking(false);
+          } catch {}
+          console.warn("[TTS] error", e);
+        };
         synth.speak(utterance);
       };
 
@@ -118,5 +135,6 @@ export function useAnySpeakTts({ getLang, onLog }: AnySpeakTtsOpts) {
     speakText,
     unlockTts,
     ttsUnlockedRef,
+    ttsSpeakingRef,
   };
 }
