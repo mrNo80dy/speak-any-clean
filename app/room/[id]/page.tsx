@@ -1670,7 +1670,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
 
 {/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
-{roomType === "video" && localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
+{localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
   <PipView
     stream={localStreamRef.current}
     isMobile={isMobile}
@@ -1784,5 +1784,6 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
 
 
