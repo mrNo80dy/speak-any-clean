@@ -5,7 +5,6 @@ import type React from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { LANGUAGES } from "@/lib/languages";
-import { useCallMode } from "@/hooks/useCallMode";
 import { useLocalMedia } from "@/hooks/useLocalMedia";
 import { useAnySpeakTts } from "@/hooks/useAnySpeakTts";
 import { useAnySpeakRealtime } from "@/hooks/useAnySpeakRealtime";
@@ -36,11 +35,8 @@ type Peer = AnySpeakPeer;
 
 type PeerStreams = Record<string, MediaStream>;
 
-type RoomType = "audio" | "video";
-
 type RoomInfo = {
   code: string | null;
-  room_type: RoomType;
 };
 
 type PttDock = "bottom" | "left" | "right";
@@ -511,52 +507,16 @@ const showHudAfterInteraction = () => {};
   const [textInput, setTextInput] = useState("");
   const [ccOn, setCcOn] = useState(true);
 
-  // ✅ Enforced room mode (from DB)
-  const roomType: RoomType | null = roomInfo?.room_type ?? null;
-  const playJoinChime = useCallback(() => {
-    try {
-      const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = "sine";
-      o.frequency.value = 880;
-      g.gain.value = 0.0001;
-      o.connect(g);
-      g.connect(ctx.destination);
-      o.start();
-      const now = ctx.currentTime;
-      g.gain.exponentialRampToValueAtTime(0.06, now + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.20);
-      o.stop(now + 0.22);
-      setTimeout(() => {
-        try {
-          ctx.close();
-        } catch {}
-      }, 300);
-    } catch {}
-  }, []);
+  // ---- Unified call: pre-join camera choice ------------------
+  // We no longer force audio vs video room types. Every room is a Call.
+  // Each participant chooses whether to enable camera at join.
+  // --------------------------------------------------------------
 
-  useEffect(() => {
-    if (roomType !== "audio") return;
-    const prev = prevPeerCountRef.current;
-    const cur = peerIds.length;
-    if (cur > prev) {
-      playJoinChime();
-      setJoinPulse(true);
-      if (joinPulseTimerRef.current) window.clearTimeout(joinPulseTimerRef.current);
-      joinPulseTimerRef.current = window.setTimeout(() => setJoinPulse(false), 2000);
-    }
-    prevPeerCountRef.current = cur;
-  }, [peerIds.length, roomType, playJoinChime]);
-
-  // ✅ Joiner camera choice for VIDEO rooms
+  // ✅ Joiner camera choice (unified)
   const [joinCamOn, setJoinCamOn] = useState<boolean | null>(null);
 
   // Pre-join
-  const prejoinDone =
-    roomType === "audio" ? true : roomType === "video" ? joinCamOn !== null : false;
+  const prejoinDone = joinCamOn !== null;
   const log = (msg: string, ...rest: any[]) => {
     const line = `[${new Date().toISOString().slice(11, 19)}] ${msg} ${
       rest.length ? JSON.stringify(rest) : ""
@@ -640,7 +600,7 @@ const showHudAfterInteraction = () => {};
       try {
         const { data, error } = await supabase
           .from("rooms")
-          .select("code, room_type")
+          .select("code")
           .eq("id", roomId)
           .maybeSingle();
 
@@ -649,15 +609,8 @@ const showHudAfterInteraction = () => {};
           return;
         }
 
-        const dbType = (data?.room_type || "audio") as RoomType;
-        const safeType: RoomType = dbType === "video" ? "video" : "audio";
-
-        setRoomInfo({ code: (data?.code ?? null) as any, room_type: safeType });
-        log("room loaded", { safeType });
-
-        if (safeType === "audio") {
-          setJoinCamOn(false);
-        }
+        setRoomInfo({ code: (data?.code ?? null) as any });
+        log("room loaded", {});
       } catch (err) {
         log("room load error", { err: (err as Error).message });
       }
@@ -699,18 +652,12 @@ const showHudAfterInteraction = () => {};
     log("stt sent transcript", { lang, textLen: text.length });
   };
 
-  // ---- Hooks you built ---------------------------------------
-  const enforcedModeParam: "audio" | "video" = roomType === "video" ? "video" : "audio";
-  const participantCount = peerIds.length + 1;
-
-  const { mode } = useCallMode({
-    modeParam: enforcedModeParam,
-    participantCount,
-  });
-
+  // ---- Local media (unified call) -----------------------------
   const localMedia = useLocalMedia({
-    wantVideo: mode === "video",
-    wantAudio: !isMobile, // mobile: DO NOT grab mic via getUserMedia (STT uses mic)
+    // Video is per-participant. Only request video when the user chose "camera on".
+    wantVideo: joinCamOn === true,
+    // Keep behavior consistent with main: on mobile, STT owns the mic.
+    wantAudio: !isMobile,
   });
 
   const {
@@ -732,7 +679,6 @@ const showHudAfterInteraction = () => {};
 
   const { toggleCamera, flipCamera, canFlip, hdEnabled, setVideoQuality } = useCamera({
     isMobile,
-    roomType,
     acquire: async () => {
       return await acquire();
     },
@@ -791,24 +737,19 @@ const showHudAfterInteraction = () => {};
       upsertPeerStream,
     });
 
-  // Allow "audio → video" upgrades: if this is an audio room and the user turns
-  // camera on, add a video track and renegotiate with connected peers.
+  // Allow "camera off → camera on" upgrades:
+// If you joined with camera OFF, turning camera ON must add a video track and renegotiate
+// so peers receive a video m-line.
   const toggleCameraWithUpgrade = useCallback(async () => {
-    // For video rooms, existing toggle logic is fine.
-    if (roomType === "video") {
-      toggleCamera();
-      return;
-    }
-
-    // Audio room: camera OFF -> ON needs a track + renegotiation.
     const stream = localStreamRef.current;
     const hasVideo = Boolean(stream && stream.getVideoTracks().length > 0);
     const currentlyOn = Boolean(stream && stream.getVideoTracks().some((t) => t.enabled));
-
     const next = !currentlyOn;
+
     if (next) {
-      // Ensure we have a base stream first (audio-only is fine).
+      // Ensure we have a base stream first.
       await acquire();
+
       // Add a video track if we don't already have one.
       if (!hasVideo) {
         await ensureVideoTrack(true);
@@ -816,31 +757,32 @@ const showHudAfterInteraction = () => {};
         setCamEnabled(true);
       }
 
-      // Renegotiate with all peers so they can receive the new video m-line.
+      // Renegotiate so peers can receive video.
       const ch = channelRef.current;
       if (ch) {
         const ids = Array.from(peersRef.current.keys());
         await Promise.all(ids.map((id) => negotiate(id, ch, "camera_on").catch(() => {})));
       }
+
+      // Persist that this participant has enabled video at least once.
+      usedVideoRef.current = true;
       return;
     }
 
-    // Turning camera OFF is local-only; remote will stop receiving frames.
+    // Turning camera OFF is just a local toggle.
     setCamEnabled(false);
-  }, [acquire, ensureVideoTrack, localStreamRef, negotiate, peersRef, roomType, setCamEnabled, toggleCamera]);
+  }, [acquire, ensureVideoTrack, localStreamRef, negotiate, peersRef, setCamEnabled]);
 
   // Auto video quality:
   // - Mobile: start SD (more reliable/less load)
   // - Desktop: prefer HD
   useEffect(() => {
-    if (roomType !== "video") return;
     void setVideoQuality(isMobile ? "sd" : "hd");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMobile, roomType]);
+  }, [isMobile]);
 
   // Auto-enable camera on entry for video rooms when user chose camera-on prejoin
   useEffect(() => {
-    if (roomType !== "video") return;
     if (joinCamOn !== true) return;
     (async () => {
       try {
@@ -850,7 +792,7 @@ const showHudAfterInteraction = () => {};
         log("auto cam enable failed", { err: String(err) });
       }
     })();
-  }, [roomType, joinCamOn, acquire, setCamEnabled]);
+  }, [ joinCamOn, acquire, setCamEnabled]);
 
   // Keep a ref for the current listening state so callbacks can safely decide
   // whether to restart listening after mobile SpeechRecognition stops.
@@ -883,7 +825,16 @@ const showHudAfterInteraction = () => {};
       // Mobile browsers often stop SpeechRecognition after a final result.
       // If the user wants the mic "on" (armed), immediately re-arm listening.
       // This removes the need for PTT while staying gesture-compliant.
-      
+      if (isMobile) {
+        window.setTimeout(() => {
+          try {
+            // Only restart if we're no longer listening and user intent is still "armed".
+            if (!sttListeningRef.current && micArmedRef.current && micOnRef.current) {
+              void toggleMic();
+            }
+          } catch {}
+        }, 250);
+      }
     },
   });
 
@@ -968,7 +919,7 @@ const showHudAfterInteraction = () => {};
     roomId,
     clientId,
     prejoinDone,
-    roomType,
+    
     joinCamOn,
     debugKey,
     displayNameRef,
@@ -1177,8 +1128,8 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
       }}
     >
       <div className="relative h-full w-full overflow-hidden">
-        {/* ✅ Joiner overlay: only for VIDEO room to choose cam on/off */}
-        {roomType === "video" && joinCamOn === null && (
+        {/* ✅ Joiner overlay: choose camera on/off (unified call) */}
+        {joinCamOn === null && (
           <div className="absolute inset-0 z-50">
             <div className="absolute inset-0">
               {localStreamRef.current ? (
@@ -1195,9 +1146,8 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
             <div
               className="relative z-10 flex h-full w-full items-center justify-center"
               onClick={async () => {
-                // Any tap here counts as a user gesture; arm the mic for hands-free STT on mobile.
+                // Tap outside does nothing; user must choose.
                 await ensureMobileMicArmed();
-                setJoinCamOn(false);
               }}
             >
               <div className="flex gap-6" onClick={(e) => e.stopPropagation()}>
@@ -1670,7 +1620,7 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
 
 
 {/* GLOBAL_PIP: Always-available local PiP (desktop + mobile) */}
-{localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
+{pipVisible && localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0 && (
   <PipView
     stream={localStreamRef.current}
     isMobile={isMobile}
@@ -1784,6 +1734,4 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
-
-
 
