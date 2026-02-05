@@ -919,6 +919,8 @@ const showHudAfterInteraction = () => {};
     roomId,
     clientId,
     prejoinDone,
+
+    roomType: joinCamOn === null ? null : (joinCamOn ? "video" : "audio"),
     
     joinCamOn,
     debugKey,
@@ -1734,4 +1736,5 @@ const AUX_BTN = isMobile ? 44 : 56; // PC slightly larger
     </div>
   );
 }
+
 
