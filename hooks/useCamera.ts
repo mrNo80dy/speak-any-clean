@@ -2,14 +2,12 @@
 
 import { useCallback, useRef, useState } from "react";
 
-type RoomType = "audio" | "video";
 export type FacingMode = "user" | "environment";
 
 type AnySpeakPeer = { pc: RTCPeerConnection };
 
 type Args = {
   isMobile: boolean;
-  roomType: RoomType | null;
   acquire: () => Promise<MediaStream | null>;
   localStreamRef: React.MutableRefObject<MediaStream | null>;
   setCamEnabled: (enabled: boolean) => void;
@@ -39,7 +37,7 @@ function constraintsForDeviceId(isMobile: boolean, hd: boolean, deviceId: string
   return { ...base, deviceId: { exact: deviceId } };
 }
 
-export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamEnabled, peersRef, log }: Args) {
+export function useCamera({ isMobile, acquire, localStreamRef, setCamEnabled, peersRef, log }: Args) {
   const [facingMode, setFacingMode] = useState<FacingMode>("user");
   const facingModeRef = useRef<FacingMode>("user");
 
@@ -165,7 +163,7 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
   const setVideoQuality = useCallback(
     async (mode: "sd" | "hd") => {
       const nextHd = mode === "hd";
-      if (roomType !== "video" || switchingRef.current) return;
+      if (switchingRef.current) return;
       switchingRef.current = true;
       try {
         setCamEnabled(false);
@@ -185,19 +183,18 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
         switchingRef.current = false;
       }
     },
-    [applyQualityToExistingTrack, log, restartVideoTrack, roomType, setCamEnabled]
+    [applyQualityToExistingTrack, log, restartVideoTrack, setCamEnabled]
   );
 
   const toggleCamera = useCallback(
     async () => {
-      if (roomType !== "video") return;
-      const stream = localStreamRef.current;
+            const stream = localStreamRef.current;
       const currentlyOn = !!(stream && stream.getVideoTracks().some((t) => t.enabled));
       const next = !currentlyOn;
       if (next) await acquire();
       setCamEnabled(next);
     },
-    [acquire, localStreamRef, roomType, setCamEnabled]
+    [acquire, localStreamRef, setCamEnabled]
   );
 
   const pickOtherDeviceId = async (): Promise<string | null> => {
@@ -216,7 +213,7 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
 
   const flipCamera = useCallback(
   async () => {
-    if (!isMobile || roomType !== "video" || switchingRef.current) return;
+    if (!isMobile || switchingRef.current) return;
     switchingRef.current = true;
     try {
       const nextFacing: FacingMode =
@@ -285,7 +282,7 @@ export function useCamera({ isMobile, roomType, acquire, localStreamRef, setCamE
       switchingRef.current = false;
     }
   },
-  [hdEnabled, isMobile, log, restartVideoTrack, restartVideoTrackByDeviceId, roomType, setCamEnabled]
+  [hdEnabled, isMobile, log, restartVideoTrack, restartVideoTrackByDeviceId, setCamEnabled]
 );
 
 
